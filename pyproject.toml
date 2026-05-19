@@ -1,0 +1,130 @@
+[project]
+name = "prompt-diary"
+version = "0.1.0a1"
+description = "Review user prompts for evidence-backed improvement in AI coding collaboration."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.25.1",
+]
+
+[project.scripts]
+prompt-diary = "prompt_diary.cli:main"
+report = "prompt_diary.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12"]
+build-backend = "uv_build"
+
+[tool.basedpyright]
+include = ["src", "tests"]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["export_codex_user_history.py"]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    "W",
+    # Pyflakes
+    "F",
+    # isort
+    "I",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-builtins
+    "A",
+    # flake8-unused-arguments
+    "ARG",
+    # flake8-blind-except
+    "BLE",
+    # flake8-comprehensions
+    "C4",
+    # mccabe
+    "C90",
+    # flake8-datetimez
+    "DTZ",
+    # eradicate
+    "ERA",
+    # flake8-boolean-trap
+    "FBT",
+    # flake8-logging
+    "LOG",
+    # flake8-logging-format
+    "G",
+    # flake8-no-pep420
+    "INP",
+    # pep8-naming
+    "N",
+    # Perflint
+    "PERF",
+    # flake8-pie
+    "PIE",
+    # Pylint convention, error, and warning rules.
+    "PLC",
+    "PLE",
+    "PLW",
+    # flake8-pytest-style
+    "PT",
+    # flake8-use-pathlib
+    "PTH",
+    # flake8-return
+    "RET",
+    # flake8-raise
+    "RSE",
+    # flake8-bandit
+    "S",
+    # flake8-simplify
+    "SIM",
+    # flake8-type-checking
+    "TC",
+    # flake8-tidy-imports
+    "TID",
+    # tryceratops
+    "TRY",
+    # flake8-2020
+    "YTT",
+    # Ruff-specific rules
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    # Allow pytest assertions in tests.
+    "S101",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["prompt_diary"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.4",
+    "pytest>=9.0.3",
+    "ruff>=0.15.12",
+]
