@@ -1,6 +1,6 @@
 # Prompt Diary
 
-Prompt Diary prepares bounded, redacted workspaces from local assistant session history and generates evidenced prompt diary reports that help users review and improve how they collaborate with AI coding agents.
+Prompt Diary prepares bounded workspaces from local assistant session history and generates evidenced prompt diary reports that help users review and improve how they collaborate with AI coding agents.
 
 The tool targets Python 3.10 and newer. The package exposes `report` and `prompt-diary`
 console commands after installation.
@@ -19,8 +19,19 @@ Then run:
 report --help
 prompt-diary --help
 report prepare --date 2026-05-12 --timezone Asia/Shanghai
+```
+
+Generation runs an external report-writing model command inside the prepared workspace. The
+command must read the generated prompt from standard input and create `report.md` in its current
+working directory. Configure it before running `generate`; for example, with Codex CLI:
+
+```bash
+export PROMPT_DIARY_REPORT_WRITER_COMMAND="codex exec -"
 report generate --date 2026-05-12 --timezone Asia/Shanghai
 ```
+
+Set `PROMPT_DIARY_REPORT_WRITER_TIMEOUT_SECONDS` to override the default 600-second writer
+timeout.
 
 ## Development
 
@@ -106,6 +117,16 @@ and uses strict config and marker validation.
 uv run pytest
 ```
 
+### Coverage
+
+Coverage uses [`coverage.py`](https://coverage.readthedocs.io/) and is configured to require
+100% line coverage for package code.
+
+```bash
+uv run coverage run -m pytest
+uv run coverage report
+```
+
 ### Linting And Formatting
 
 Linting and formatting use [`ruff`](https://docs.astral.sh/ruff/). Ruff is configured for Python 3.10.
@@ -128,5 +149,7 @@ uv run ruff check
 uv run ruff format --check
 uv run basedpyright
 uv run pytest
+uv run coverage run -m pytest
+uv run coverage report
 uv build
 ```

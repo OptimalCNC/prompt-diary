@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
 from prompt_diary import __version__
+from prompt_diary.api import generate_prompt_diary, prepare_prompt_diary
+from prompt_diary.errors import PromptDiaryError
 
 app = typer.Typer(
     add_completion=False,
@@ -45,7 +47,17 @@ def prepare(
     force: ForceOption = False,
 ) -> None:
     """Prepare a prompt diary workspace."""
-    _fail_not_implemented("prepare", date, today, timezone, force)
+    try:
+        result = prepare_prompt_diary(
+            date=date,
+            today=today,
+            timezone_name=timezone,
+            force=force,
+        )
+    except PromptDiaryError as exc:
+        _exit_with_error(exc)
+    for message in result.messages:
+        typer.echo(message)
 
 
 @app.command()
@@ -56,12 +68,17 @@ def generate(
     timezone: TimezoneOption = None,
 ) -> None:
     """Generate and validate a prompt diary report."""
-    _fail_not_implemented("generate", date, today, timezone)
+    try:
+        result = generate_prompt_diary(date=date, today=today, timezone_name=timezone)
+    except PromptDiaryError as exc:
+        _exit_with_error(exc)
+    for message in result.messages:
+        typer.echo(message)
 
 
-def _fail_not_implemented(command: str, *_options: object) -> None:
-    typer.echo(f"Error: {command!r} is not implemented yet", err=True)
-    raise typer.Exit(2)
+def _exit_with_error(exc: PromptDiaryError) -> NoReturn:
+    typer.echo(f"Error: {exc}", err=True)
+    raise typer.Exit(2) from exc
 
 
 def main() -> None:
