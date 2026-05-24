@@ -59,6 +59,94 @@ def test_prepare_api_uses_redacted_realistic_session_shapes(tmp_path: Path) -> N
     _assert_realistic_workspace(result.workspace_path, fixture)
 
 
+def test_prepare_api_copies_subagents_as_parent_session_context(tmp_path: Path) -> None:
+    fixture = _prepare_fixture("prepare-subagents")
+
+    result = prepare_prompt_diary(
+        date=TARGET_DATE,
+        today=False,
+        timezone_name=TARGET_TIMEZONE,
+        force=False,
+        reports_root=tmp_path / ".reports",
+        source_specs=fixture.source_specs,
+        now=TARGET_NOW,
+    )
+
+    assert result.created
+    assert result.project_count == 1
+    assert result.session_count == 2
+    project_dir = _single_directory(result.workspace_path / "projects")
+    rows = _load_jsonl(project_dir / "sessions.index.jsonl")
+    rows_by_source = _rows_by_source(rows)
+
+    codex_row = rows_by_source["codex"]
+    assert codex_row["source_session_id"] == "codex-parent"
+    assert codex_row["target_start_line"] == 2
+    assert codex_row["target_end_line"] == 6
+    assert codex_row["subagent_path"] == "sessions/codex/subagents/codex-parent"
+    codex_subagents = cast("list[JsonObject]", codex_row["target_subagents"])
+    assert codex_subagents == [
+        {
+            "agent_role": "explorer",
+            "association": "spawned_or_returned_in_target_span",
+            "parent_result_line": 6,
+            "parent_spawn_line": 3,
+            "session_file": "rollout-2026-05-12T08-17-39-codex-child.jsonl",
+            "source_session_id": "codex-child",
+        }
+    ]
+
+    claude_row = rows_by_source["claude-code"]
+    assert claude_row["source_session_id"] == "00000000-0000-4000-8000-00000000c001"
+    assert claude_row["target_start_line"] == 2
+    assert claude_row["target_end_line"] == 5
+    assert (
+        claude_row["subagent_path"]
+        == "sessions/claude-code/subagents/00000000-0000-4000-8000-00000000c001"
+    )
+    claude_subagents = cast("list[JsonObject]", claude_row["target_subagents"])
+    assert claude_subagents == [
+        {
+            "agent_role": "Explore",
+            "association": "spawned_or_returned_in_target_span",
+            "parent_result_line": 5,
+            "parent_spawn_line": 3,
+            "session_file": "agent-a000000000000001.jsonl",
+            "source_session_id": "a000000000000001",
+        }
+    ]
+
+    copied_codex_subagent = (
+        project_dir
+        / str(codex_row["subagent_path"])
+        / str(
+            codex_subagents[0]["session_file"],
+        )
+    )
+    copied_claude_subagent = (
+        project_dir
+        / str(claude_row["subagent_path"])
+        / str(
+            claude_subagents[0]["session_file"],
+        )
+    )
+    assert copied_codex_subagent.read_text(encoding="utf-8") == (
+        fixture.codex_root / "2026" / "05" / "12" / "rollout-2026-05-12T08-17-39-codex-child.jsonl"
+    ).read_text(encoding="utf-8")
+    assert copied_claude_subagent.read_text(encoding="utf-8") == (
+        fixture.claude_root
+        / "-fake-ReportGenerator"
+        / "00000000-0000-4000-8000-00000000c001"
+        / "subagents"
+        / "agent-a000000000000001.jsonl"
+    ).read_text(encoding="utf-8")
+
+    assert not (
+        project_dir / "sessions" / "codex" / "rollout-2026-05-12T08-17-39-codex-child.jsonl"
+    ).exists()
+    assert not (project_dir / "sessions" / "claude-code" / "agent-a000000000000001.jsonl").exists()
+
+
 def test_prepare_api_reuses_existing_workspace_counts_projects_and_sessions(
     tmp_path: Path,
 ) -> None:
