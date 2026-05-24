@@ -37,6 +37,10 @@ timeout.
 
 This project uses [`uv`](https://docs.astral.sh/uv/) for Python version, environment, dependency, build, and release workflows.
 
+Read [`docs/src/product.md`](docs/src/product.md) before designing new features, changing report
+content, or modifying the generation pipeline. It defines the tool's purposes and principles that
+downstream design must satisfy.
+
 ### Documentation
 
 Before writing documentation, identify the targeted users for each section, what that section
