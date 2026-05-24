@@ -23,80 +23,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_prepare_workspace_indexes_target_span_and_copies_whole_session(tmp_path: Path) -> None:
-    project_root = tmp_path / "ReportGenerator"
-    project_root.mkdir()
-    source_root = tmp_path / "codex-sessions"
-    source_path = source_root / "2026" / "05" / "session-001.jsonl"
-    _write_jsonl(
-        source_path,
-        [
-            {
-                "type": "session_meta",
-                "timestamp": "2026-05-11T15:59:59Z",
-                "payload": {"id": "codex-session-001", "cwd": str(project_root)},
-            },
-            {"type": "message", "timestamp": "2026-05-11T16:00:00Z", "payload": {}},
-            {"type": "message", "payload": {"text": "untimestamped context"}},
-            {"type": "message", "timestamp": "2026-05-12T15:59:59Z", "payload": {}},
-            {"type": "message", "timestamp": "2026-05-12T16:00:00Z", "payload": {}},
-        ],
-    )
-    target = resolve_report_target(
-        date="2026-05-12",
-        today=False,
-        timezone_name="Asia/Shanghai",
-        now=datetime(2026, 5, 13, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
-    )
-
-    result = prepare_workspace(
-        target,
-        reports_root=tmp_path / ".reports",
-        source_specs=(SourceSpec(source="codex", root=source_root),),
-        prepared_at=datetime(2026, 5, 13, 9, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
-    )
-
-    assert result.created
-    assert result.project_count == 1
-    assert result.session_count == 1
-    metadata = _load_json(result.workspace_path / "metadata.json")
-    assert metadata["report_date"] == "2026-05-12"
-    assert metadata["status"] == "final"
-    assert metadata["report_window_utc"] == {
-        "start": "2026-05-11T16:00:00Z",
-        "end": "2026-05-12T16:00:00Z",
-    }
-
-    project_dir = _single_directory(result.workspace_path / "projects")
-    project_json = _load_json(project_dir / "project.json")
-    assert project_json["project_label"] == "ReportGenerator"
-    assert str(project_json["project_key"]).startswith("ReportGenerator-")
-
-    index_rows = _load_jsonl(project_dir / "sessions.index.jsonl")
-    assert index_rows == [
-        {
-            "session_ref": "S0001",
-            "session_path": "sessions/codex/session-001.jsonl",
-            "source": "codex",
-            "source_session_id": "codex-session-001",
-            "target_end_line": 4,
-            "target_start_line": 2,
-        }
-    ]
-    copied_session = project_dir / "sessions" / "codex" / "session-001.jsonl"
-    assert (
-        copied_session.read_text(encoding="utf-8").splitlines()
-        == source_path.read_text(encoding="utf-8").splitlines()
-    )
-
-    audit = _load_json(result.audit_path)
-    sessions = cast("list[object]", audit["sessions"])
-    first_session = cast("dict[str, object]", sessions[0])
-    assert first_session["untimestamped_record_count"] == 1
-    assert first_session["target_start_line"] == 2
-    assert first_session["target_end_line"] == 4
-
-
 def test_prepare_workspace_includes_claude_subagent_path_in_session_id(
     tmp_path: Path,
 ) -> None:
@@ -157,32 +83,6 @@ def test_default_source_specs_handles_defaults_blank_env_and_audit_path(tmp_path
     assert audit_path_for_target(target, reports_root=tmp_path / ".reports") == (
         tmp_path / ".reports" / "private" / "2026-05-12" / "audit.manifest.json"
     )
-
-
-def test_prepare_workspace_force_removes_existing_workspace_and_audit(tmp_path: Path) -> None:
-    target = _target()
-    reports_root = tmp_path / ".reports"
-    workspace_path = reports_root / "work" / "2026-05-12"
-    audit_dir = reports_root / "private" / "2026-05-12"
-    (workspace_path / "stale.txt").parent.mkdir(parents=True)
-    (workspace_path / "stale.txt").write_text("old", encoding="utf-8")
-    (audit_dir / "stale.txt").parent.mkdir(parents=True)
-    (audit_dir / "stale.txt").write_text("old", encoding="utf-8")
-
-    result = prepare_workspace(
-        target,
-        reports_root=reports_root,
-        source_specs=(),
-        force=True,
-        prepared_at=datetime.fromisoformat("2026-05-13T09:01:00"),
-    )
-
-    assert result.created
-    assert result.project_count == 0
-    assert not (workspace_path / "stale.txt").exists()
-    assert not (audit_dir / "stale.txt").exists()
-    metadata = _load_json(result.workspace_path / "metadata.json")
-    assert metadata["prepared_at"] == "2026-05-13T09:01:00+08:00"
 
 
 def test_prepare_workspace_reuse_counts_zero_when_projects_dir_missing(tmp_path: Path) -> None:

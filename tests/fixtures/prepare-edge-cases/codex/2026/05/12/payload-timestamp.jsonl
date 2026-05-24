@@ -1,0 +1,2 @@
+{"payload":{"base_instructions":{"text":"[redacted]"},"cli_version":"redacted","id":"payload-timestamp-session","model_provider":"openai","originator":"codex_cli_rs","timestamp":"2026-05-11T16:00:00Z"},"timestamp":null,"type":"session_meta"}
+{"payload":{"current_date":"2026-05-12","cwd":"/fake/projects/turn-context-project","model":"redacted-model","sandbox_policy":{"type":"workspace-write","writable_roots":[]},"timezone":"Asia/Shanghai","turn_id":"turn-redacted"},"timestamp":"2026-05-11T16:00:01Z","type":"turn_context"}
