@@ -7,7 +7,7 @@ import json
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
@@ -46,33 +46,8 @@ class ProjectIdentity:
 
 
 @dataclass(frozen=True)
-class ParsedSession:
-    """A source session selected for the target report window."""
-
-    source: SourceName
-    source_path: Path
-    source_session_id: str
-    project: ProjectIdentity
-    target_start_line: int
-    target_end_line: int
-    total_lines: int
-    source_checksum_sha256: str
-    malformed_line_count: int
-    untimestamped_record_count: int
-    non_monotonic_timestamp_count: int
-    first_event_at: str | None
-    last_event_at: str | None
-    target_subagents: tuple[TargetSubagent, ...] = ()
-
-    @property
-    def session_filename(self) -> str:
-        """Return the copied filename for this session."""
-        return self.source_path.name
-
-
-@dataclass(frozen=True)
 class TargetSubagent:
-    """A source subagent transcript associated with a parent session target span."""
+    """A source subagent transcript associated with a parent turn."""
 
     source_path: Path
     session_file: str
@@ -80,6 +55,50 @@ class TargetSubagent:
     agent_role: str | None
     parent_spawn_line: int | None
     parent_result_line: int | None
+
+
+@dataclass(frozen=True)
+class ParsedTurn:
+    """One trigger-owned work unit inside a parsed session."""
+
+    turn_start_line: int
+    turn_end_line: int
+    target_subagents: tuple[TargetSubagent, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParsedSession:
+    """A source session selected for the target report window."""
+
+    source: SourceName
+    source_path: Path
+    source_session_id: str
+    project: ProjectIdentity
+    turns: tuple[ParsedTurn, ...]
+    total_lines: int
+    source_checksum_sha256: str
+    malformed_line_count: int
+    untimestamped_record_count: int
+    non_monotonic_timestamp_count: int
+    first_event_at: str | None
+    last_event_at: str | None
+
+    @property
+    def target_start_line(self) -> int:
+        return self.turns[0].turn_start_line
+
+    @property
+    def target_end_line(self) -> int:
+        return self.turns[-1].turn_end_line
+
+    @property
+    def target_subagents(self) -> tuple[TargetSubagent, ...]:
+        return tuple(sub for turn in self.turns for sub in turn.target_subagents)
+
+    @property
+    def session_filename(self) -> str:
+        """Return the copied filename for this session."""
+        return self.source_path.name
 
 
 @dataclass(frozen=True)
@@ -400,9 +419,19 @@ def _parse_session_file(
         if timestamp is None:
             state.untimestamped_record_count += 1
             continue
-        state.record_timestamp(timestamp, line_number, target)
+        state.record_timestamp(timestamp, line_number)
+        if _is_human_trigger(record, spec.source):
+            if not state.triggers or state.triggers[-1].line_number != line_number - 1:
+                state.triggers.append(_TriggerLine(line_number=line_number, timestamp=timestamp))
 
-    if state.is_subagent or state.target_start_line is None or state.target_end_line is None:
+    turns = _build_turns(
+        triggers=state.triggers,
+        target=target,
+        lines=lines,
+        source=spec.source,
+        total_lines=len(lines),
+    )
+    if state.is_subagent or not turns:
         return None
 
     source_session_id = _source_session_id_for_state(state)
@@ -420,8 +449,7 @@ def _parse_session_file(
         source_path=source_path,
         source_session_id=source_session_id,
         project=project,
-        target_start_line=state.target_start_line,
-        target_end_line=state.target_end_line,
+        turns=turns,
         total_lines=len(lines),
         source_checksum_sha256=checksum,
         malformed_line_count=state.malformed_line_count,
@@ -430,6 +458,12 @@ def _parse_session_file(
         first_event_at=serialize_datetime(first_event_at),
         last_event_at=serialize_datetime(last_event_at),
     )
+
+
+@dataclass(frozen=True)
+class _TriggerLine:
+    line_number: int
+    timestamp: datetime
 
 
 @dataclass
@@ -444,24 +478,131 @@ class _ParseState:
     malformed_line_count: int = 0
     untimestamped_record_count: int = 0
     non_monotonic_timestamp_count: int = 0
-    target_start_line: int | None = None
-    target_end_line: int | None = None
     first_event_at: datetime | None = None
     last_event_at: datetime | None = None
     previous_event_at: datetime | None = None
+    triggers: list[_TriggerLine] = field(default_factory=list)
 
-    def record_timestamp(self, timestamp: datetime, line_number: int, target: ReportTarget) -> None:
-        """Record a parsed timestamp and update target span bounds."""
+    def record_timestamp(self, timestamp: datetime, line_number: int) -> None:
         if self.previous_event_at is not None and timestamp < self.previous_event_at:
             self.non_monotonic_timestamp_count += 1
         self.previous_event_at = timestamp
         self.first_event_at = _earliest(self.first_event_at, timestamp)
         self.last_event_at = _latest(self.last_event_at, timestamp)
 
-        if target.report_window_utc.start <= timestamp < target.report_window_utc.end:
-            if self.target_start_line is None:
-                self.target_start_line = line_number
-            self.target_end_line = line_number
+
+_CODEX_SOURCE_CONTEXT_PREFIXES = (
+    "<environment_context>",
+    "# AGENTS.md",
+    "<turn_aborted>",
+    "<subagent_notification>",
+    "<INSTRUCTIONS>",
+)
+
+
+def _is_human_trigger(record: JsonObject, source: SourceName) -> bool:
+    if source == "codex":
+        return _is_codex_human_trigger(record)
+    return _is_claude_human_trigger(record)
+
+
+def _is_codex_human_trigger(record: JsonObject) -> bool:
+    record_type = _string_value(record, "type")
+    payload = _object_value(record, "payload")
+    if payload is None:
+        return False
+    if record_type == "event_msg" and _string_value(payload, "type") == "user_message":
+        return True
+    if record_type == "response_item":
+        if _string_value(payload, "role") != "user" or _string_value(payload, "type") != "message":
+            return False
+        text = _codex_message_text(payload)
+        return not text.startswith(_CODEX_SOURCE_CONTEXT_PREFIXES)
+    return False
+
+
+def _codex_message_text(payload: JsonObject) -> str:
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return ""
+    for item in content:
+        if isinstance(item, dict):
+            text = cast("JsonObject", item).get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return ""
+
+
+def _is_claude_human_trigger(record: JsonObject) -> bool:
+    if _string_value(record, "type") != "user":
+        return False
+    message = _object_value(record, "message")
+    if message is None or _string_value(message, "role") != "user":
+        return False
+    if _string_value(record, "sourceToolAssistantUUID") is not None:
+        return False
+    if _bool_value(record, "isSidechain"):
+        return False
+    return True
+
+
+def _build_turns(
+    *,
+    triggers: list[_TriggerLine],
+    target: ReportTarget,
+    lines: list[str],
+    source: SourceName,
+    total_lines: int,
+) -> tuple[ParsedTurn, ...]:
+    in_window = [
+        (i, t)
+        for i, t in enumerate(triggers)
+        if target.report_window_utc.start <= t.timestamp < target.report_window_utc.end
+    ]
+    if not in_window:
+        return ()
+    result: list[ParsedTurn] = []
+    for idx, trigger in in_window:
+        next_trigger = triggers[idx + 1] if idx + 1 < len(triggers) else None
+        if next_trigger is not None:
+            turn_end = _turn_end_before_next_trigger(lines, next_trigger.line_number, source)
+        else:
+            turn_end = total_lines
+        result.append(ParsedTurn(turn_start_line=trigger.line_number, turn_end_line=turn_end))
+    return tuple(result)
+
+
+def _turn_end_before_next_trigger(
+    lines: list[str],
+    next_trigger_line: int,
+    source: SourceName,
+) -> int:
+    for line_number in range(next_trigger_line - 1, 0, -1):
+        record = _json_object_from_line(lines[line_number - 1])
+        if record is None or not _is_pre_trigger_scaffolding(record, source):
+            return line_number
+    return next_trigger_line - 1
+
+
+def _is_pre_trigger_scaffolding(record: JsonObject, source: SourceName) -> bool:
+    if source != "codex":
+        return False
+    record_type = _string_value(record, "type")
+    payload = _object_value(record, "payload")
+    if record_type == "turn_context":
+        return True
+    if record_type == "event_msg" and payload is not None:
+        ptype = _string_value(payload, "type")
+        if ptype in ("task_started", "turn_started"):
+            return True
+    if record_type == "response_item" and payload is not None:
+        if _string_value(payload, "role") == "developer":
+            return True
+        if _string_value(payload, "role") == "user" and _string_value(payload, "type") == "message":
+            text = _codex_message_text(payload)
+            if text.startswith(_CODEX_SOURCE_CONTEXT_PREFIXES):
+                return True
+    return False
 
 
 def _record_session_metadata(state: _ParseState, record: JsonObject) -> None:
@@ -665,16 +806,34 @@ def _with_target_subagents(
     session: ParsedSession,
     subagent_index: _SourceSubagentIndex,
 ) -> ParsedSession:
-    target_subagents = _target_subagents_for_session(session, subagent_index)
-    if not target_subagents:
+    references = (
+        _codex_parent_subagent_references(session)
+        if session.source == "codex"
+        else _claude_parent_subagent_references(session)
+    )
+    new_turns: list[ParsedTurn] = []
+    any_subagents = False
+    for turn in session.turns:
+        turn_subagents = _subagents_for_turn(
+            turn, references, subagent_index, session.source_session_id
+        )
+        if turn_subagents:
+            any_subagents = True
+        new_turns.append(
+            ParsedTurn(
+                turn_start_line=turn.turn_start_line,
+                turn_end_line=turn.turn_end_line,
+                target_subagents=turn_subagents,
+            )
+        )
+    if not any_subagents:
         return session
     return ParsedSession(
         source=session.source,
         source_path=session.source_path,
         source_session_id=session.source_session_id,
         project=session.project,
-        target_start_line=session.target_start_line,
-        target_end_line=session.target_end_line,
+        turns=tuple(new_turns),
         total_lines=session.total_lines,
         source_checksum_sha256=session.source_checksum_sha256,
         malformed_line_count=session.malformed_line_count,
@@ -682,30 +841,26 @@ def _with_target_subagents(
         non_monotonic_timestamp_count=session.non_monotonic_timestamp_count,
         first_event_at=session.first_event_at,
         last_event_at=session.last_event_at,
-        target_subagents=target_subagents,
     )
 
 
-def _target_subagents_for_session(
-    session: ParsedSession,
+def _subagents_for_turn(
+    turn: ParsedTurn,
+    references: tuple[_ParentSubagentReference, ...],
     subagent_index: _SourceSubagentIndex,
+    parent_session_id: str,
 ) -> tuple[TargetSubagent, ...]:
-    references = (
-        _codex_parent_subagent_references(session)
-        if session.source == "codex"
-        else _claude_parent_subagent_references(session)
-    )
-    target_subagents: list[TargetSubagent] = []
+    result: list[TargetSubagent] = []
     for reference in references:
-        if not _reference_intersects_target_span(session, reference):
+        if not _reference_in_turn(turn, reference):
             continue
         source_subagent = subagent_index.find(
-            parent_source_session_id=session.source_session_id,
+            parent_source_session_id=parent_session_id,
             source_session_id=reference.source_session_id,
         )
         if source_subagent is None:
             continue
-        target_subagents.append(
+        result.append(
             TargetSubagent(
                 source_path=source_subagent.source_path,
                 session_file=source_subagent.source_path.name,
@@ -717,7 +872,7 @@ def _target_subagents_for_session(
         )
     return tuple(
         sorted(
-            target_subagents,
+            result,
             key=lambda item: (
                 item.parent_spawn_line or item.parent_result_line or 0,
                 item.source_session_id,
@@ -726,20 +881,19 @@ def _target_subagents_for_session(
     )
 
 
-def _reference_intersects_target_span(
-    session: ParsedSession,
+def _reference_in_turn(
+    turn: ParsedTurn,
     reference: _ParentSubagentReference,
 ) -> bool:
-    return _line_in_target_span(session, reference.parent_spawn_line) or _line_in_target_span(
-        session,
-        reference.parent_result_line,
+    return _line_in_turn(turn, reference.parent_spawn_line) or _line_in_turn(
+        turn, reference.parent_result_line
     )
 
 
-def _line_in_target_span(session: ParsedSession, line_number: int | None) -> bool:
+def _line_in_turn(turn: ParsedTurn, line_number: int | None) -> bool:
     if line_number is None:
         return False
-    return session.target_start_line <= line_number <= session.target_end_line
+    return turn.turn_start_line <= line_number <= turn.turn_end_line
 
 
 def _codex_parent_subagent_references(
@@ -1191,7 +1345,11 @@ def _copy_target_subagents(
     session: ParsedSession,
     seen_destinations: set[tuple[str, str]],
 ) -> None:
+    copied_files: set[str] = set()
     for subagent in session.target_subagents:
+        if subagent.session_file in copied_files:
+            continue
+        copied_files.add(subagent.session_file)
         subagent_path = _subagent_relative_path(session)
         session_path = f"{subagent_path}/{subagent.session_file}"
         destination_key = (session.project.key, session_path)
@@ -1222,8 +1380,16 @@ def _session_index_row(session: ParsedSession, *, session_ref: str) -> JsonObjec
         "target_start_line": session.target_start_line,
         "target_end_line": session.target_end_line,
         "subagent_path": _subagent_relative_path(session),
+        "turns": [_turn_index_json(turn) for turn in session.turns],
+    }
+
+
+def _turn_index_json(turn: ParsedTurn) -> JsonObject:
+    return {
+        "turn_start_line": turn.turn_start_line,
+        "turn_end_line": turn.turn_end_line,
         "target_subagents": [
-            _target_subagent_index_json(subagent) for subagent in session.target_subagents
+            _target_subagent_index_json(subagent) for subagent in turn.target_subagents
         ],
     }
 

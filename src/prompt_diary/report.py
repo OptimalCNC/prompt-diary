@@ -76,6 +76,12 @@ class Metadata:
 
 
 @dataclass(frozen=True)
+class SessionTurn:
+    turn_start_line: int
+    turn_end_line: int
+
+
+@dataclass(frozen=True)
 class SessionIndexRow:
     session_ref: str
     source: str
@@ -83,6 +89,7 @@ class SessionIndexRow:
     session_path: str
     target_start_line: int
     target_end_line: int
+    turns: tuple[SessionTurn, ...]
 
 
 @dataclass(frozen=True)
@@ -442,6 +449,7 @@ def _session_index_row_from_json(
     index_path: Path,
     line_number: int,
 ) -> SessionIndexRow:
+    turns = _parse_turns(record, path=index_path, line_number=line_number)
     row = SessionIndexRow(
         session_ref=_required_string(
             record,
@@ -474,6 +482,7 @@ def _session_index_row_from_json(
             path=index_path,
             line_number=line_number,
         ),
+        turns=turns,
     )
     _validate_session_index_row(
         row,
@@ -509,6 +518,27 @@ def _validate_session_index_row(
         raise PromptDiaryError(
             _target_span_exceeds_file_message(index_path, line_number, row, line_count)
         )
+
+
+def _parse_turns(
+    record: JsonObject,
+    *,
+    path: Path,
+    line_number: int,
+) -> tuple[SessionTurn, ...]:
+    raw_turns = record.get("turns")
+    if not isinstance(raw_turns, list):
+        return ()
+    result: list[SessionTurn] = []
+    for item in raw_turns:
+        if not isinstance(item, dict):
+            continue
+        turn_obj = cast("JsonObject", item)
+        start = turn_obj.get("turn_start_line")
+        end = turn_obj.get("turn_end_line")
+        if isinstance(start, int) and isinstance(end, int):
+            result.append(SessionTurn(turn_start_line=start, turn_end_line=end))
+    return tuple(result)
 
 
 def _validate_header(text: str, metadata: Metadata, generated_at: str) -> list[str]:

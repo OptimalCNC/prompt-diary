@@ -1,8 +1,8 @@
 # Workspace Layout
 
-The workspace is the prepared evidence boundary for one target report date. It contains copied
-session files, normalized project metadata, and per-project session indexes that locate the
-report-window portion of each copied session.
+The workspace is the prepared evidence boundary for one target report date. It packages local
+assistant history into a deterministic structure that report generation can read without scanning
+the user's raw session stores.
 
 ```mermaid
 flowchart LR
@@ -20,16 +20,9 @@ flowchart LR
     workspace --> report
 ```
 
-Preparation owns data discovery, timestamp parsing, date-window handling, session copying, session
-indexing, and workspace layout. Discovery must not be scoped only to the report date's file path
-partition. A correct first version may scan all configured JSONL files and parse events before
-deciding what to copy. Optimized discovery may prefilter by parsed event bounds, adjacent date
-partitions, or modification time, but the final copy decision must be based on identifiable events
-inside the report window.
-
-A source session file is copied when it has at least one identifiable event inside the report
-window. It is copied whole because surrounding context and the overall coding session can matter
-when writing a useful report; the session index records the target span used for report claims.
+Preparation owns data discovery, date-window handling, session copying, indexing, and audit output.
+The workspace keeps report inputs stable and reviewable; the detailed contracts below define how
+sources are selected, grouped, copied, and indexed.
 
 For report date `2026-05-12`, the tool creates a prepared report workspace like this:
 
@@ -71,19 +64,21 @@ require filesystem or network isolation.
 
 The report window is an absolute half-open time interval derived from midnight at the start of the
 target date to midnight at the start of the next date in the requested timezone.
-`report_window_utc` is the canonical serialized representation used for deterministic inclusion
-checks after that local-day boundary has been resolved.
+`report_window_utc` is the canonical serialized representation used for deterministic trigger
+inclusion checks after that local-day boundary has been resolved.
 
 For example, `--date 2026-05-12 --timezone Asia/Shanghai` targets
 `2026-05-12T00:00:00+08:00` through `2026-05-13T00:00:00+08:00`,
 not `2026-05-12T00:00:00Z` through `2026-05-13T00:00:00Z`.
 
-- Include events whose event time is at or after `report_window_utc.start`.
-- Exclude events whose event time is at or after `report_window_utc.end`.
-- Events exactly at `report_window_utc.start` belong to this report.
-- Events exactly at `report_window_utc.end` belong to the next report.
-- Session files may cross midnight. The report day is determined by event timestamps; indexed
-  target spans locate the relevant lines inside copied sessions.
+- Include work units whose human-authored trigger time is at or after
+  `report_window_utc.start`.
+- Exclude work units whose human-authored trigger time is at or after `report_window_utc.end`.
+- Human triggers exactly at `report_window_utc.start` belong to this report.
+- Human triggers exactly at `report_window_utc.end` belong to the next report.
+- Session files may cross midnight. The target day includes a work unit by human trigger
+  timestamp; indexed target spans locate that trigger and the resulting agent reactions inside
+  copied sessions.
 
 Example resolved window for `2026-05-12` in `Asia/Shanghai`:
 
@@ -121,7 +116,7 @@ flowchart LR
 
 Rules:
 
-- `report_window_utc` is the canonical serialized inclusion boundary.
+- `report_window_utc` is the canonical serialized trigger-inclusion boundary.
 - `report_window_local` is the human-facing period shown in the report. Do not render a
   `00:00Z` to next-day `00:00Z` report window unless the requested timezone is UTC.
 - `status` is `final` for a completed day and `partial` for same-day reports.
@@ -167,16 +162,26 @@ manifest, not in `project.json`.
 
 ## Session Context (`sessions/*.jsonl`)
 
-Adapters parse source-specific JSONL records enough to copy sessions and create the session index.
-Session discovery targets only root/main assistant sessions. Source-native subagent sessions are
-skipped during initial discovery and are not copied merely because they contain target-window
-timestamps. A subagent session is copied only when an indexed parent session references it through
-a spawn/result association inside that parent session's target span.
+Adapters parse source-specific JSONL records enough to identify human-authored triggers, copy
+sessions, and create the session index. Session discovery targets only root/main assistant
+sessions. Source-native subagent sessions are skipped during initial discovery and are not copied
+merely because they contain target-window timestamps. A subagent session is copied only when an
+indexed parent session references it through a spawn/result association inside that parent
+session's target span.
 
-| Source | Timestamp | Session id | Project root | Missing or malformed timestamp |
+A human-authored trigger is an externally authored user message, correction, approval, resume
+action, or explicit human-supplied context that asks or directs the agent to act.
+[Source Session Formats](./source-session-formats.md) documents the per-source record structures
+and explains how adapters distinguish human triggers from source-generated records. A human
+`Continue`, `resume`, or equivalent UI action is a trigger when it asks the agent to continue,
+recover, or finish work; it may also reveal that the previous agent reaction paused or stopped.
+Tool results, task notifications, system records, and source-generated records with `role: user`
+are not human triggers unless they carry a new externally authored instruction.
+
+| Source | Timestamp | Session id | Project root | Missing or malformed trigger timestamp |
 | --- | --- | --- | --- | --- |
-| Codex | top-level `timestamp`; fallback `payload.timestamp` only for session metadata | `session_meta.payload.id`; fallback filename stem | `session_meta.payload.cwd`, then `turn_context.payload.cwd` | cannot define the target span; remains available as copied session context |
-| Claude Code | top-level `timestamp` | filename stem | top-level `cwd`; fallback configured source root | cannot define the target span; remains available as copied session context |
+| Codex | top-level `timestamp`; fallback `payload.timestamp` only for session metadata | `session_meta.payload.id`; fallback filename stem | `session_meta.payload.cwd`, then `turn_context.payload.cwd` | cannot include a trigger-owned work unit; remains available only as copied context if another trigger includes the session |
+| Claude Code | top-level `timestamp` | filename stem | top-level `cwd`; fallback configured source root | cannot include a trigger-owned work unit; remains available only as copied context if another trigger includes the session |
 
 Malformed JSONL lines are never standalone evidence for a work claim. The adapter should record
 counts for malformed and untimestamped records in the preparation audit manifest.
@@ -189,7 +194,7 @@ the session index cites parent session line numbers.
 ## Session Index Context (`sessions.index.jsonl`)
 
 Each project has one `sessions.index.jsonl` file. It has one JSON object per copied root session
-file in that project and is both the copied-session inventory and the target-window span index.
+file in that project and is both the copied-session inventory and the trigger-owned span index.
 Subagent sessions do not get their own session index rows; they are optional context for the parent
 agent reaction that spawned or received them.
 
@@ -207,14 +212,25 @@ Required fields:
   "target_start_line": 21,
   "target_end_line": 98,
   "subagent_path": "sessions/codex/subagents/019e1bb6-620a-7462-9fb0-d28c3acef59d",
-  "target_subagents": [
+  "turns": [
     {
-      "session_file": "019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d.jsonl",
-      "source_session_id": "019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d",
-      "agent_role": "explorer",
-      "parent_spawn_line": 43,
-      "parent_result_line": 81,
-      "association": "spawned_or_returned_in_target_span"
+      "turn_start_line": 21,
+      "turn_end_line": 55,
+      "target_subagents": [
+        {
+          "session_file": "019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d.jsonl",
+          "source_session_id": "019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d",
+          "agent_role": "explorer",
+          "parent_spawn_line": 43,
+          "parent_result_line": 51,
+          "association": "spawned_or_returned_in_target_span"
+        }
+      ]
+    },
+    {
+      "turn_start_line": 60,
+      "turn_end_line": 98,
+      "target_subagents": []
     }
   ]
 }
@@ -223,10 +239,24 @@ Required fields:
 `session_path` is relative to the project folder and must resolve under that project's `sessions/`
 directory. `subagent_path` is relative to the project folder and names the folder containing copied
 subagent files for this parent session. If the parent has no associated copied subagents,
-`subagent_path` is `""` and `target_subagents` is `[]`.
+`subagent_path` is `""`.
 
-Each `target_subagents` item records one copied subagent transcript associated with the parent
-target span:
+`target_start_line` and `target_end_line` are the overall target span — the first turn's start line
+and the last turn's end line. They are derived from `turns` for convenience; consumers that need
+per-trigger boundaries should use the `turns` list.
+
+Each `turns` item records one trigger-owned work unit inside the target span:
+
+- `turn_start_line` is the line of the human-authored trigger that starts this work unit. It is
+  1-based and inclusive.
+- `turn_end_line` is the last line of agent reactions owned by this trigger. It is 1-based and
+  inclusive. For the last trigger in a session, this extends to the end of the file. For earlier
+  triggers, it ends before the pre-trigger scaffolding of the next turn (see
+  [Source Session Formats](./source-session-formats.md) for scaffolding rules per source).
+- `target_subagents` lists subagent transcripts associated with this turn. Each item has the fields
+  described below. If no subagents are associated with this turn, `target_subagents` is `[]`.
+
+Each `target_subagents` item records one copied subagent transcript associated with its parent turn:
 
 - `session_file` is the copied source-native filename under `subagent_path`.
 - `source_session_id` is the source-native subagent session id when available; otherwise use the
@@ -238,7 +268,7 @@ target span:
 - `parent_result_line` is the parent session line that receives the subagent output, completion
   notice, or summarized result. It is `null` when the result line is unavailable.
 - `association` is `spawned_or_returned_in_target_span` when either the spawn line or result line
-  falls inside the parent target span.
+  falls inside the parent turn's line range.
 
 Other parent references to the same subagent are not indexed by default. Subagent files are copied
 as richer context for parent agent reactions, not as independent report targets. Diagnostic data
@@ -251,14 +281,30 @@ Reference generation:
 2. Assign `session_ref` values as `S0001`, `S0002`, and so on within that project.
 3. If a session lacks a source session id, use the source filename stem in the sort key and in `source_session_id`.
 
-Target span construction:
+Target span and turn construction:
 
-- `target_start_line` and `target_end_line` are 1-based and inclusive.
-- Each copied root session has exactly one target span for the report window.
-- The target span starts at the first line with an identifiable event timestamp inside the report window and ends at the last such line.
-- In a well-formed timestamp-ordered session, that span is the continuous target-window portion of the session.
-- If malformed, untimestamped, or non-monotonic records make the indexed span broader than the true in-window records, preparation still records the inclusive first-to-last identifiable in-window span and records the anomaly in the preparation audit manifest.
-- No separate context index is generated. The reporter can inspect surrounding lines directly in the copied root session file, and can inspect listed subagent files when richer context is useful.
+- All line numbers are 1-based and inclusive.
+- Each copied root session has exactly one target span for the report window. The target span is
+  the union of the session's included turns.
+- `target_start_line` is the first included turn's `turn_start_line`.
+- `target_end_line` is the last included turn's `turn_end_line`.
+- A human-authored trigger belongs to the target report date when its timestamp falls inside
+  `report_window_utc`. Each in-window trigger produces one entry in `turns`.
+- A trigger's turn starts at the trigger line (`turn_start_line`) and ends after the agent reactions
+  and outcomes caused by that trigger (`turn_end_line`), even when those reaction lines have
+  timestamps outside the report window.
+- A later human-authored trigger outside the report window starts a different work unit and must not
+  be absorbed into this report's target span. The previous turn ends before the next trigger's
+  pre-trigger scaffolding (see [Source Session Formats](./source-session-formats.md)).
+- For the last trigger in the session (no successor trigger), the turn extends to the last line of
+  the file.
+- `turns` is ordered by `turn_start_line`. When the target span contains multiple turns, they are
+  not necessarily contiguous — pre-trigger scaffolding between turns is excluded.
+- If malformed, untimestamped, or non-monotonic records make a turn broader than the true
+  trigger-owned work unit, preparation still records the inclusive turn it can determine
+  and records the anomaly in the preparation audit manifest.
+- No separate context index is generated. The reporter can inspect surrounding lines directly in the
+  copied root session file, and can inspect listed subagent files when richer context is useful.
 
 ## Preparation Audit Context (`audit.manifest.json`)
 

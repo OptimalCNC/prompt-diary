@@ -38,6 +38,11 @@ source = ["prompt_diary"]
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
+exclude_also = [
+    # Unreachable defensive fallback: the loop always finds the trigger's own
+    # non-scaffolding record before exhausting all lines.
+    "return next_trigger_line - 1",
+]
 
 [tool.ruff]
 line-length = 100

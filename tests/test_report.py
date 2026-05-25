@@ -679,6 +679,9 @@ def _workspace_fixture(tmp_path: Path) -> Path:
                 "session_path": "sessions/codex/session-001.jsonl",
                 "target_start_line": 2,
                 "target_end_line": 4,
+                "turns": [
+                    {"turn_start_line": 2, "turn_end_line": 4, "target_subagents": []}
+                ],
             }
         ],
     )
@@ -779,6 +782,43 @@ def _write_claim_report(workspace: Path, *, generated_at: str, line_span: str) -
         ),
         encoding="utf-8",
     )
+
+
+def test_validate_report_handles_invalid_turns_field(tmp_path: Path) -> None:
+    generated_at = "2026-05-13T09:00:00+08:00"
+
+    # turns is not a list (e.g. a string) -- _parse_turns returns ()
+    not_list_workspace = _workspace_fixture(tmp_path / "turns-not-list")
+    project_dir = not_list_workspace / "projects" / "ReportGenerator-abc123def456"
+    index_path = project_dir / "sessions.index.jsonl"
+    row = _load_jsonl(index_path)[0]
+    row["turns"] = "not-a-list"
+    _write_jsonl(index_path, [row])
+    write_empty_fallback_report(not_list_workspace, generated_at=generated_at)
+    not_list_validation = validate_report(not_list_workspace, generated_at=generated_at)
+    assert not_list_validation.ok
+
+    # turns list contains a non-dict item -- skipped
+    non_dict_workspace = _workspace_fixture(tmp_path / "turns-non-dict")
+    project_dir2 = non_dict_workspace / "projects" / "ReportGenerator-abc123def456"
+    index_path2 = project_dir2 / "sessions.index.jsonl"
+    row2 = _load_jsonl(index_path2)[0]
+    row2["turns"] = ["not-a-dict", {"turn_start_line": 2, "turn_end_line": 4}]
+    _write_jsonl(index_path2, [row2])
+    write_empty_fallback_report(non_dict_workspace, generated_at=generated_at)
+    non_dict_validation = validate_report(non_dict_workspace, generated_at=generated_at)
+    assert non_dict_validation.ok
+
+    # turns list contains a dict with non-int start/end -- skipped
+    bad_fields_workspace = _workspace_fixture(tmp_path / "turns-bad-fields")
+    project_dir3 = bad_fields_workspace / "projects" / "ReportGenerator-abc123def456"
+    index_path3 = project_dir3 / "sessions.index.jsonl"
+    row3 = _load_jsonl(index_path3)[0]
+    row3["turns"] = [{"turn_start_line": "two", "turn_end_line": "four"}]
+    _write_jsonl(index_path3, [row3])
+    write_empty_fallback_report(bad_fields_workspace, generated_at=generated_at)
+    bad_fields_validation = validate_report(bad_fields_workspace, generated_at=generated_at)
+    assert bad_fields_validation.ok
 
 
 def _load_json(path: Path) -> dict[str, object]:

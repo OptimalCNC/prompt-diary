@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from zoneinfo import ZoneInfo
 
+import pytest
 from typer.testing import CliRunner
 
 import prompt_diary.cli as cli_module
@@ -15,10 +16,6 @@ from prompt_diary.api import prepare_prompt_diary
 from prompt_diary.cli import app
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec, TimeWindow
 from prompt_diary.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV
-
-if TYPE_CHECKING:
-    import pytest
-
 
 TARGET_DATE = "2026-05-12"
 TARGET_TIMEZONE = "Asia/Shanghai"
@@ -81,41 +78,57 @@ def test_prepare_api_copies_subagents_as_parent_session_context(tmp_path: Path) 
 
     codex_row = rows_by_source["codex"]
     assert codex_row["source_session_id"] == "codex-parent"
-    assert codex_row["target_start_line"] == 2
-    assert codex_row["target_end_line"] == 6
+    assert codex_row["target_start_line"] == 3
+    assert codex_row["target_end_line"] == 8
     assert codex_row["subagent_path"] == "sessions/codex/subagents/codex-parent"
-    codex_subagents = cast("list[JsonObject]", codex_row["target_subagents"])
-    assert codex_subagents == [
+    codex_turns = cast("list[JsonObject]", codex_row["turns"])
+    assert codex_turns == [
         {
-            "agent_role": "explorer",
-            "association": "spawned_or_returned_in_target_span",
-            "parent_result_line": 6,
-            "parent_spawn_line": 3,
-            "session_file": "rollout-2026-05-12T08-17-39-codex-child.jsonl",
-            "source_session_id": "codex-child",
+            "turn_start_line": 3,
+            "turn_end_line": 8,
+            "target_subagents": [
+                {
+                    "agent_role": "explorer",
+                    "association": "spawned_or_returned_in_target_span",
+                    "parent_result_line": 7,
+                    "parent_spawn_line": 4,
+                    "session_file": "rollout-2026-05-12T08-17-39-codex-child.jsonl",
+                    "source_session_id": "codex-child",
+                }
+            ],
         }
     ]
+    assert "target_subagents" not in codex_row
 
     claude_row = rows_by_source["claude-code"]
     assert claude_row["source_session_id"] == "00000000-0000-4000-8000-00000000c001"
     assert claude_row["target_start_line"] == 2
-    assert claude_row["target_end_line"] == 5
+    assert claude_row["target_end_line"] == 6
     assert (
         claude_row["subagent_path"]
         == "sessions/claude-code/subagents/00000000-0000-4000-8000-00000000c001"
     )
-    claude_subagents = cast("list[JsonObject]", claude_row["target_subagents"])
-    assert claude_subagents == [
+    claude_turns = cast("list[JsonObject]", claude_row["turns"])
+    assert claude_turns == [
         {
-            "agent_role": "Explore",
-            "association": "spawned_or_returned_in_target_span",
-            "parent_result_line": 5,
-            "parent_spawn_line": 3,
-            "session_file": "agent-a000000000000001.jsonl",
-            "source_session_id": "a000000000000001",
+            "turn_start_line": 2,
+            "turn_end_line": 6,
+            "target_subagents": [
+                {
+                    "agent_role": "Explore",
+                    "association": "spawned_or_returned_in_target_span",
+                    "parent_result_line": 5,
+                    "parent_spawn_line": 3,
+                    "session_file": "agent-a000000000000001.jsonl",
+                    "source_session_id": "a000000000000001",
+                }
+            ],
         }
     ]
+    assert "target_subagents" not in claude_row
 
+    codex_subagents = cast("list[JsonObject]", codex_turns[0]["target_subagents"])
+    claude_subagents = cast("list[JsonObject]", claude_turns[0]["target_subagents"])
     copied_codex_subagent = (
         project_dir
         / str(codex_row["subagent_path"])
@@ -234,9 +247,69 @@ def test_prepare_api_handles_payload_timestamp_turn_context_cwd_and_end_boundary
     assert project_json["project_label"] == "turn-context-project"
     rows = _load_jsonl(project_dir / "sessions.index.jsonl")
     assert rows[0]["source_session_id"] == "payload-timestamp-session"
-    assert rows[0]["target_start_line"] == 1
-    assert rows[0]["target_end_line"] == 2
+    assert rows[0]["target_start_line"] == 3
+    assert rows[0]["target_end_line"] == 3
+    assert rows[0]["turns"] == [
+        {"turn_start_line": 3, "turn_end_line": 3, "target_subagents": []}
+    ]
     assert not (project_dir / "sessions" / "codex" / "end-boundary-only.jsonl").exists()
+
+
+def test_prepare_api_indexes_cross_day_agent_reactions_by_human_trigger(
+    tmp_path: Path,
+) -> None:
+    fixture = _prepare_fixture("prepare-cross-day-reactions")
+
+    may18 = prepare_prompt_diary(
+        date="2026-05-18",
+        today=False,
+        timezone_name=TARGET_TIMEZONE,
+        force=False,
+        reports_root=tmp_path / ".reports-may18",
+        source_specs=(SourceSpec(source="codex", root=fixture.codex_root),),
+        now=datetime(2026, 5, 19, 9, 2, tzinfo=ZoneInfo(TARGET_TIMEZONE)),
+    )
+
+    assert may18.session_count == 1
+    may18_project = _single_directory(may18.workspace_path / "projects")
+    may18_project_json = _load_json(may18_project / "project.json")
+    assert may18_project_json["project_label"] == "git-outpost"
+    may18_row = _load_jsonl(may18_project / "sessions.index.jsonl")[0]
+    assert may18_row["source_session_id"] == "git-outpost-cross-day"
+    assert may18_row["target_start_line"] == 4
+    assert may18_row["target_end_line"] == 13
+    assert may18_row["turns"] == [
+        {"turn_start_line": 4, "turn_end_line": 13, "target_subagents": []}
+    ]
+    copied_session = may18_project / str(may18_row["session_path"])
+    fixture_session = (
+        fixture.codex_root
+        / "2026"
+        / "05"
+        / "18"
+        / "rollout-2026-05-18T23-59-29-git-outpost-cross-day.jsonl"
+    )
+    assert copied_session.read_text(encoding="utf-8") == fixture_session.read_text(encoding="utf-8")
+
+    may19 = prepare_prompt_diary(
+        date="2026-05-19",
+        today=False,
+        timezone_name=TARGET_TIMEZONE,
+        force=False,
+        reports_root=tmp_path / ".reports-may19",
+        source_specs=(SourceSpec(source="codex", root=fixture.codex_root),),
+        now=datetime(2026, 5, 20, 9, 2, tzinfo=ZoneInfo(TARGET_TIMEZONE)),
+    )
+
+    assert may19.session_count == 1
+    may19_project = _single_directory(may19.workspace_path / "projects")
+    may19_row = _load_jsonl(may19_project / "sessions.index.jsonl")[0]
+    assert may19_row["source_session_id"] == "git-outpost-cross-day"
+    assert may19_row["target_start_line"] == 16
+    assert may19_row["target_end_line"] == 18
+    assert may19_row["turns"] == [
+        {"turn_start_line": 16, "turn_end_line": 18, "target_subagents": []}
+    ]
 
 
 def test_cli_prepare_forwards_today_timezone_and_force(
@@ -359,13 +432,19 @@ def _assert_realistic_workspace(
     rows_by_source = _rows_by_source(_load_jsonl(project_dir / "sessions.index.jsonl"))
     assert set(rows_by_source) == {"claude-code", "codex"}
     assert rows_by_source["codex"]["source_session_id"] == "019e1bb6-620a-7462-9fb0-d28c3acef59d"
-    assert rows_by_source["codex"]["target_start_line"] == 2
-    assert rows_by_source["codex"]["target_end_line"] == 4
+    assert rows_by_source["codex"]["target_start_line"] == 4
+    assert rows_by_source["codex"]["target_end_line"] == 6
+    assert rows_by_source["codex"]["turns"] == [
+        {"turn_start_line": 4, "turn_end_line": 6, "target_subagents": []}
+    ]
     assert rows_by_source["claude-code"]["source_session_id"] == (
         "3e1dcfb6-32e7-4059-9d1c-5fddc8b8d0c3"
     )
     assert rows_by_source["claude-code"]["target_start_line"] == 3
-    assert rows_by_source["claude-code"]["target_end_line"] == 4
+    assert rows_by_source["claude-code"]["target_end_line"] == 5
+    assert rows_by_source["claude-code"]["turns"] == [
+        {"turn_start_line": 3, "turn_end_line": 5, "target_subagents": []}
+    ]
 
     copied_codex = project_dir / str(rows_by_source["codex"]["session_path"])
     copied_claude = project_dir / str(rows_by_source["claude-code"]["session_path"])
