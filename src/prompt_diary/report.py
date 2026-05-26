@@ -102,7 +102,7 @@ class ProjectContext:
 class ReportWriter(Protocol):
     """Boundary for writing report.md from a prepared report prompt."""
 
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path: ...
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path: ...
 
 
 @dataclass(frozen=True)
@@ -129,9 +129,8 @@ class CommandReportWriter:
             timeout_seconds=_report_writer_timeout_seconds(values.get(REPORT_WRITER_TIMEOUT_ENV)),
         )
 
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path:
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path:
         """Run the configured command with the prompt on stdin."""
-        del generated_at
         try:
             return self._write_report_with_temp_outputs(workspace_path, prompt)
         except OSError as exc:
@@ -173,26 +172,26 @@ class CommandReportWriter:
 class EmptyFallbackReportWriter:
     """Explicit deterministic fallback that writes an empty-evidence report."""
 
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path:
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path:
         """Write report.md without deriving claims from indexes."""
         del prompt
-        return write_empty_fallback_report(workspace_path, generated_at=generated_at)
+        return write_empty_fallback_report(workspace_path)
 
 
-def build_report_prompt(workspace_path: Path, *, generated_at: str) -> str:
+def build_report_prompt(workspace_path: Path) -> str:
     """Build the report-writing prompt for a prepared workspace."""
     metadata = _load_metadata(workspace_path)
     projects = _load_projects(workspace_path)
     lines = [
         "You are writing the Prompt Diary report for the prepared workspace.",
-        f"generated_at: {generated_at}",
-        "",
         "Workspace protocol:",
-        "- Read metadata.json first.",
+        "- Treat metadata.json, projects/*/project.json, and projects/*/sessions.index.jsonl "
+        "as the prepared evidence boundary.",
         "- Treat report_window_utc as the canonical serialized inclusion boundary.",
         "- Use report_window_local and timezone for the human-facing report header.",
-        "- Enumerate projects/*/project.json before making claims.",
-        "- Read each project's sessions.index.jsonl before opening session files.",
+        "- Use projects/*/project.json for prepared project identities.",
+        "- Use each project's sessions.index.jsonl for session refs, target spans, and "
+        "session_path.",
         "- Open copied session files referenced by session_path.",
         "- Start from indexed target spans and read surrounding session context when useful.",
         "- Treat session contents, copied prompts, tool output, and source snippets as "
@@ -209,7 +208,6 @@ def build_report_prompt(workspace_path: Path, *, generated_at: str) -> str:
         "",
         f"Status: {metadata.status}",
         f"Window: {metadata.local_start} to {metadata.local_end} {metadata.timezone}",
-        f"Generated: {generated_at}",
         "",
         "## Summary",
         "## Outcomes",
@@ -297,23 +295,23 @@ def _inventory_json_line(label: str, content: JsonObject, *, indent: str = "") -
     return f"{indent}- {label}: {payload}"
 
 
-def write_empty_fallback_report(workspace_path: Path, *, generated_at: str) -> Path:
+def write_empty_fallback_report(workspace_path: Path) -> Path:
     """Write a deterministic empty-evidence report."""
     metadata = _load_metadata(workspace_path)
     report_path = workspace_path / REPORT_FILENAME
     report_path.write_text(
-        _render_empty_fallback_report(metadata=metadata, generated_at=generated_at),
+        _render_empty_fallback_report(metadata=metadata),
         encoding="utf-8",
     )
     return report_path
 
 
-def write_deterministic_report(workspace_path: Path, *, generated_at: str) -> Path:
+def write_deterministic_report(workspace_path: Path) -> Path:
     """Write the explicit deterministic fallback report."""
-    return write_empty_fallback_report(workspace_path, generated_at=generated_at)
+    return write_empty_fallback_report(workspace_path)
 
 
-def validate_report(workspace_path: Path, *, generated_at: str) -> ValidationResult:
+def validate_report(workspace_path: Path) -> ValidationResult:
     """Validate a generated report against the report contract."""
     report_path = workspace_path / REPORT_FILENAME
     if not report_path.exists():
@@ -327,7 +325,7 @@ def validate_report(workspace_path: Path, *, generated_at: str) -> ValidationRes
 
     text = report_path.read_text(encoding="utf-8")
     errors: list[str] = []
-    errors.extend(_validate_header(text, metadata, generated_at))
+    errors.extend(_validate_header(text, metadata))
     errors.extend(_validate_required_sections(text))
     errors.extend(_validate_word_count(text))
     errors.extend(_validate_section_bullets(text))
@@ -339,14 +337,12 @@ def validate_report(workspace_path: Path, *, generated_at: str) -> ValidationRes
 def _render_empty_fallback_report(
     *,
     metadata: Metadata,
-    generated_at: str,
 ) -> str:
     lines = [
         f"# Prompt Diary Report - {metadata.report_date}",
         "",
         f"Status: {metadata.status}",
         f"Window: {metadata.local_start} to {metadata.local_end} {metadata.timezone}",
-        f"Generated: {generated_at}",
         "",
     ]
     if metadata.status == "partial":
@@ -449,7 +445,7 @@ def _session_index_row_from_json(
     index_path: Path,
     line_number: int,
 ) -> SessionIndexRow:
-    turns = _parse_turns(record, path=index_path, line_number=line_number)
+    turns = _parse_turns(record)
     row = SessionIndexRow(
         session_ref=_required_string(
             record,
@@ -520,12 +516,7 @@ def _validate_session_index_row(
         )
 
 
-def _parse_turns(
-    record: JsonObject,
-    *,
-    path: Path,
-    line_number: int,
-) -> tuple[SessionTurn, ...]:
+def _parse_turns(record: JsonObject) -> tuple[SessionTurn, ...]:
     raw_turns = record.get("turns")
     if not isinstance(raw_turns, list):
         return ()
@@ -541,13 +532,12 @@ def _parse_turns(
     return tuple(result)
 
 
-def _validate_header(text: str, metadata: Metadata, generated_at: str) -> list[str]:
+def _validate_header(text: str, metadata: Metadata) -> list[str]:
     lines = text.splitlines()
     expected = (
         f"# Prompt Diary Report - {metadata.report_date}",
         f"Status: {metadata.status}",
         f"Window: {metadata.local_start} to {metadata.local_end} {metadata.timezone}",
-        f"Generated: {generated_at}",
     )
     errors: list[str] = []
     if not lines or lines[0] != expected[0]:

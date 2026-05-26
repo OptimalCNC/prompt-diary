@@ -25,16 +25,16 @@ class CapturingWriter:
     workspace_path: Path | None = None
     prompt: str | None = None
 
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path:
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path:
         self.workspace_path = workspace_path
         self.prompt = prompt
-        return write_empty_fallback_report(workspace_path, generated_at=generated_at)
+        return write_empty_fallback_report(workspace_path)
 
 
 @dataclass
 class WrongPathWriter:
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path:
-        del prompt, generated_at
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path:
+        del prompt
         wrong_path = workspace_path / "elsewhere.md"
         wrong_path.write_text("not the contract path", encoding="utf-8")
         return wrong_path
@@ -42,8 +42,8 @@ class WrongPathWriter:
 
 @dataclass
 class InvalidReportWriter:
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path:
-        del prompt, generated_at
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path:
+        del prompt
         report_path = workspace_path / "report.md"
         report_path.write_text("# Invalid\n", encoding="utf-8")
         return report_path
@@ -51,9 +51,9 @@ class InvalidReportWriter:
 
 @dataclass
 class AbsoluteReportPathWriter:
-    def write_report(self, *, workspace_path: Path, prompt: str, generated_at: str) -> Path:
+    def write_report(self, *, workspace_path: Path, prompt: str) -> Path:
         del prompt
-        return write_empty_fallback_report(workspace_path, generated_at=generated_at).resolve()
+        return write_empty_fallback_report(workspace_path).resolve()
 
 
 def test_generate_executes_injected_writer_in_workspace_and_validates(
@@ -76,8 +76,7 @@ def test_generate_executes_injected_writer_in_workspace_and_validates(
     assert result.validation.ok
     assert writer.workspace_path == workspace
     assert writer.prompt is not None
-    assert "generated_at: 2026-05-13T09:00:00+08:00" in writer.prompt
-    assert "Read metadata.json first" in writer.prompt
+    assert "prepared evidence boundary" in writer.prompt
     assert any("Reusing existing workspace" in message for message in result.messages)
 
 
@@ -135,28 +134,6 @@ def test_generate_rejects_existing_workspace_for_different_target(
             now=datetime(2026, 5, 13, 1, 0, tzinfo=ZoneInfo("UTC")),
             report_writer=CapturingWriter(),
         )
-
-
-def test_generate_localizes_naive_generation_time(tmp_path: Path) -> None:
-    reports_root = tmp_path / ".reports"
-    writer = CapturingWriter()
-
-    result = generate_prompt_diary(
-        date="2026-05-12",
-        today=False,
-        timezone_name="Asia/Shanghai",
-        reports_root=reports_root,
-        source_specs=(),
-        now=datetime.fromisoformat("2026-05-13T09:00:00"),
-        report_writer=writer,
-    )
-
-    assert result.validation.ok
-    assert writer.prompt is not None
-    assert "generated_at: 2026-05-13T09:00:00+08:00" in writer.prompt
-    assert "Generated: 2026-05-13T09:00:00+08:00" in result.report_path.read_text(
-        encoding="utf-8",
-    )
 
 
 def test_generate_rejects_writer_returning_wrong_path(tmp_path: Path) -> None:

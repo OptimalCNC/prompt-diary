@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, tzinfo
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from prompt_diary.errors import ReportValidationError
 from prompt_diary.models import (
     GenerateResult,
     PrepareResult,
-    ReportTarget,
     SourceSpec,
-    serialize_datetime,
 )
 from prompt_diary.report import (
     CommandReportWriter,
@@ -25,6 +23,9 @@ from prompt_diary.workspace import (
     validate_workspace_matches_target,
     workspace_path_for_target,
 )
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 def prepare_prompt_diary(
@@ -79,13 +80,11 @@ def generate_prompt_diary(
         )
         messages.extend(prepare_result.messages)
 
-    generated_at = serialize_datetime(_timestamp_for_target(target, now))
-    prompt = build_report_prompt(workspace_path, generated_at=generated_at)
+    prompt = build_report_prompt(workspace_path)
     writer = CommandReportWriter.from_environment() if report_writer is None else report_writer
     returned_report_path = writer.write_report(
         workspace_path=workspace_path,
         prompt=prompt,
-        generated_at=generated_at,
     )
     expected_report_path = workspace_path / "report.md"
     if returned_report_path.resolve() != expected_report_path.resolve():
@@ -93,7 +92,7 @@ def generate_prompt_diary(
             _report_writer_returned_wrong_path_message(returned_report_path, expected_report_path)
         )
     report_path = expected_report_path
-    validation = validate_report(workspace_path, generated_at=generated_at)
+    validation = validate_report(workspace_path)
     if not validation.ok:
         raise ReportValidationError(_validation_failed_message(validation.errors))
 
@@ -105,19 +104,6 @@ def generate_prompt_diary(
         validation=validation,
         messages=tuple(messages),
     )
-
-
-def _timestamp_for_target(target: ReportTarget, timestamp: datetime | None) -> datetime:
-    target_tzinfo = _target_tzinfo(target)
-    if timestamp is None:
-        return datetime.now(target_tzinfo)
-    if timestamp.tzinfo is None:
-        return timestamp.replace(tzinfo=target_tzinfo)
-    return timestamp.astimezone(target_tzinfo)
-
-
-def _target_tzinfo(target: ReportTarget) -> tzinfo:
-    return target.report_window_local.start.tzinfo or timezone.utc
 
 
 def _validation_failed_message(errors: tuple[str, ...]) -> str:
