@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
@@ -178,9 +179,7 @@ def test_prepare_workspace_accepts_single_jsonl_root_and_ignores_unusable_roots(
     project_dir = _single_directory(result.workspace_path / "projects")
     rows = _load_jsonl(project_dir / "sessions.index.jsonl")
     assert rows[0]["source_session_id"] == "single-session"
-    assert rows[0]["turns"] == [
-        {"turn_start_line": 2, "turn_end_line": 2, "target_subagents": []}
-    ]
+    assert rows[0]["turns"] == [{"turn_start_line": 2, "turn_end_line": 2, "target_subagents": []}]
 
 
 def test_prepare_workspace_records_parse_warnings_and_fallback_root(
@@ -238,9 +237,7 @@ def test_prepare_workspace_records_parse_warnings_and_fallback_root(
     assert rows[0]["source_session_id"] == "payload-session"
     assert rows[0]["target_start_line"] == 5
     assert rows[0]["target_end_line"] == 8
-    assert rows[0]["turns"] == [
-        {"turn_start_line": 5, "turn_end_line": 8, "target_subagents": []}
-    ]
+    assert rows[0]["turns"] == [{"turn_start_line": 5, "turn_end_line": 8, "target_subagents": []}]
     audit = _load_json(result.audit_path)
     source_specs = cast("list[dict[str, object]]", audit["source_specs"])
     assert source_specs[0]["fallback_project_root"] == str(fallback_root)
@@ -809,8 +806,6 @@ def test_prepare_workspace_force_removes_only_existing_paths(tmp_path: Path) -> 
 
     # Remove audit dir manually so _remove_existing_workspace encounters missing audit_dir
     audit_dir = first_result.audit_path.parent
-    import shutil
-
     shutil.rmtree(audit_dir)
     assert not audit_dir.exists()
 
@@ -824,9 +819,7 @@ def test_prepare_workspace_force_removes_only_existing_paths(tmp_path: Path) -> 
     shutil.rmtree(workspace_path)
     assert not workspace_path.exists()
 
-    third_result = prepare_workspace(
-        target, reports_root=reports_root, source_specs=(), force=True
-    )
+    third_result = prepare_workspace(target, reports_root=reports_root, source_specs=(), force=True)
     assert third_result.created
 
 
@@ -1099,9 +1092,7 @@ def test_prepare_workspace_claude_tool_result_without_pending_spawn(tmp_path: Pa
                 "cwd": str(project_root),
                 "isSidechain": False,
                 "message": {
-                    "content": [
-                        {"id": "toolu_unmatched", "name": "Agent", "type": "tool_use"}
-                    ],
+                    "content": [{"id": "toolu_unmatched", "name": "Agent", "type": "tool_use"}],
                     "role": "assistant",
                 },
                 "sessionId": parent_id,
@@ -1197,11 +1188,7 @@ def test_prepare_workspace_claude_subagent_without_session_id(tmp_path: Path) ->
     )
     # Subagent without sessionId field
     _write_jsonl(
-        source_root
-        / "-tmp-ReportGenerator"
-        / parent_id
-        / "subagents"
-        / f"agent-{child_id}.jsonl",
+        source_root / "-tmp-ReportGenerator" / parent_id / "subagents" / f"agent-{child_id}.jsonl",
         [
             {
                 "agentId": child_id,
@@ -1349,11 +1336,7 @@ def test_prepare_workspace_codex_subagent_reference_outside_turn(tmp_path: Path)
     _write_codex_subagent(
         source_root / "child-in-turn2.jsonl",
         session_id="child-in-turn2",
-        source={
-            "subagent": {
-                "thread_spawn": {"parent_thread_id": "multi-turn-parent"}
-            }
-        },
+        source={"subagent": {"thread_spawn": {"parent_thread_id": "multi-turn-parent"}}},
     )
 
     result = prepare_workspace(

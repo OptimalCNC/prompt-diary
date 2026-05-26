@@ -5,10 +5,9 @@ from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
-import pytest
 from typer.testing import CliRunner
 
 import prompt_diary.cli as cli_module
@@ -16,6 +15,9 @@ from prompt_diary.api import prepare_prompt_diary
 from prompt_diary.cli import app
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec, TimeWindow
 from prompt_diary.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV
+
+if TYPE_CHECKING:
+    import pytest
 
 TARGET_DATE = "2026-05-12"
 TARGET_TIMEZONE = "Asia/Shanghai"
@@ -249,9 +251,7 @@ def test_prepare_api_handles_payload_timestamp_turn_context_cwd_and_end_boundary
     assert rows[0]["source_session_id"] == "payload-timestamp-session"
     assert rows[0]["target_start_line"] == 3
     assert rows[0]["target_end_line"] == 3
-    assert rows[0]["turns"] == [
-        {"turn_start_line": 3, "turn_end_line": 3, "target_subagents": []}
-    ]
+    assert rows[0]["turns"] == [{"turn_start_line": 3, "turn_end_line": 3, "target_subagents": []}]
     assert not (project_dir / "sessions" / "codex" / "end-boundary-only.jsonl").exists()
 
 

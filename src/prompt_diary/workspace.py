@@ -419,10 +419,11 @@ def _parse_session_file(
         if timestamp is None:
             state.untimestamped_record_count += 1
             continue
-        state.record_timestamp(timestamp, line_number)
-        if _is_human_trigger(record, spec.source):
-            if not state.triggers or state.triggers[-1].line_number != line_number - 1:
-                state.triggers.append(_TriggerLine(line_number=line_number, timestamp=timestamp))
+        state.record_timestamp(timestamp)
+        if _is_human_trigger(record, spec.source) and (
+            not state.triggers or state.triggers[-1].line_number != line_number - 1
+        ):
+            state.triggers.append(_TriggerLine(line_number=line_number, timestamp=timestamp))
 
     turns = _build_turns(
         triggers=state.triggers,
@@ -483,7 +484,7 @@ class _ParseState:
     previous_event_at: datetime | None = None
     triggers: list[_TriggerLine] = field(default_factory=list)
 
-    def record_timestamp(self, timestamp: datetime, line_number: int) -> None:
+    def record_timestamp(self, timestamp: datetime) -> None:
         if self.previous_event_at is not None and timestamp < self.previous_event_at:
             self.non_monotonic_timestamp_count += 1
         self.previous_event_at = timestamp
@@ -541,9 +542,7 @@ def _is_claude_human_trigger(record: JsonObject) -> bool:
         return False
     if _string_value(record, "sourceToolAssistantUUID") is not None:
         return False
-    if _bool_value(record, "isSidechain"):
-        return False
-    return True
+    return not _bool_value(record, "isSidechain")
 
 
 def _build_turns(

@@ -1,0 +1,92 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          version = project["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          expected = f"v{version}"
+
+          if tag != expected:
+              raise SystemExit(
+                  f"Tag {tag!r} does not match package version {version!r}; "
+                  f"expected {expected!r}."
+              )
+          PY
+
+      - name: Install dependencies
+        run: uv sync --locked --python 3.11
+
+      - name: Run Ruff lint
+        run: uv run ruff check
+
+      - name: Check Ruff formatting
+        run: uv run ruff format --check
+
+      - name: Run basedpyright
+        run: uv run basedpyright
+
+      - name: Run tests with coverage
+        run: uv run coverage run -m pytest
+
+      - name: Enforce 100% coverage
+        run: uv run coverage report --fail-under=100
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish package
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist/
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

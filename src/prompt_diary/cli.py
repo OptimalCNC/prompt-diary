@@ -87,9 +87,7 @@ app.add_typer(_prompts_app, name="prompts")
 WorkingDirOption = Annotated[
     str, typer.Option(help="Project working directory for template substitution.")
 ]
-SessionRefOption = Annotated[
-    str, typer.Option(help="Session reference for template substitution.")
-]
+SessionRefOption = Annotated[str, typer.Option(help="Session reference for template substitution.")]
 
 
 @_prompts_app.command(name="evidence-extractor")
