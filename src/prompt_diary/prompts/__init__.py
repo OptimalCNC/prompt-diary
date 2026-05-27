@@ -16,12 +16,24 @@ def _render(name: str, **variables: str) -> str:
     return env.from_string(_load(name)).render(**variables)
 
 
-def evidence_extractor_prompt(*, working_dir: str, session_ref: str) -> str:
+def evidence_extractor_prompt(
+    *,
+    project_key: str,
+    project_json: str,
+    session_ref: str,
+    session_path: str,
+    session_index_record: str,
+    target_turn: str,
+) -> str:
     """Return the evidence extractor prompt with substituted workspace values."""
     return _render(
         "evidence-extractor.md",
-        working_dir=working_dir,
+        project_key=project_key,
+        project_json=project_json,
         session_ref=session_ref,
+        session_path=session_path,
+        session_index_record=session_index_record,
+        target_turn=target_turn,
     )
 
 

@@ -240,6 +240,8 @@ Required fields:
 directory. `subagent_path` is relative to the project folder and names the folder containing copied
 subagent files for this parent session. If the parent has no associated copied subagents,
 `subagent_path` is `""`.
+Downstream evidence artifacts should reference copied sessions by `session_ref`; `session_path`
+stays in the session index as the canonical copied-session locator.
 
 `target_start_line` and `target_end_line` are the overall target span — the first turn's start line
 and the last turn's end line. They are derived from `turns` for convenience; consumers that need

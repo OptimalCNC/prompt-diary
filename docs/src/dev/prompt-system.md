@@ -17,7 +17,8 @@ serves two purposes:
 
 The `prompt_diary.prompts` module exposes one function per prompt:
 
-- `evidence_extractor_prompt(*, working_dir: str, session_ref: str) -> str`
+- `evidence_extractor_prompt(*, project_key: str, project_json: str, session_ref: str,
+  session_path: str, session_index_record: str, target_turn: str) -> str`
 - `project_synthesizer_prompt() -> str`
 - `daily_synthesizer_prompt() -> str`
 
@@ -32,7 +33,10 @@ The Jinja2 dependency and template file loading are implementation details hidde
 The `report prompts` subcommand group prints rendered prompts to stdout:
 
 ```bash
-report prompts evidence-extractor [--working-dir DIR] [--session-ref REF]
+report prompts evidence-extractor \
+  [--project-key KEY] [--project-json JSON] \
+  [--session-ref REF] [--session-path PATH] [--session-index-record JSON] \
+  [--target-turn JSON]
 report prompts project-synthesizer
 report prompts daily-synthesizer
 ```

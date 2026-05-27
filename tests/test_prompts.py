@@ -13,13 +13,25 @@ from prompt_diary.prompts import (
 
 
 def test_evidence_extractor_prompt() -> None:
+    project_json = '{"project_key":"ReportGenerator-abc123","project_label":"ReportGenerator"}'
+
     result = evidence_extractor_prompt(
-        working_dir="projects/ReportGenerator-abc123",
+        project_key="ReportGenerator-abc123",
+        project_json=project_json,
         session_ref="S0001",
+        session_path="projects/ReportGenerator-abc123/sessions/codex/session.jsonl",
+        session_index_record=(
+            '{"session_ref":"S0001","session_path":"sessions/codex/session.jsonl",'
+            '"target_start_line":1,"target_end_line":10}'
+        ),
+        target_turn='{"turn_start_line":1,"turn_end_line":10,"target_subagents":[]}',
     )
 
     assert isinstance(result, str)
     assert len(result) > 0
+    assert "Project key: ReportGenerator-abc123" in result
+    assert "Target turn to extract now" in result
+    assert "write_evidence" in result
 
 
 def test_project_synthesizer_prompt() -> None:

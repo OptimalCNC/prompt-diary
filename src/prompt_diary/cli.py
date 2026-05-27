@@ -88,20 +88,41 @@ app.add_typer(_prompts_app, name="prompts")
 _mcp_app = typer.Typer(help="Run MCP server commands.")
 app.add_typer(_mcp_app, name="mcp")
 
-WorkingDirOption = Annotated[
-    str, typer.Option(help="Project working directory for template substitution.")
+ProjectKeyOption = Annotated[str, typer.Option(help="Project key for template substitution.")]
+ProjectJsonOption = Annotated[
+    str, typer.Option(help="project.json content for template substitution.")
 ]
 SessionRefOption = Annotated[str, typer.Option(help="Session reference for template substitution.")]
+SessionPathOption = Annotated[
+    str, typer.Option(help="Workspace-root-relative session path for template substitution.")
+]
+SessionIndexRecordOption = Annotated[
+    str, typer.Option(help="Session index record without turns for template substitution.")
+]
+TargetTurnOption = Annotated[str, typer.Option(help="Target turn for template substitution.")]
 
 
 @_prompts_app.command(name="evidence-extractor")
 def prompts_evidence_extractor(
     *,
-    working_dir: WorkingDirOption = "<WORKING_DIR>",
+    project_key: ProjectKeyOption = "<PROJECT_KEY>",
+    project_json: ProjectJsonOption = "<PROJECT_JSON>",
     session_ref: SessionRefOption = "<SESSION_REF>",
+    session_path: SessionPathOption = "<SESSION_PATH>",
+    session_index_record: SessionIndexRecordOption = "<SESSION_INDEX_RECORD>",
+    target_turn: TargetTurnOption = "<TARGET_TURN>",
 ) -> None:
     """Print the evidence extractor prompt."""
-    typer.echo(evidence_extractor_prompt(working_dir=working_dir, session_ref=session_ref))
+    typer.echo(
+        evidence_extractor_prompt(
+            project_key=project_key,
+            project_json=project_json,
+            session_ref=session_ref,
+            session_path=session_path,
+            session_index_record=session_index_record,
+            target_turn=target_turn,
+        )
+    )
 
 
 @_prompts_app.command(name="project-synthesizer")

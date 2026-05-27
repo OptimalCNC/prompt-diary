@@ -13,6 +13,74 @@ Implementation status: this page describes the future evidence-extraction contra
 package MCP server is boilerplate-only and exposes `prompt_diary_ping`; `write_evidence` is not
 implemented yet.
 
+## Extractor Inputs
+
+An evidence extractor receives prepared context for exactly one indexed turn:
+
+- `project_key`
+- `project.json` content
+- `session_ref`
+- `session_path`, relative to the prepared workspace root that is the extractor's current working
+  directory
+- the exact `sessions.index.jsonl` row for that session, with `turns` removed
+- one target turn copied from that row's `turns[]`
+
+The supplied index row is the authoritative session metadata. The target turn is the only turn the
+extractor may write in that invocation. The extractor reads the session file at `session_path`,
+which the orchestrator derives from the project key and index row so the extractor does not need
+to resolve filesystem locations itself.
+
+The extractor writes one draft chain at a time through `write_evidence`, passing the project
+key, `session_ref`, and the draft evidence chain. The MCP server owns canonical card creation,
+structural checks, `chain_ref` allocation, and atomic writes.
+
+Extraction is orchestrated in indexed turn order. The orchestrator provides the first target turn,
+waits for its evidence chain to be written, then invokes extraction for the next target turn.
+
+```mermaid
+flowchart TD
+    inputs["Session inputs<br/>project_key, project.json,<br/>session_ref, session_path,<br/>index row without turns"]
+    turns["Indexed turns[]"]
+    more{"More turns?"}
+    prompt["Turn inputs<br/>session inputs + target turn"]
+    agent["Evidence extractor agent<br/>extract one chain"]
+    write["write_evidence<br/>append one chain"]
+    next["Advance to next turn"]
+    done["Session evidence card complete"]
+
+    inputs --> more
+    turns --> more
+    more -->|yes| prompt
+    prompt --> agent
+    agent --> write
+    write --> next
+    next --> more
+    more -->|no| done
+```
+
+After each successful `write_evidence` call, the orchestrator can drive the same agent with a
+short follow-up message instead of repeating the full extractor prompt:
+
+````text
+The previous turn was written successfully.
+
+Committed chain:
+```json
+{{ write_evidence_result }}
+```
+
+Continue with the next target turn from the same session. Use the same session context, evidence
+chain shape, and extraction rules from the initial prompt. Do not modify or duplicate the previous
+chain.
+
+Target turn to extract now:
+```json
+{{ target_turn }}
+```
+
+Start now: extract this turn and call `write_evidence` once.
+````
+
 ## Session Evidence Cards
 
 Report generation decomposes copied sessions into structured session evidence cards before
@@ -23,12 +91,15 @@ An existing session evidence card maps one-to-one to one row in one project's
 `(project_key, session_ref)`.
 
 `session_ref` is the report-facing handle used by citations. `source_session_id` remains source
-provenance and should not replace `session_ref` in generated report citations.
+provenance in the session index and should not replace `session_ref` in generated report
+citations.
+Evidence cards should not duplicate file locators such as `session_path`; consumers that need the
+copied session file resolve `(project_key, session_ref)` through the project session index.
 
 The canonical storage model is multiple per-session card files, not one flat
 `evidence_cards.jsonl` file. Agents write evidence through the tools on the
-[MCP Tools](./mcp-tools.md) page; the MCP server validates draft evidence chains, creates or
-updates canonical session evidence cards, and assigns `chain_ref` values.
+[MCP Tools](./mcp-tools.md) page; the MCP server creates or updates canonical session evidence
+cards and assigns `chain_ref` values.
 
 Each session evidence card contains one evidence chain for each `turns[]` item in the associated
 `sessions.index.jsonl` row. Each chain has a stable `chain_ref` only within that card and records
@@ -37,7 +108,7 @@ the indexed turn boundary it covers, so a chain can be identified as
 `chain_ref` values should be assigned in indexed turn order: the first `turns[]` item becomes
 `E0001`, the second becomes `E0002`, and so on.
 
-Session evidence cards are stored under the project workspace:
+Session evidence cards are stored under the project directory inside the prepared workspace:
 
 ```text
 projects/<project_key>/
@@ -55,9 +126,6 @@ Example canonical card:
   "schema_version": 1,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0001",
-  "source": "codex",
-  "source_session_id": "019e3aeb-f640-70c0-98f2-fd7e480a5a89",
-  "session_path": "sessions/codex/rollout-2026-05-18T19-50-03-019e3aeb-f640-70c0-98f2-fd7e480a5a89.jsonl",
   "evidence_chains": [
     {
       "chain_ref": "E0001",
@@ -82,7 +150,7 @@ Example canonical card:
       },
       "agent_reactions": [
         {
-          "summary": "Agent inspected local Claude session paths and compared them with the current design wording.",
+          "summary": "Agent inspected local Claude session filename conventions and compared them with the current design wording.",
           "citations": [
             {"lines": "51-58"}
           ]
