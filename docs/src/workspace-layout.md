@@ -98,7 +98,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "report_date": "2026-05-12",
   "timezone": "Asia/Shanghai",
   "status": "final",
@@ -150,7 +150,7 @@ Each project folder contains `project.json`.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator"
 }
@@ -214,6 +214,7 @@ Required fields:
   "subagent_path": "sessions/codex/subagents/019e1bb6-620a-7462-9fb0-d28c3acef59d",
   "turns": [
     {
+      "turn_ref": "T0001",
       "turn_start_line": 21,
       "turn_end_line": 55,
       "target_subagents": [
@@ -228,6 +229,7 @@ Required fields:
       ]
     },
     {
+      "turn_ref": "T0002",
       "turn_start_line": 60,
       "turn_end_line": 98,
       "target_subagents": []
@@ -249,6 +251,8 @@ per-trigger boundaries should use the `turns` list.
 
 Each `turns` item records one trigger-owned work unit inside the target span:
 
+- `turn_ref` is a row-local prepared-turn reference such as `T0001`. It resets for each
+  `sessions.index.jsonl` row and identifies a turn as `(project_key, session_ref, turn_ref)`.
 - `turn_start_line` is the line of the human-authored trigger that starts this work unit. It is
   1-based and inclusive.
 - `turn_end_line` is the last line of agent reactions owned by this trigger. It is 1-based and
@@ -282,6 +286,8 @@ Reference generation:
 1. Within each project, sort copied root sessions by `(source, source_session_id, session_path)`.
 2. Assign `session_ref` values as `S0001`, `S0002`, and so on within that project.
 3. If a session lacks a source session id, use the source filename stem in the sort key and in `source_session_id`.
+4. Within each session index row, assign `turn_ref` values as `T0001`, `T0002`, and so on after
+   target turn construction, in the order of that row's `turns[]`.
 
 Target span and turn construction:
 

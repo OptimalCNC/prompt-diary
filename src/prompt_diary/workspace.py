@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 CODEX_SOURCE_ENV = "PROMPT_DIARY_CODEX_SESSIONS"
 CLAUDE_SOURCE_ENV = "PROMPT_DIARY_CLAUDE_PROJECTS"
 REPORTS_DIRNAME = ".reports"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _UNSAFE_DISPLAY_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 _REPEATED_DASHES = re.compile(r"-+")
@@ -61,6 +61,7 @@ class TargetSubagent:
 class ParsedTurn:
     """One trigger-owned work unit inside a parsed session."""
 
+    turn_ref: str
     turn_start_line: int
     turn_end_line: int
     target_subagents: tuple[TargetSubagent, ...] = ()
@@ -561,14 +562,24 @@ def _build_turns(
     if not in_window:
         return ()
     result: list[ParsedTurn] = []
-    for idx, trigger in in_window:
+    for position, (idx, trigger) in enumerate(in_window, start=1):
         next_trigger = triggers[idx + 1] if idx + 1 < len(triggers) else None
         if next_trigger is not None:
             turn_end = _turn_end_before_next_trigger(lines, next_trigger.line_number, source)
         else:
             turn_end = total_lines
-        result.append(ParsedTurn(turn_start_line=trigger.line_number, turn_end_line=turn_end))
+        result.append(
+            ParsedTurn(
+                turn_ref=_turn_ref(position),
+                turn_start_line=trigger.line_number,
+                turn_end_line=turn_end,
+            )
+        )
     return tuple(result)
+
+
+def _turn_ref(position: int) -> str:
+    return f"T{position:04d}"
 
 
 def _turn_end_before_next_trigger(
@@ -820,6 +831,7 @@ def _with_target_subagents(
             any_subagents = True
         new_turns.append(
             ParsedTurn(
+                turn_ref=turn.turn_ref,
                 turn_start_line=turn.turn_start_line,
                 turn_end_line=turn.turn_end_line,
                 target_subagents=turn_subagents,
@@ -1385,6 +1397,7 @@ def _session_index_row(session: ParsedSession, *, session_ref: str) -> JsonObjec
 
 def _turn_index_json(turn: ParsedTurn) -> JsonObject:
     return {
+        "turn_ref": turn.turn_ref,
         "turn_start_line": turn.turn_start_line,
         "turn_end_line": turn.turn_end_line,
         "target_subagents": [

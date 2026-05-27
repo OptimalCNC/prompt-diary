@@ -24,7 +24,9 @@ def test_evidence_extractor_prompt() -> None:
             '{"session_ref":"S0001","session_path":"sessions/codex/session.jsonl",'
             '"target_start_line":1,"target_end_line":10}'
         ),
-        target_turn='{"turn_start_line":1,"turn_end_line":10,"target_subagents":[]}',
+        target_turn=(
+            '{"turn_ref":"T0001","turn_start_line":1,"turn_end_line":10,"target_subagents":[]}'
+        ),
     )
 
     assert isinstance(result, str)

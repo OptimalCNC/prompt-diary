@@ -49,8 +49,8 @@ the resulting `report.md` against the report contract.
 
 Design principle: **evidence-grounded reporting**. The generation prompt includes the workspace
 inventory and the report contract rules. The validation step checks that every citation in the
-report resolves to a real session and line span in the prepared workspace. Claims without valid
-citations fail validation.
+report resolves to a real session and a line span contained by one indexed turn in the prepared
+workspace. Claims without valid citations fail validation.
 
 Product contracts: [Report Generation](../generate/index.md),
 [Evidence Contract](../generate/evidence-contract.md),

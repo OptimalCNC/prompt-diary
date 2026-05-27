@@ -112,7 +112,7 @@ Model rules:
   exists.
 - Claim-bearing fields use `ReportClaim` or a narrower record that contains equivalent citation
   and confidence fields.
-- Every concrete work claim cites lines inside an indexed target span using the report citation
+- Every concrete work claim cites lines inside exactly one indexed turn using the report citation
   rules from the [Evidence Contract](./evidence-contract.md#session-evidence-cards).
 - Trigger, agent reaction, result, terminal state, verification status, and confidence remain
   separable for major outcomes.
@@ -168,8 +168,8 @@ Section intent:
 - `Follow-ups`: specific future work grounded in the day's evidence.
 - `Evidence Gaps`: missing or weak evidence that affects confidence.
 
-Every concrete work claim in claim-bearing Markdown sections must cite lines inside the indexed
-target span using the report citation format from the
+Every concrete work claim in claim-bearing Markdown sections must cite lines inside exactly one
+indexed turn using the report citation format from the
 [Evidence Contract](./evidence-contract.md#session-evidence-cards). The renderer must not add
 claim-bearing prose that is absent from `daily-report.json`.
 

@@ -1,0 +1,12 @@
+{"payload":{"base_instructions":{"text":"[redacted]"},"cli_version":"redacted","cwd":"/fake/projects/ReportGenerator","id":"fake-codex-multi-turn","model_provider":"openai","originator":"codex_cli_rs","timestamp":"2026-05-11T16:59:58Z"},"timestamp":"2026-05-11T16:59:58Z","type":"session_meta"}
+{"payload":{"collaboration_mode_kind":"default","model_context_window":0,"started_at":"2026-05-11T16:59:59Z","turn_id":"turn-redacted-001","type":"task_started"},"timestamp":"2026-05-11T16:59:59Z","type":"event_msg"}
+{"payload":{"approval_policy":"on-request","cwd":"/fake/projects/ReportGenerator","summary":"[redacted]","timezone":"Asia/Shanghai","turn_id":"turn-redacted-001"},"timestamp":"2026-05-11T17:00:00Z","type":"turn_context"}
+{"payload":{"content":[{"text":"First redacted task.","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-05-11T17:00:01Z","type":"response_item"}
+{"payload":{"message":"First redacted task.","type":"user_message"},"timestamp":"2026-05-11T17:00:02Z","type":"event_msg"}
+{"payload":{"content":[{"text":"[redacted assistant reaction]","type":"output_text"}],"role":"assistant","type":"message"},"timestamp":"2026-05-11T17:00:03Z","type":"response_item"}
+{"payload":{"approval_policy":"on-request","cwd":"/fake/projects/ReportGenerator","summary":"[redacted]","timezone":"Asia/Shanghai","turn_id":"turn-redacted-002"},"timestamp":"2026-05-11T17:30:00Z","type":"turn_context"}
+{"payload":{"content":[{"text":"<environment_context>\nRedacted source-generated context.\n</environment_context>","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-05-11T17:30:01Z","type":"response_item"}
+{"payload":{"collaboration_mode_kind":"default","model_context_window":0,"started_at":"2026-05-11T17:30:02Z","turn_id":"turn-redacted-002","type":"turn_started"},"timestamp":"2026-05-11T17:30:02Z","type":"event_msg"}
+{"payload":{"content":[{"text":"Second redacted task.","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-05-11T17:30:03Z","type":"response_item"}
+{"payload":{"message":"Second redacted task.","type":"user_message"},"timestamp":"2026-05-11T17:30:04Z","type":"event_msg"}
+{"payload":{"content":[{"text":"[redacted second assistant reaction]","type":"output_text"}],"role":"assistant","type":"message"},"timestamp":"2026-05-11T17:30:05Z","type":"response_item"}

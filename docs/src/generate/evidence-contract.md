@@ -26,9 +26,11 @@ An evidence extractor receives prepared context for exactly one indexed turn:
 - one target turn copied from that row's `turns[]`
 
 The supplied index row is the authoritative session metadata. The target turn is the only turn the
-extractor may write in that invocation. The extractor reads the session file at `session_path`,
-which the orchestrator derives from the project key and index row so the extractor does not need
-to resolve filesystem locations itself.
+extractor may write in that invocation. Its `turn_ref` identifies the prepared turn as
+`(project_key, session_ref, turn_ref)`, while `turn_start_line` and `turn_end_line` remain the
+required evidence bounds. The extractor reads the session file at `session_path`, which the
+orchestrator derives from the project key and index row so the extractor does not need to resolve
+filesystem locations itself.
 
 The extractor writes one draft chain at a time through `write_evidence`, passing the project
 key, `session_ref`, and the draft evidence chain. The MCP server owns canonical card creation,
@@ -102,11 +104,15 @@ The canonical storage model is multiple per-session card files, not one flat
 cards and assigns `chain_ref` values.
 
 Each session evidence card contains one evidence chain for each `turns[]` item in the associated
-`sessions.index.jsonl` row. Each chain has a stable `chain_ref` only within that card and records
-the indexed turn boundary it covers, so a chain can be identified as
-`(project_key, session_ref, chain_ref)`.
-`chain_ref` values should be assigned in indexed turn order: the first `turns[]` item becomes
-`E0001`, the second becomes `E0002`, and so on.
+`sessions.index.jsonl` row. Each chain copies the indexed turn's `turn_ref` plus line bounds.
+`chain_ref` is separate from `turn_ref`: it is stable only within the evidence card and identifies
+the committed chain as `(project_key, session_ref, chain_ref)`. `chain_ref` values should be
+assigned in indexed turn order: the first written chain becomes `E0001`, the second becomes
+`E0002`, and so on.
+
+Current runtime `report.md` validation still uses direct session-line Markdown citations:
+`[project=<project_key>;session=<session_ref>;lines=<start>-<end>]`. The intended future citation
+chain is `report.md -> work item -> evidence card -> turn_ref + lines`.
 
 Session evidence cards are stored under the project directory inside the prepared workspace:
 
@@ -130,6 +136,7 @@ Example canonical card:
     {
       "chain_ref": "E0001",
       "turn": {
+        "turn_ref": "T0001",
         "turn_start_line": 45,
         "turn_end_line": 120
       },
@@ -189,6 +196,11 @@ turn -> trigger -> agent_reactions -> outcomes and/or terminal_state
 ```
 
 Field definitions, controlled values, and extraction rules are in the evidence extractor prompt.
+The write surface for one extracted chain is
+[`write_evidence`](./mcp-tools.md#write_evidence), which accepts the chain as an
+`evidence_chain`, appends it to the canonical session evidence card, and assigns `chain_ref`.
+Required write-time checks are listed in
+[MCP Tools: Structural Rules](./mcp-tools.md#structural-rules).
 
 ## Evidence Extractor Prompt
 

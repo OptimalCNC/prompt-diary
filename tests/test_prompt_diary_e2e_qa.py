@@ -425,7 +425,7 @@ def _assert_prompt_contract(prompt: str) -> None:
     assert "metadata.json, projects/*/project.json, and projects/*/sessions.index.jsonl" in prompt
     assert "Treat report_window_utc as the canonical serialized inclusion boundary." in prompt
     assert "Use projects/*/project.json for prepared project identities." in prompt
-    assert "session refs, target spans, and session_path." in prompt
+    assert "session refs, turn refs, target spans, and session_path." in prompt
     assert "session_path=projects/" in prompt
     assert "session=S0001" in prompt
     assert "session=S0002" in prompt

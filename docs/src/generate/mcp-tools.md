@@ -55,8 +55,8 @@ Rejected writes should be structured and actionable:
   "errors": [
     {
       "path": "evidence_chain.outcomes[0].citations[0].lines",
-      "message": "line span 240-245 is outside target span 42-239",
-      "hint": "cite only lines inside the indexed session target span"
+      "message": "line span 240-245 is outside turn T0001 span 42-239",
+      "hint": "cite only lines inside the evidence chain's indexed turn"
     }
   ]
 }
@@ -75,6 +75,7 @@ Input:
   "session_ref": "S0001",
   "evidence_chain": {
     "turn": {
+      "turn_ref": "T0001",
       "turn_start_line": 120,
       "turn_end_line": 170
     },
@@ -132,7 +133,12 @@ Write behavior:
 - If the evidence file already exists, the tool validates the existing card, assigns the next
   `chain_ref`, and appends the chain.
 - Agents must not provide `chain_ref`; the tool owns deterministic chain reference allocation.
+- Agents must provide the assigned `turn_ref` inside `evidence_chain.turn`; the tool validates it
+  against `projects/<project_key>/sessions.index.jsonl`.
 - Chain references are assigned as `E0001`, `E0002`, and so on within the card.
+- `turn_ref` and `chain_ref` are separate. `turn_ref` comes from preparation and identifies the
+  covered turn; `chain_ref` is assigned at write time and identifies the committed evidence chain.
+- A card must not contain duplicate evidence for one `turn_ref`.
 - Writes should be serialized per `(project_key, session_ref)` and committed with atomic file
   replacement so parallel extraction agents cannot corrupt a card.
 
@@ -157,10 +163,14 @@ Successful result:
 - `session_ref` resolves to exactly one row in `projects/<project_key>/sessions.index.jsonl`.
 - Input is one evidence chain, not a full session evidence card.
 - Input does not include `chain_ref`.
+- `evidence_chain.turn.turn_ref` resolves to exactly one `turns[]` item in the session index row.
+- `evidence_chain.turn.turn_start_line` and `turn_end_line` match that indexed turn.
+- Existing card chains do not already contain evidence for that `turn_ref`.
 - Required summaries are non-empty.
 - `trigger.type` is one of `explicit_user_message`, `implicit_context`, `user_correction`,
   `user_approval`, or `resume_or_continue`.
-- Citation line spans are numeric, ordered, and contained by the indexed target span.
+- Citation line spans are numeric, ordered, and contained by the indexed turn identified by
+  `turn_ref`.
 - Material outcomes cite agent reaction evidence, not only trigger evidence.
 - `outcomes[*].category` is one of the controlled outcome categories in the Evidence Contract and
   is not a completion, verification, or engagement label.

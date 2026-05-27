@@ -49,7 +49,7 @@ For each evidence chain, check:
 - Citations are inspectable and semantically support the claim. MCP validation owns structural
   enforcement for extracted chain citations.
 - Agent reaction citations are not rejected merely because their timestamps cross midnight when
-  they remain inside the indexed target span for an in-window human trigger.
+  they remain inside the indexed turn for an in-window human trigger.
 - Outcome categories use the controlled values from the Evidence Contract.
 - Terminal states such as `no_material`, `interrupted`, `failed`, `blocked`, and
   `clarification_only` match the observable evidence.
