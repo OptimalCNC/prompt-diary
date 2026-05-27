@@ -7,16 +7,18 @@ reduce session noise while preserving the chain that makes a claim trustworthy:
 trigger -> agent reaction -> observed outcome or terminal state
 ```
 
-This step operates inside one prepared project workspace at a time. It uses `project.json`,
-`sessions.index.jsonl`, and the canonical per-session evidence cards under `evidence/`.
+This step runs from the prepared report workspace root and operates on one prepared project scope
+at a time, identified by `project_key`. It uses `projects/<project_key>/project.json`,
+`projects/<project_key>/sessions.index.jsonl`, and the canonical per-session evidence cards under
+`projects/<project_key>/evidence/`.
 
 ## Inputs And Outputs
 
 Inputs:
 
-- `project.json`
-- `sessions.index.jsonl`
-- `evidence/<session_ref>.json` files created by the MCP evidence tools
+- `projects/<project_key>/project.json`
+- `projects/<project_key>/sessions.index.jsonl`
+- `projects/<project_key>/evidence/<session_ref>.json` files created by the MCP evidence tools
 - copied session files only when a card or citation needs inspection
 
 Outputs:

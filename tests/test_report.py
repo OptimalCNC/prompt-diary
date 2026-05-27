@@ -179,7 +179,7 @@ def test_build_report_prompt_handles_no_projects_and_project_without_sessions(
     empty_prompt = build_report_prompt(empty_workspace)
     write_empty_fallback_report(empty_workspace)
 
-    assert "- No project workspaces were prepared." in empty_prompt
+    assert "- No project directories were prepared." in empty_prompt
     assert validate_report(empty_workspace).ok
 
     workspace = _workspace_fixture(tmp_path)
