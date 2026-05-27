@@ -24,6 +24,7 @@ def test_report_help_lists_commands() -> None:
     assert result.exit_code == 0
     assert "prepare" in result.stdout
     assert "generate" in result.stdout
+    assert "mcp" in result.stdout
 
 
 def test_report_version() -> None:
@@ -67,6 +68,22 @@ def test_generate_error_exits_with_stderr(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert result.exit_code == 2
     assert result.stderr == f"Error: {GENERATE_FAILED}\n"
+
+
+def test_mcp_serve_delegates_to_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = False
+
+    def fake_serve_mcp_server() -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(cli_module, "serve_mcp_server", fake_serve_mcp_server, raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["mcp", "serve"])
+
+    assert result.exit_code == 0
+    assert called
 
 
 def test_main_invokes_app(monkeypatch: pytest.MonkeyPatch) -> None:

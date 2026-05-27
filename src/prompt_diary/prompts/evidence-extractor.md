@@ -4,6 +4,10 @@ Your task is to extract evidence chains from exactly one prepared assistant sess
 through the Prompt Diary MCP server. Do not write the final daily report. Do not synthesize across
 projects or across sessions.
 
+Implementation status: this is a future evidence-extraction prompt for the planned
+`write_evidence` MCP tool. The current `report mcp serve` command is boilerplate-only and exposes
+`prompt_diary_ping`; do not use that bootstrap server for extraction.
+
 Inputs:
 - Project working directory: {{ working_dir }}
 - Session reference: {{ session_ref }}

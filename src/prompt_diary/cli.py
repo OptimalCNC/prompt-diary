@@ -9,6 +9,7 @@ import typer
 from prompt_diary import __version__
 from prompt_diary.api import generate_prompt_diary, prepare_prompt_diary
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.mcp_server import serve_mcp_server
 from prompt_diary.prompts import (
     daily_synthesizer_prompt,
     evidence_extractor_prompt,
@@ -84,6 +85,9 @@ def generate(
 _prompts_app = typer.Typer(help="Print generation prompts.")
 app.add_typer(_prompts_app, name="prompts")
 
+_mcp_app = typer.Typer(help="Run MCP server commands.")
+app.add_typer(_mcp_app, name="mcp")
+
 WorkingDirOption = Annotated[
     str, typer.Option(help="Project working directory for template substitution.")
 ]
@@ -110,6 +114,12 @@ def prompts_project_synthesizer() -> None:
 def prompts_daily_synthesizer() -> None:
     """Print the daily synthesizer prompt."""
     typer.echo(daily_synthesizer_prompt())
+
+
+@_mcp_app.command(name="serve")
+def mcp_serve() -> None:
+    """Run the MCP server over stdio."""
+    serve_mcp_server()
 
 
 def _exit_with_error(exc: PromptDiaryError) -> NoReturn:

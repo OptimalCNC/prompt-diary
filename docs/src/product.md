@@ -99,6 +99,7 @@ The user-facing CLI surface should stay thin and map directly to the workflow:
 ```text
 prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force]
 prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City]
+prompt-diary mcp serve
 ```
 
 Date targeting rules:
@@ -118,3 +119,7 @@ generation workflow in that workspace, writes `report.md`, and validates it befo
 success. If the workspace is missing, generation internally runs preparation first. If the
 workspace already exists, generation should print an informational message that the existing
 workspace is being reused and that `prepare --force` can refresh it after session updates.
+
+`mcp serve` starts the package MCP server over stdio for integration work. The initial server is
+boilerplate-only and exposes `prompt_diary_ping`; report-writing tools are not part of this command
+yet.

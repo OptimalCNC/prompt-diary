@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "jinja2>=3.1",
+    "mcp>=1.2",
     "typer>=0.25.1",
 ]
 
@@ -32,9 +33,15 @@ addopts = [
     "--strict-config",
     "--strict-markers",
 ]
+markers = [
+    "codex_mcp: opt-in Codex MCP integration contract tests",
+]
 
 [tool.coverage.run]
 source = ["prompt_diary"]
+omit = [
+    "src/prompt_diary/codex_runner.py",
+]
 
 [tool.coverage.report]
 fail_under = 100

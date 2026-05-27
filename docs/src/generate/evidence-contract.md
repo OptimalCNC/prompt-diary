@@ -9,6 +9,10 @@ This contract operates inside that workspace. Evidence files are generation arti
 after preparation; they do not change the preparation layout or the meaning of
 `sessions.index.jsonl`.
 
+Implementation status: this page describes the future evidence-extraction contract. The current
+package MCP server is boilerplate-only and exposes `prompt_diary_ping`; `write_evidence` is not
+implemented yet.
+
 ## Session Evidence Cards
 
 Report generation decomposes copied sessions into structured session evidence cards before

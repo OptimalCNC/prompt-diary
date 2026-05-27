@@ -23,6 +23,8 @@ The package lives at `src/prompt_diary/`.
 | `targets.py` | Resolves CLI date and timezone options into a `ReportTarget` with local and UTC time windows. |
 | `workspace.py` | Parses source session files, applies time-window filtering, and writes the prepared workspace with metadata, copied sessions, and session indexes. |
 | `report.py` | Constructs the generation prompt, executes external report writers, and validates `report.md` against the report contract. |
+| `mcp_server.py` | Boilerplate MCP stdio server; currently exposes only the harmless `prompt_diary_ping` tool. |
+| `codex_runner.py` | Typed async skeleton for future Codex-backed agent turns. See [Codex Agent Runner](./codex-agent-runner.md). |
 | `prompts/` | Prompt template subpackage. Loads `.md` template files from package data and renders them with Jinja2. See [Prompt System](./prompt-system.md). |
 
 ## Workflows
@@ -70,6 +72,7 @@ both the runtime agent prompt and the rendered documentation. See
 The user-facing CLI commands and date targeting rules are defined in
 [Prompt Diary Product](../product.md#cli-surface). `cli.py` implements those commands and adds the
 `prompts` subcommand group for prompt template inspection (see
-[Prompt System](./prompt-system.md)).
+[Prompt System](./prompt-system.md)) and the `mcp serve` bootstrap command for the stdio MCP
+server.
 
 `report` and `prompt-diary` are both registered as console entry points and invoke the same CLI.

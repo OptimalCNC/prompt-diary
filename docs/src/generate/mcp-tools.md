@@ -7,6 +7,10 @@ must not rely on hidden global report-date state.
 This page groups MCP tools by generation phase. The evidence data model is defined by the
 [Evidence Contract](./evidence-contract.md).
 
+Implementation status: the current package MCP server is a boilerplate stdio server and exposes
+only `prompt_diary_ping` for connectivity checks. The evidence-writing tools below are the future
+generation contract and are not implemented yet.
+
 ## Evidence Tools
 
 Evidence tools are the primary agent-facing write surface for extracted session evidence.

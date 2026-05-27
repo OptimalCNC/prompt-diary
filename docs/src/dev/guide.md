@@ -81,10 +81,18 @@ strict config and marker validation.
 uv run pytest
 ```
 
+Codex/MCP integration contract tests are opt-in because future implementations may spend model
+tokens or require local SDK setup:
+
+```bash
+uv run pytest -m codex_mcp --run-codex-mcp tests/test_codex_mcp_integration.py
+```
+
 ## Coverage
 
 Coverage uses [coverage.py](https://coverage.readthedocs.io/) and is configured to require 100%
-line coverage for package code.
+line coverage for package code. The Codex runner skeleton is omitted from default coverage until
+its tests can run without spending model tokens.
 
 ```bash
 uv run coverage run -m pytest
