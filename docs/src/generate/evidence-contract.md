@@ -195,6 +195,4 @@ Field definitions, controlled values, and extraction rules are in the evidence e
 Prompt source: `src/prompt_diary/prompts/evidence-extractor.md` — loaded at runtime by the
 orchestrator.
 
----
-
-{{#include ../../../src/prompt_diary/prompts/evidence-extractor.md}}
+See [Evidence Extractor Prompt](./evidence-extractor-prompt.md).

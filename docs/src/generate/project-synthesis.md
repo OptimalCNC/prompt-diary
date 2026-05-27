@@ -146,9 +146,7 @@ Daily report synthesis needs a compact project summary:
 Prompt source: `src/prompt_diary/prompts/project-synthesizer.md` — loaded at runtime by the
 orchestrator.
 
----
-
-{{#include ../../../src/prompt_diary/prompts/project-synthesizer.md}}
+See [Project Synthesizer Prompt](./project-synthesizer-prompt.md).
 
 ## Quality Checklist
 

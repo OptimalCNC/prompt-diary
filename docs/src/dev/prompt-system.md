@@ -10,8 +10,10 @@ serves two purposes:
 
 - **Runtime**: the files are installed as package data with the wheel, so `importlib.resources`
   can load them after `pip install`.
-- **Documentation**: the product docs include them via mdbook's `{{#include}}` directive, so
-  the rendered docs always show the current prompt content.
+- **Documentation**: dedicated prompt pages under `docs/src/generate/` contain only mdbook
+  `{{#include}}` directives for the runtime prompt files, so the rendered prompt pages match the
+  current prompt content. Parent generation contract and synthesis pages keep prompt source
+  metadata and link to those dedicated prompt pages.
 
 ## Python API
 
@@ -60,17 +62,24 @@ function in `src/prompt_diary/prompts/__init__.py` and pass it through the `_ren
 3. Export the function from `src/prompt_diary/__init__.py`.
 4. Add a CLI command in `src/prompt_diary/cli.py` under the `_prompts_app` Typer group.
 5. Add tests in `tests/test_prompts.py` — one for the API function, one for the CLI command.
-6. Add an `{{#include}}` directive in the relevant product doc under `docs/src/generate/`. The
-   include path from a doc file to the package is `../../../src/prompt_diary/prompts/<filename>`.
+6. Add a dedicated prompt doc page under `docs/src/generate/` that contains only an
+   `{{#include}}` directive for the runtime prompt file. The include path from a prompt doc page
+   to the package is `../../../src/prompt_diary/prompts/<filename>`.
+7. Add the prompt source note and a link to the prompt doc page on the relevant parent generation
+   page.
+8. Add the prompt doc page to `docs/src/SUMMARY.md` as a child of that parent page.
 
 ## How mdbook Includes Work
 
-The product docs include prompts with a relative path that reaches back into the Python package:
+Dedicated prompt pages include prompts with a relative path that reaches back into the Python
+package. For example, `docs/src/generate/evidence-extractor-prompt.md` includes the runtime
+template with:
 
 ```text
 {{#include ../../../src/prompt_diary/prompts/evidence-extractor.md}}
 ```
 
-mdbook resolves this path relative to the doc file's directory (`docs/src/generate/`). The prompt
-content is rendered inline as formatted markdown. A `---` horizontal rule separates the source
-note from the included content.
+mdbook resolves this path relative to the prompt page's directory (`docs/src/generate/`). The
+prompt content is rendered inline as formatted markdown on the prompt page. Keep prompt source
+metadata on the parent generation page, and link to the prompt page instead of including the
+prompt template directly.
