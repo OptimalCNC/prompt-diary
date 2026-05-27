@@ -11,5 +11,6 @@
   - [MCP Tools](./generate/mcp-tools.md)
 - [Development](./dev/index.md)
   - [Architecture](./dev/architecture.md)
+  - [Codex Agent Runner](./dev/codex-agent-runner.md)
   - [Development Guide](./dev/guide.md)
   - [Prompt System](./dev/prompt-system.md)

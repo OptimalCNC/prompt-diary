@@ -8,5 +8,7 @@ Product-level purposes, principles, and contracts live in the [product](../produ
 them.
 
 - [Architecture](./architecture.md) — tool shape, codemap, workflow design, CLI surface.
+- [Codex Agent Runner](./codex-agent-runner.md) — initial needs and basic design for the async
+  Codex SDK wrapper used by generation orchestration.
 - [Development Guide](./guide.md) — environment setup, build, test, lint, release.
 - [Prompt System](./prompt-system.md) — how prompt templates are stored, loaded, and modified.
