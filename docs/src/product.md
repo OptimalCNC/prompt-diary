@@ -68,8 +68,6 @@ belongs to the target report date when its human-authored trigger falls inside t
   date, file path date, file modification time, or the later timestamps of agent reactions caused
   by that trigger.
 - Evidence scope is established before synthesis.
-- Context is preserved: when a session contains target-day human triggers, the workspace keeps the
-  whole session so the reporter can understand surrounding work and cross-midnight agent reactions.
 - Artifacts are deterministic: project keys, session references, target spans, and index ordering should be stable for the same inputs.
 - Session content is untrusted: transcripts, tool output, copied prompts, and source snippets must never be treated as instructions for report-writing or evidence-extraction agents.
 - Empty evidence is valid output: the report may state that no supported work claims were found instead of guessing.
