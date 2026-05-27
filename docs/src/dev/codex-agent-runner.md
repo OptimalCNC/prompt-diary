@@ -112,9 +112,10 @@ class AgentTurnResult:
 
 Artifact paths should usually be checked by the caller rather than trusted from assistant text.
 
-The current package module is a typed skeleton: `CodexBackend.__aenter__` and
-`CodexAgentRunner.turn(...)` raise `NotImplementedError`, and the package intentionally has no
-Codex SDK dependency or import. The module is not exported from `prompt_diary.__init__`.
+The current package module is an optional runtime wrapper: `CodexBackend.__aenter__` lazily imports
+`openai_codex`, starts the SDK app-server, and `CodexAgentRunner.turn(...)` starts one SDK thread on
+first use and reuses it for later turns. The package intentionally has no package-metadata Codex SDK
+dependency, and the module is not exported from `prompt_diary.__init__`.
 
 ## Codex SDK Usage
 
@@ -214,5 +215,13 @@ async with CodexBackend(backend_config) as backend:
 
 ## Coverage
 
-Default coverage excludes `codex_runner.py`. Real integration tests for this module may spend model
-tokens, so they should be opt-in rather than part of the normal unit-test coverage budget.
+Default unit tests mock the Codex SDK and cover the wrapper contracts without starting a real agent.
+Real integration tests for this module may spend model tokens, so they remain opt-in rather than
+part of the normal unit-test run.
+
+Run the live wrapper test from a development checkout by bootstrapping the optional SDK first:
+
+```bash
+uv run prompt-diary codex bootstrap
+uv run pytest -m codex_mcp --run-codex-mcp tests/test_codex_mcp_integration.py
+```

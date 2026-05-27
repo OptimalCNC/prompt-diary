@@ -8,6 +8,7 @@ import typer
 
 from prompt_diary import __version__
 from prompt_diary.api import generate_prompt_diary, prepare_prompt_diary
+from prompt_diary.codex_bootstrap import bootstrap_codex_sdk
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.mcp_server import serve_mcp_server
 from prompt_diary.prompts import (
@@ -85,6 +86,9 @@ def generate(
 _prompts_app = typer.Typer(help="Print generation prompts.")
 app.add_typer(_prompts_app, name="prompts")
 
+_codex_app = typer.Typer(help="Manage optional Codex SDK support.")
+app.add_typer(_codex_app, name="codex")
+
 _mcp_app = typer.Typer(help="Run MCP server commands.")
 app.add_typer(_mcp_app, name="mcp")
 
@@ -141,6 +145,17 @@ def prompts_daily_synthesizer() -> None:
 def mcp_serve() -> None:
     """Run the MCP server over stdio."""
     serve_mcp_server()
+
+
+@_codex_app.command(name="bootstrap")
+def codex_bootstrap() -> None:
+    """Install the optional Codex SDK into this runtime environment."""
+    try:
+        result = bootstrap_codex_sdk()
+    except PromptDiaryError as exc:
+        _exit_with_error(exc)
+    for message in result.messages:
+        typer.echo(message)
 
 
 def _exit_with_error(exc: PromptDiaryError) -> NoReturn:

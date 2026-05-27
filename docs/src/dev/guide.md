@@ -81,8 +81,15 @@ strict config and marker validation.
 uv run pytest
 ```
 
-Codex/MCP integration contract tests are opt-in because future implementations may spend model
-tokens or require local SDK setup:
+Codex/MCP integration contract tests are opt-in because they may spend model tokens and require
+local SDK setup. Bootstrap the optional SDK into the current development environment before running
+the live wrapper test:
+
+```bash
+uv run prompt-diary codex bootstrap
+```
+
+Then run the opt-in real Codex agent wrapper test:
 
 ```bash
 uv run pytest -m codex_mcp --run-codex-mcp tests/test_codex_mcp_integration.py
@@ -91,8 +98,8 @@ uv run pytest -m codex_mcp --run-codex-mcp tests/test_codex_mcp_integration.py
 ## Coverage
 
 Coverage uses [coverage.py](https://coverage.readthedocs.io/) and is configured to require 100%
-line coverage for package code. The Codex runner skeleton is omitted from default coverage until
-its tests can run without spending model tokens.
+line coverage for package code. Default coverage uses mocked Codex runner tests; the real Codex
+agent wrapper test remains opt-in because it may spend model tokens.
 
 ```bash
 uv run coverage run -m pytest

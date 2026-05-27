@@ -1,15 +1,29 @@
 # coverage: ignore file
-"""Typed skeleton for future Codex SDK runner integration."""
+"""Async wrapper for the optional OpenAI Codex Python SDK."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import asyncio
+import importlib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
+
+from prompt_diary.errors import PromptDiaryError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
     from types import TracebackType
+
+    from prompt_diary.models import JsonObject
+
+
+class CodexRunnerError(PromptDiaryError):
+    """Raised when the Codex SDK runner cannot execute a requested operation."""
+
+
+def _empty_env_overrides() -> Mapping[str, str]:
+    return {}
 
 
 @dataclass(frozen=True)
@@ -17,6 +31,8 @@ class CodexBackendConfig:
     """Backend-level Codex configuration shared by compatible runners."""
 
     mcp_config_overrides: tuple[str, ...] = ()
+    codex_bin: Path | None = None
+    env_overrides: Mapping[str, str] = field(default_factory=_empty_env_overrides)
 
 
 @dataclass(frozen=True)
@@ -51,15 +67,91 @@ class AgentTurnResult:
     events: tuple[AgentTurnEvent, ...]
 
 
+class _AppServerConfigFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        codex_bin: str | None,
+        config_overrides: tuple[str, ...],
+        env: dict[str, str] | None,
+    ) -> object: ...
+
+
+class _AsyncCodexFactory(Protocol):
+    def __call__(self, *, config: object) -> _AsyncCodexContext: ...
+
+
+class _CodexSdkModule(Protocol):
+    AppServerConfig: _AppServerConfigFactory
+    AsyncCodex: _AsyncCodexFactory
+
+
+class _AsyncCodexContext(Protocol):
+    async def __aenter__(self) -> _AsyncCodex: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> object: ...
+
+
+class _AsyncCodex(Protocol):
+    async def thread_start(
+        self,
+        *,
+        cwd: str,
+        model: str | None = None,
+        model_provider: str | None = None,
+        approval_mode: object | None = None,
+        sandbox: object | None = None,
+        base_instructions: str | None = None,
+        developer_instructions: str | None = None,
+        personality: object | None = None,
+        config: JsonObject | None = None,
+    ) -> _AsyncThread: ...
+
+
+class _AsyncThread(Protocol):
+    async def run(
+        self,
+        prompt: str,
+        *,
+        output_schema: Mapping[str, object] | None = None,
+    ) -> object: ...
+
+
+class _StringEnumFactory(Protocol):
+    def __call__(self, value: str) -> object: ...
+
+
+class _ModelDump(Protocol):
+    def __call__(self, *, mode: str, exclude_none: bool) -> object: ...
+
+
 class CodexBackend:
-    """Async context manager for a future Codex SDK backend process."""
+    """Async context manager for a Codex SDK app-server process."""
 
     def __init__(self, config: CodexBackendConfig) -> None:
         self.config = config
+        self._sdk_module: _CodexSdkModule | None = None
+        self._context: _AsyncCodexContext | None = None
+        self._codex: _AsyncCodex | None = None
 
     async def __aenter__(self) -> CodexBackend:
         """Start and return the SDK backend."""
-        raise NotImplementedError("Codex SDK backend startup is not implemented.")
+        sdk_module = _load_openai_codex()
+        app_server_config = sdk_module.AppServerConfig(
+            codex_bin=str(self.config.codex_bin) if self.config.codex_bin is not None else None,
+            config_overrides=self.config.mcp_config_overrides,
+            env=dict(self.config.env_overrides) or None,
+        )
+        context = sdk_module.AsyncCodex(config=app_server_config)
+        self._sdk_module = sdk_module
+        self._context = context
+        self._codex = await context.__aenter__()
+        return self
 
     async def __aexit__(
         self,
@@ -68,15 +160,36 @@ class CodexBackend:
         traceback: TracebackType | None,
     ) -> None:
         """Stop the SDK backend."""
-        del exc_type, exc, traceback
+        context = self._context
+        self._codex = None
+        self._context = None
+        self._sdk_module = None
+        if context is not None:
+            await context.__aexit__(exc_type, exc, traceback)
+
+    @property
+    def codex(self) -> _AsyncCodex:
+        """Return the active SDK backend, or fail if the backend is not started."""
+        if self._codex is None:
+            raise CodexRunnerError(_backend_not_started_message())
+        return self._codex
+
+    @property
+    def sdk_module(self) -> _CodexSdkModule:
+        """Return the imported SDK module for enum coercion."""
+        if self._sdk_module is None:
+            raise CodexRunnerError(_backend_not_started_message())
+        return self._sdk_module
 
 
 class CodexAgentRunner:
-    """Owns one future Codex SDK conversation thread."""
+    """Owns one Codex SDK conversation thread."""
 
     def __init__(self, backend: CodexBackend, config: AgentConfig) -> None:
         self.backend = backend
         self.config = config
+        self._thread: _AsyncThread | None = None
+        self._turn_running = False
 
     async def turn(
         self,
@@ -86,5 +199,193 @@ class CodexAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         """Run one prompt turn in the conversation."""
-        del prompt, timeout_seconds, output_schema
-        raise NotImplementedError("Codex SDK turn execution is not implemented.")
+        if timeout_seconds <= 0:
+            raise ValueError(_non_positive_timeout_message())
+        if self._turn_running:
+            raise CodexRunnerError(_concurrent_turn_message())
+
+        self._turn_running = True
+        try:
+            thread = await self._ensure_thread_started()
+            result = await asyncio.wait_for(
+                thread.run(prompt, output_schema=output_schema),
+                timeout=timeout_seconds,
+            )
+            return _agent_turn_result(result)
+        finally:
+            self._turn_running = False
+
+    async def _ensure_thread_started(self) -> _AsyncThread:
+        if self._thread is not None:
+            return self._thread
+
+        sdk_module = self.backend.sdk_module
+        thread_config = _thread_config(self.config)
+        approval_mode = _coerce_sdk_enum(
+            sdk_module,
+            enum_name="ApprovalMode",
+            value=self.config.approval_mode,
+        )
+        if approval_mode is None:
+            self._thread = await self.backend.codex.thread_start(
+                cwd=str(self.config.working_directory),
+                model=self.config.model,
+                model_provider=self.config.model_provider,
+                sandbox=_coerce_sdk_enum(
+                    sdk_module,
+                    enum_name="SandboxMode",
+                    value=self.config.sandbox,
+                ),
+                base_instructions=self.config.base_instructions,
+                developer_instructions=self.config.developer_instructions,
+                personality=_coerce_sdk_enum(
+                    sdk_module,
+                    enum_name="Personality",
+                    value=self.config.personality,
+                ),
+                config=thread_config,
+            )
+            return self._thread
+
+        self._thread = await self.backend.codex.thread_start(
+            cwd=str(self.config.working_directory),
+            model=self.config.model,
+            model_provider=self.config.model_provider,
+            approval_mode=approval_mode,
+            sandbox=_coerce_sdk_enum(
+                sdk_module,
+                enum_name="SandboxMode",
+                value=self.config.sandbox,
+            ),
+            base_instructions=self.config.base_instructions,
+            developer_instructions=self.config.developer_instructions,
+            personality=_coerce_sdk_enum(
+                sdk_module,
+                enum_name="Personality",
+                value=self.config.personality,
+            ),
+            config=thread_config,
+        )
+        return self._thread
+
+
+def _load_openai_codex() -> _CodexSdkModule:
+    try:
+        module = importlib.import_module("openai_codex")
+    except ModuleNotFoundError as exc:
+        raise CodexRunnerError(_codex_sdk_missing_message()) from exc
+    return cast("_CodexSdkModule", module)
+
+
+def _thread_config(config: AgentConfig) -> JsonObject | None:
+    if config.reasoning_effort is None:
+        return None
+    return {"model_reasoning_effort": config.reasoning_effort}
+
+
+def _coerce_sdk_enum(
+    sdk_module: object,
+    *,
+    enum_name: str,
+    value: str | None,
+) -> object | None:
+    if value is None:
+        return None
+    enum_type = getattr(sdk_module, enum_name, None)
+    if enum_type is None or not callable(enum_type):
+        return value
+    try:
+        return cast("_StringEnumFactory", enum_type)(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _agent_turn_result(result: object) -> AgentTurnResult:
+    return AgentTurnResult(
+        assistant_text=_string_field(result, "final_response") or "",
+        events=tuple(_agent_turn_event(item) for item in _sequence_field(result, "items")),
+    )
+
+
+def _agent_turn_event(item: object) -> AgentTurnEvent:
+    unwrapped = _unwrap_root(item)
+    kind = (
+        _string_field(unwrapped, "type")
+        or _string_field(unwrapped, "kind")
+        or type(unwrapped).__name__
+    )
+    return AgentTurnEvent(
+        kind=kind,
+        summary=_event_summary(unwrapped, kind),
+        metadata=_metadata(unwrapped),
+    )
+
+
+def _event_summary(item: object, kind: str) -> str:
+    for field_name in ("summary", "text", "message", "name", "command"):
+        value = _field(item, field_name)
+        if isinstance(value, str) and value:
+            return value
+        if _is_sequence(value):
+            return " ".join(str(part) for part in value)
+    return kind
+
+
+def _metadata(item: object) -> Mapping[str, object]:
+    if isinstance(item, dict):
+        return dict(cast("Mapping[str, object]", item))
+
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        dumped = cast("_ModelDump", model_dump)(mode="json", exclude_none=True)
+        if isinstance(dumped, dict):
+            return dict(cast("Mapping[str, object]", dumped))
+
+    return {"repr": repr(item)}
+
+
+def _unwrap_root(item: object) -> object:
+    return _field(item, "root") or item
+
+
+def _field(item: object, name: str) -> object | None:
+    if isinstance(item, dict):
+        return cast("Mapping[str, object]", item).get(name)
+    return getattr(item, name, None)
+
+
+def _string_field(item: object, name: str) -> str | None:
+    value = _field(item, name)
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _sequence_field(item: object, name: str) -> Sequence[object]:
+    value = _field(item, name)
+    if _is_sequence(value):
+        return value
+    return ()
+
+
+def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _codex_sdk_missing_message() -> str:
+    return (
+        "The optional Codex SDK is not importable. Run `prompt-diary codex bootstrap` "
+        "inside this runtime environment before using CodexAgentRunner."
+    )
+
+
+def _backend_not_started_message() -> str:
+    return "CodexBackend must be entered before running Codex agent turns."
+
+
+def _non_positive_timeout_message() -> str:
+    return "timeout_seconds must be positive."
+
+
+def _concurrent_turn_message() -> str:
+    return "CodexAgentRunner.turn cannot be called concurrently on the same runner."
