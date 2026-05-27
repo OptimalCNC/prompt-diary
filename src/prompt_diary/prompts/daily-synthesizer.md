@@ -7,7 +7,15 @@ You will receive:
 - project work items
 - per-session evidence cards
 
-Write report.md using the required section order from the Report Generation page.
+Produce two artifacts in the workspace root:
+- daily-report.json, the authoritative semantic report model
+- report.md, a Markdown rendering of daily-report.json using the required section order from the
+  Daily Report Synthesis page
+
+daily-report.json is the source of truth. Do not put evidence-bearing claims only in Markdown.
+Represent claims, confidence, citations, evidence quality, engagement judgments, agent-driving
+lessons, risks, blockers, follow-ups, and evidence gaps as structured JSON fields before rendering
+the Markdown view.
 
 Purpose lenses:
 
@@ -42,7 +50,7 @@ change the reader's understanding of the result, risk, or follow-up.
 
 Fallback bullets:
 
-Each required section with no supported content must use its fallback bullet:
+Each required Markdown section with no supported content must use its fallback bullet:
 - Executive Summary: "- No supported work claims found for this report window."
 - Outcome Overview: "- No supported outcomes found for this report window."
 - Project Details: "- No supported project-level work items found for this report window."
@@ -108,7 +116,7 @@ Confidence depends on:
 - completeness of prepared session indexes
 - number and quality of evidence cards
 - clarity of cited artifacts, decisions, blockers, and command output
-- consistency between project synthesis and the final report
+- consistency between project synthesis, daily-report.json, and report.md
 
 Low confidence is acceptable. The report should say what is missing instead of filling gaps with
 speculation.
@@ -117,6 +125,9 @@ Rules:
 - Start from project synthesis outputs, not raw imagination.
 - Open copied sessions only when you need to inspect cited context.
 - Resolve report citations through project session indexes before writing them.
+- Encode claim-bearing content in daily-report.json before rendering report.md.
+- Render report.md from daily-report.json; do not introduce new claim-bearing prose during
+  rendering.
 - Every concrete outcome, risk, blocker, follow-up, working mechanism, or engagement observation
   must be grounded in valid work-claim citations.
 - Preserve trigger -> agent reaction -> outcome or terminal state for major claims.
@@ -128,4 +139,5 @@ Rules:
 - Include no-material, interrupted, failed, or clarification-only examples when they support
   evidence trust, engagement review, or team learning.
 - Prefer concise high-density reporting over chronological narration.
+- Create daily-report.json in the workspace root.
 - Create report.md in the workspace root.

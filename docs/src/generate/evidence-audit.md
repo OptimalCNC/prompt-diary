@@ -1,9 +1,9 @@
 # Generation Audits
 
 Generation audits are adversarial semantic checkpoints for evidence cards, project synthesis, and
-the draft report. They are separate from deterministic validation. Validation checks required shape
-and structural citation boundaries; audits check whether claims are actually supported, fair,
-complete, and not overstated.
+the draft daily report artifacts. They are separate from deterministic validation. Validation
+checks required shape and structural citation boundaries; audits check whether claims are actually
+supported, fair, complete, and not overstated.
 
 An audit checkpoint belongs to the phase that produced the artifact under review. It usually
 annotates, challenges, or revises that artifact rather than turning it into a different artifact
@@ -21,7 +21,7 @@ Inputs:
 - per-session evidence cards
 - evidence audit status and reasoning, when the evidence audit checkpoint is enabled
 - project synthesis outputs, when the project or report audit checkpoint is enabled
-- draft `report.md`, when the report audit checkpoint is enabled
+- draft `daily-report.json` and `report.md`, when the report audit checkpoint is enabled
 
 Durable audit outputs, when configured:
 
@@ -84,10 +84,10 @@ For each project synthesis output, check:
 
 ### Report Audit
 
-When enabled, run after a draft `report.md` is composed and before deterministic validation is
-accepted. Findings go back to daily report synthesis. If the report audit finds an upstream
-synthesis or evidence problem, the workflow returns to that producing phase and repeats the
-affected enabled audits.
+When enabled, run after a draft `daily-report.json` is composed, `report.md` is rendered, and
+before deterministic validation is accepted. Findings go back to daily report synthesis. If the
+report audit finds an upstream synthesis or evidence problem, the workflow returns to that
+producing phase and repeats the affected enabled audits.
 
 For each material report claim, check:
 
@@ -175,8 +175,8 @@ Recommended control flow when all audit checkpoints are enabled:
 5. Run the project audit checkpoint.
 6. If project audit fails, revise project synthesis, or return to evidence extraction when the
    findings expose missing or unreliable evidence cards, then re-audit.
-7. Compose `report.md` from project synthesis outputs, including project audit findings when that
-   checkpoint is enabled.
+7. Compose `daily-report.json` from project synthesis outputs, including project audit findings
+   when that checkpoint is enabled, then render `report.md`.
 8. Run the report audit checkpoint.
 9. If report audit fails, revise the report, or return to project synthesis or evidence extraction
    when the finding belongs upstream, then re-audit the affected artifacts.
@@ -195,6 +195,7 @@ You are the Prompt Diary generation auditor.
 You will receive a prepared workspace and one or more generation artifacts:
 - per-session evidence cards
 - project synthesis outputs
+- draft daily-report.json
 - draft report.md
 
 Your job is to check semantic support, verification status and reasoning, evidence accounting,
