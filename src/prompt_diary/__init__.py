@@ -3,6 +3,7 @@
 from prompt_diary.api import generate_prompt_diary, prepare_prompt_diary
 from prompt_diary.prompts import (
     daily_synthesizer_prompt,
+    evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
     project_synthesizer_prompt,
 )
@@ -10,6 +11,7 @@ from prompt_diary.prompts import (
 __all__ = [
     "__version__",
     "daily_synthesizer_prompt",
+    "evidence_extractor_next_turn_prompt",
     "evidence_extractor_prompt",
     "generate_prompt_diary",
     "prepare_prompt_diary",

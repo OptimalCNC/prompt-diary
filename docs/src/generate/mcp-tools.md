@@ -7,15 +7,11 @@ must not rely on hidden global report-date state.
 This page groups MCP tools by generation phase. The evidence data model is defined by the
 [Evidence Contract](./evidence-contract.md).
 
-Implementation status: the current package MCP server is a boilerplate stdio server and exposes
-only `prompt_diary_ping` for connectivity checks. The evidence-writing tools below are the future
-generation contract and are not implemented yet.
-
 ## Evidence Tools
 
 Evidence tools are the primary agent-facing write surface for extracted session evidence.
 Agents submit one draft evidence chain at a time. The MCP server owns validation, canonical
-per-session evidence card creation, chain reference allocation, and atomic writes.
+per-session evidence card creation, and atomic writes.
 
 ### Required Tool
 
@@ -23,7 +19,7 @@ The v1 MCP server must expose this tool:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_evidence` | Check one draft evidence chain, create or update the canonical session evidence card, and assign `chain_ref`. |
+| `write_evidence` | Check one draft evidence chain and create or update the canonical session evidence card. |
 
 ### Common Rules
 
@@ -64,63 +60,68 @@ Rejected writes should be structured and actionable:
 
 ### `write_evidence`
 
-Check one draft evidence chain, write it to the canonical session evidence card, and assign the
-committed `chain_ref`.
+Check one draft evidence chain and write it to the canonical session evidence card. Examples of
+canonical evidence chains are in the [Evidence Contract](./evidence-contract.md).
+The controlled values in this schema duplicate the enum definitions in
+`src/prompt_diary/prompts/__init__.py` so this tool contract remains self-contained.
 
-Input:
+Input schema:
 
 ```json
 {
-  "project_key": "ReportGenerator-e6ff7eeda632",
-  "session_ref": "S0001",
+  "project_key": "<project_key>",
+  "session_ref": "<session_ref>",
   "evidence_chain": {
-    "turn": {
-      "turn_ref": "T0001",
-      "turn_start_line": 120,
-      "turn_end_line": 170
-    },
+    "turn_ref": "<turn_ref>",
     "trigger": {
-      "type": "explicit_user_message",
-      "summary": "User asked to design the evidence writing operation.",
+      "type": "explicit_user_message|implicit_context|user_correction|user_approval|resume_or_continue",
+      "summary": "<non-empty string>",
       "quoted_messages": [
         {
-          "text": "Please design the evidence writing operation.",
+          "text": "<redacted user-authored text>",
           "citations": [
-            {"lines": "120-128"}
+            {"lines": "<start>-<end>"}
           ]
         }
       ],
       "citations": [
-        {"lines": "120-128"}
+        {"lines": "<start>-<end>"}
       ]
     },
     "agent_reactions": [
       {
-        "summary": "Agent proposed an MCP write operation that checks and appends evidence chains.",
+        "summary": "<non-empty string>",
         "citations": [
-          {"lines": "129-170"}
+          {"lines": "<start>-<end>"}
         ]
       }
     ],
     "outcomes": [
       {
-        "category": "decision_outcome",
-        "summary": "The evidence writing surface was clarified around workspace-root execution, project key, session reference, and append behavior.",
+        "category": "code_outcome|document_outcome|decision_outcome|validation_outcome|process_outcome|research_outcome|blocker_outcome|other",
+        "summary": "<non-empty string>",
         "citations": [
-          {"lines": "129-170"}
+          {"lines": "<start>-<end>"}
         ]
       }
     ],
-    "observed_checks": [],
+    "observed_checks": [
+      {
+        "type": "command_output|test_output|artifact_inspection|user_feedback|other",
+        "summary": "<non-empty string>",
+        "citations": [
+          {"lines": "<start>-<end>"}
+        ]
+      }
+    ],
     "terminal_state": {
-      "type": "material_result",
-      "summary": "The chain produced a design decision but did not include implementation or independent review evidence.",
+      "type": "material_result|no_material|blocked|interrupted|failed|clarification_only|evidence_gap|other",
+      "summary": "<non-empty string>",
       "citations": [
-        {"lines": "129-170"}
+        {"lines": "<start>-<end>"}
       ]
     },
-    "materiality": "material",
-    "uncertainties": []
+    "materiality": "material|minor|none"
   }
 }
 ```
@@ -130,17 +131,16 @@ Write behavior:
 - If the evidence file does not exist, the tool creates a canonical session evidence card from
   `projects/<project_key>/project.json` and the matching row in
   `projects/<project_key>/sessions.index.jsonl`, then appends the chain.
-- If the evidence file already exists, the tool validates the existing card, assigns the next
-  `chain_ref`, and appends the chain.
-- Agents must not provide `chain_ref`; the tool owns deterministic chain reference allocation.
-- Agents must provide the assigned `turn_ref` inside `evidence_chain.turn`; the tool validates it
-  against `projects/<project_key>/sessions.index.jsonl`.
-- Chain references are assigned as `E0001`, `E0002`, and so on within the card.
-- `turn_ref` and `chain_ref` are separate. `turn_ref` comes from preparation and identifies the
-  covered turn; `chain_ref` is assigned at write time and identifies the committed evidence chain.
+- If the evidence file already exists, the tool validates the existing card and appends the chain.
+- Agents provide the assigned `turn_ref` directly as `evidence_chain.turn_ref`; the tool validates
+  it against `projects/<project_key>/sessions.index.jsonl`.
 - A card must not contain duplicate evidence for one `turn_ref`.
 - Writes should be serialized per `(project_key, session_ref)` and committed with atomic file
   replacement so parallel extraction agents cannot corrupt a card.
+- If a write is rejected, the tool must return structured, actionable errors that name the invalid
+  field, explain the problem, and include a correction hint when possible.
+- Rejected writes are not committed. The extractor may correct the draft from the returned errors
+  and retry until one chain for the assigned `turn_ref` is committed.
 
 Successful result:
 
@@ -149,7 +149,7 @@ Successful result:
   "status": "appended",
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0001",
-  "chain_ref": "E0002"
+  "turn_ref": "T0001"
 }
 ```
 
@@ -162,18 +162,18 @@ Successful result:
 - `project_key` matches the `project_key` in `projects/<project_key>/project.json`.
 - `session_ref` resolves to exactly one row in `projects/<project_key>/sessions.index.jsonl`.
 - Input is one evidence chain, not a full session evidence card.
-- Input does not include `chain_ref`.
-- `evidence_chain.turn.turn_ref` resolves to exactly one `turns[]` item in the session index row.
-- `evidence_chain.turn.turn_start_line` and `turn_end_line` match that indexed turn.
+- `evidence_chain.turn_ref` resolves to exactly one `turns[]` item in the session index row.
 - Existing card chains do not already contain evidence for that `turn_ref`.
 - Required summaries are non-empty.
 - `trigger.type` is one of `explicit_user_message`, `implicit_context`, `user_correction`,
   `user_approval`, or `resume_or_continue`.
 - Citation line spans are numeric, ordered, and contained by the indexed turn identified by
   `turn_ref`.
+- The MCP server enforces citation structure and boundaries. The extractor remains responsible for
+  ensuring cited lines semantically support the evidence-chain claim.
 - Material outcomes cite agent reaction evidence, not only trigger evidence.
-- `outcomes[*].category` is one of the controlled outcome categories in the Evidence Contract and
-  is not a completion, verification, or engagement label.
+- `outcomes[*].category` is one of the controlled outcome categories and is not a completion,
+  verification, or engagement label.
 - `terminal_state` is required for every evidence chain.
 - Input may omit material outcomes only when `terminal_state.type` explains the non-success ending.
 - `terminal_state.type` is one of `material_result`, `no_material`, `blocked`, `interrupted`,
@@ -182,21 +182,4 @@ Successful result:
   visible session evidence.
 - `observed_checks` record visible checks only; they must not include verification status or
   extractor reasoning.
-- `other` outcomes include `suggested_category` and `category_rationale`.
-- `terminal_state.type=other` includes `state_rationale`.
 - Existing evidence cards, when present, match `project.json` and the session index row.
-
-### Optional Tools
-
-These tools are not required for the extractor prompt, but they can be useful for orchestration,
-inspection, and debugging:
-
-| Tool | Purpose |
-| --- | --- |
-| `list_projects` | Return prepared project keys and labels from the current report workspace. |
-| `list_sessions` | Given `project_key`, return indexed sessions and whether each has an evidence card. |
-| `read_evidence` | Given `project_key` and `session_ref`, return the current canonical evidence card if present. |
-| `delete_evidence_chain` | Given `project_key`, `session_ref`, and `chain_ref`, remove one chain; intended for human/debug workflows, not normal extraction. |
-
-Destructive tools such as `delete_evidence_chain` should be disabled by default or require an
-explicit approval mode. Normal extractor agents should only need `write_evidence`.

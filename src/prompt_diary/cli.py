@@ -13,6 +13,7 @@ from prompt_diary.errors import PromptDiaryError
 from prompt_diary.mcp_server import serve_mcp_server
 from prompt_diary.prompts import (
     daily_synthesizer_prompt,
+    evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
     project_synthesizer_prompt,
 )
@@ -104,6 +105,9 @@ SessionIndexRecordOption = Annotated[
     str, typer.Option(help="Session index record without turns for template substitution.")
 ]
 TargetTurnOption = Annotated[str, typer.Option(help="Target turn for template substitution.")]
+WriteEvidenceResultOption = Annotated[
+    str, typer.Option(help="write_evidence result for template substitution.")
+]
 
 
 @_prompts_app.command(name="evidence-extractor")
@@ -124,6 +128,21 @@ def prompts_evidence_extractor(
             session_ref=session_ref,
             session_path=session_path,
             session_index_record=session_index_record,
+            target_turn=target_turn,
+        )
+    )
+
+
+@_prompts_app.command(name="evidence-extractor-next-turn")
+def prompts_evidence_extractor_next_turn(
+    *,
+    write_evidence_result: WriteEvidenceResultOption = "<WRITE_EVIDENCE_RESULT>",
+    target_turn: TargetTurnOption = "<TARGET_TURN>",
+) -> None:
+    """Print the evidence extractor next-turn prompt."""
+    typer.echo(
+        evidence_extractor_next_turn_prompt(
+            write_evidence_result=write_evidence_result,
             target_turn=target_turn,
         )
     )

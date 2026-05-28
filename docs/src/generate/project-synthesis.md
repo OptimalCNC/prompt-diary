@@ -32,9 +32,10 @@ the preparation layout or the meaning of `sessions.index.jsonl`.
 
 ## Work Item Contract
 
-A project work item is a synthesis artifact. It may reference evidence chains by
-`session_ref` and `chain_ref`, but any claim promoted to `report.md` must use the report citation
-format from the [Evidence Contract](./evidence-contract.md).
+A project work item is a synthesis artifact. It references committed evidence chains with full
+`EvidenceChainRef` objects: `project_key`, `session_ref`, and `turn_ref`. `evidence_refs` are only
+for committed evidence chains; missing evidence uses `gap_refs`. Any claim promoted to `report.md`
+must use the report citation format from the [Evidence Contract](./evidence-contract.md).
 
 ```json
 {
@@ -47,7 +48,7 @@ format from the [Evidence Contract](./evidence-contract.md).
   "trigger": {
     "summary": "User asked for evidence-backed report generation documentation.",
     "evidence_refs": [
-      {"session_ref": "S0001", "chain_ref": "E0001"}
+      {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001"}
     ]
   },
   "agent_reaction": {
@@ -69,7 +70,7 @@ format from the [Evidence Contract](./evidence-contract.md).
     {
       "type": "material_result",
       "evidence_refs": [
-        {"session_ref": "S0001", "chain_ref": "E0001"}
+        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001"}
       ]
     }
   ],
@@ -77,7 +78,7 @@ format from the [Evidence Contract](./evidence-contract.md).
     "The implementation still needs to enforce the expanded report shape."
   ],
   "evidence_refs": [
-    {"session_ref": "S0001", "chain_ref": "E0001"}
+    {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001"}
   ],
   "confidence": "high"
 }
@@ -97,24 +98,24 @@ Daily report synthesis needs a compact project summary:
   "evidence_accounting": [
     {
       "session_ref": "S0001",
-      "chain_ref": "E0001",
+      "turn_ref": "T0001",
       "disposition": "material_work_item",
       "work_item_ref": "W0001",
       "reason": "Primary documentation outcome for the project."
     },
     {
       "session_ref": "S0002",
-      "chain_ref": null,
+      "turn_ref": "T0001",
       "disposition": "evidence_gap_item",
       "work_item_ref": "W0002",
-      "reason": "The indexed session produced no evidence card."
+      "reason": "The indexed turn produced no evidence chain."
     }
   ],
   "blockers": [
     {
       "summary": "What is blocked or unresolved.",
-      "evidence_refs": [
-        {"session_ref": "S0002", "chain_ref": "E0001"}
+      "gap_refs": [
+        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0002", "turn_ref": "T0001"}
       ],
       "recommended_next_action": "Concrete next action if supported by evidence."
     }
@@ -123,7 +124,7 @@ Daily report synthesis needs a compact project summary:
     {
       "pattern": "User supplied concrete acceptance criteria before generation.",
       "evidence_refs": [
-        {"session_ref": "S0001", "chain_ref": "E0002"}
+        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0002"}
       ],
       "why_it_worked": "It gave the agent checkable constraints."
     }
@@ -132,7 +133,7 @@ Daily report synthesis needs a compact project summary:
     {
       "risk": "Agent claimed success without visible verification.",
       "evidence_refs": [
-        {"session_ref": "S0003", "chain_ref": "E0001"}
+        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0003", "turn_ref": "T0001"}
       ],
       "mitigation": "Mark the result unverified and request command output or review."
     }
@@ -152,5 +153,7 @@ See [Project Synthesizer Prompt](./project-synthesizer-prompt.md).
 
 Before accepting project synthesis output, check:
 
-- Evidence references resolve to existing per-session evidence cards.
+- Every `evidence_refs` item resolves to a committed evidence chain.
+- Every `gap_refs` item resolves to an indexed turn that has no committed evidence chain.
+- Every indexed turn has exactly one evidence-accounting disposition.
 - Any claim intended for `report.md` can be expanded to valid work-claim citations.

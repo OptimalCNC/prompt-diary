@@ -9,10 +9,6 @@ This contract operates inside that workspace. Evidence files are generation arti
 after preparation; they do not change the preparation layout or the meaning of
 `sessions.index.jsonl`.
 
-Implementation status: this page describes the future evidence-extraction contract. The current
-package MCP server is boilerplate-only and exposes `prompt_diary_ping`; `write_evidence` is not
-implemented yet.
-
 ## Extractor Inputs
 
 An evidence extractor receives prepared context for exactly one indexed turn:
@@ -20,28 +16,30 @@ An evidence extractor receives prepared context for exactly one indexed turn:
 - `project_key`
 - `project.json` content
 - `session_ref`
-- `session_path`, relative to the prepared workspace root that is the extractor's current working
-  directory
-- the exact `sessions.index.jsonl` row for that session, with `turns` removed
+- the session index path, `projects/<project_key>/sessions.index.jsonl`, relative to the prepared
+  workspace root that is the extractor's current working directory
+- `session_path`, resolved by the orchestrator relative to the prepared workspace root
+- the exact `projects/<project_key>/sessions.index.jsonl` row for that session, with `turns`
+  removed
 - one target turn copied from that row's `turns[]`
 
 The supplied index row is the authoritative session metadata. The target turn is the only turn the
-extractor may write in that invocation. Its `turn_ref` identifies the prepared turn as
-`(project_key, session_ref, turn_ref)`, while `turn_start_line` and `turn_end_line` remain the
-required evidence bounds. The extractor reads the session file at `session_path`, which the
-orchestrator derives from the project key and index row so the extractor does not need to resolve
-filesystem locations itself.
+extractor may write in that invocation. The target turn supplies `turn_ref`, `turn_start_line`,
+and `turn_end_line`; extraction writes `turn_ref` into the evidence chain, and the line bounds
+remain the citation boundary. The extractor reads the session file at `session_path`, which the
+orchestrator resolves from `projects/<project_key>/<index_row.session_path>` so the extractor can
+read it directly from the workspace current working directory.
 
 The extractor writes one draft chain at a time through `write_evidence`, passing the project
 key, `session_ref`, and the draft evidence chain. The MCP server owns canonical card creation,
-structural checks, `chain_ref` allocation, and atomic writes.
+structural checks, and atomic writes.
 
 Extraction is orchestrated in indexed turn order. The orchestrator provides the first target turn,
 waits for its evidence chain to be written, then invokes extraction for the next target turn.
 
 ```mermaid
 flowchart TD
-    inputs["Session inputs<br/>project_key, project.json,<br/>session_ref, session_path,<br/>index row without turns"]
+    inputs["Session inputs<br/>project_key, project.json,<br/>session_ref, session_path,<br/>index path + row without turns"]
     turns["Indexed turns[]"]
     more{"More turns?"}
     prompt["Turn inputs<br/>session inputs + target turn"]
@@ -59,29 +57,6 @@ flowchart TD
     next --> more
     more -->|no| done
 ```
-
-After each successful `write_evidence` call, the orchestrator can drive the same agent with a
-short follow-up message instead of repeating the full extractor prompt:
-
-````text
-The previous turn was written successfully.
-
-Committed chain:
-```json
-{{ write_evidence_result }}
-```
-
-Continue with the next target turn from the same session. Use the same session context, evidence
-chain shape, and extraction rules from the initial prompt. Do not modify or duplicate the previous
-chain.
-
-Target turn to extract now:
-```json
-{{ target_turn }}
-```
-
-Start now: extract this turn and call `write_evidence` once.
-````
 
 ## Session Evidence Cards
 
@@ -101,14 +76,12 @@ copied session file resolve `(project_key, session_ref)` through the project ses
 The canonical storage model is multiple per-session card files, not one flat
 `evidence_cards.jsonl` file. Agents write evidence through the tools on the
 [MCP Tools](./mcp-tools.md) page; the MCP server creates or updates canonical session evidence
-cards and assigns `chain_ref` values.
+cards.
 
 Each session evidence card contains one evidence chain for each `turns[]` item in the associated
-`sessions.index.jsonl` row. Each chain copies the indexed turn's `turn_ref` plus line bounds.
-`chain_ref` is separate from `turn_ref`: it is stable only within the evidence card and identifies
-the committed chain as `(project_key, session_ref, chain_ref)`. `chain_ref` values should be
-assigned in indexed turn order: the first written chain becomes `E0001`, the second becomes
-`E0002`, and so on.
+`sessions.index.jsonl` row. Because one turn maps to one chain, `turn_ref` is the chain's stable
+handle within the session evidence card. A committed chain is identified as
+`(project_key, session_ref, turn_ref)`.
 
 Current runtime `report.md` validation still uses direct session-line Markdown citations:
 `[project=<project_key>;session=<session_ref>;lines=<start>-<end>]`. The intended future citation
@@ -134,12 +107,7 @@ Example canonical card:
   "session_ref": "S0001",
   "evidence_chains": [
     {
-      "chain_ref": "E0001",
-      "turn": {
-        "turn_ref": "T0001",
-        "turn_start_line": 45,
-        "turn_end_line": 120
-      },
+      "turn_ref": "T0001",
       "trigger": {
         "type": "explicit_user_message",
         "summary": "User asked the agent to study Claude session filename conventions.",
@@ -180,8 +148,7 @@ Example canonical card:
           {"lines": "80-120"}
         ]
       },
-      "materiality": "material",
-      "uncertainties": []
+      "materiality": "material"
     }
   ]
 }
@@ -195,10 +162,14 @@ An evidence chain represents one indexed turn and the agent reaction owned by th
 turn -> trigger -> agent_reactions -> outcomes and/or terminal_state
 ```
 
-Field definitions, controlled values, and extraction rules are in the evidence extractor prompt.
+Field definitions and extraction rules are in the evidence extractor prompt. Controlled evidence
+values and their descriptions are maintained in the prompt Python API and rendered into that
+runtime prompt.
+
 The write surface for one extracted chain is
 [`write_evidence`](./mcp-tools.md#write_evidence), which accepts the chain as an
-`evidence_chain`, appends it to the canonical session evidence card, and assigns `chain_ref`.
+`evidence_chain` and appends it to the canonical session evidence card. The committed write result
+uses the chain's `turn_ref`.
 Required write-time checks are listed in
 [MCP Tools: Structural Rules](./mcp-tools.md#structural-rules).
 
@@ -208,3 +179,11 @@ Prompt source: `src/prompt_diary/prompts/evidence-extractor.md` — loaded at ru
 orchestrator.
 
 See [Evidence Extractor Prompt](./evidence-extractor-prompt.md).
+
+Short next-turn prompt source: `src/prompt_diary/prompts/evidence-extractor-next-turn.md` — loaded
+at runtime by the orchestrator when the same extractor agent is assigned another turn from the same
+session.
+
+````text
+{{#include ../../../src/prompt_diary/prompts/evidence-extractor-next-turn.md}}
+````

@@ -77,7 +77,7 @@ or has ambiguous evidence.
   "category": "effective_pattern | anti_pattern | skill | workflow_improvement",
   "pattern": "Require verification evidence before accepting completion claims.",
   "evidence_refs": [
-    {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "chain_ref": "E0002"}
+    {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0002"}
   ],
   "why_it_matters": "It prevents agent self-report from becoming a false completed outcome.",
   "reuse_guidance": "Ask the agent to show command output, test results, artifact paths, or explicit unverified status.",

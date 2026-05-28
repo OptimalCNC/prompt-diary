@@ -21,12 +21,16 @@ The `prompt_diary.prompts` module exposes one function per prompt:
 
 - `evidence_extractor_prompt(*, project_key: str, project_json: str, session_ref: str,
   session_path: str, session_index_record: str, target_turn: str) -> str`
+- `evidence_extractor_next_turn_prompt(*, write_evidence_result: str,
+  target_turn: str) -> str`
 - `project_synthesizer_prompt() -> str`
 - `daily_synthesizer_prompt() -> str`
 
 Each function loads the template from package data and renders it with Jinja2. Variable
 substitution uses `StrictUndefined`, so missing variables raise an error at render time. For
 prompts without variables, the function takes no arguments.
+Evidence extractor controlled-value descriptions are maintained next to the prompt API and rendered
+into the runtime prompt, so the enum values have one Python source of truth.
 
 The Jinja2 dependency and template file loading are implementation details hidden from callers.
 
@@ -39,6 +43,8 @@ report prompts evidence-extractor \
   [--project-key KEY] [--project-json JSON] \
   [--session-ref REF] [--session-path PATH] [--session-index-record JSON] \
   [--target-turn JSON]
+report prompts evidence-extractor-next-turn \
+  [--write-evidence-result JSON] [--target-turn JSON]
 report prompts project-synthesizer
 report prompts daily-synthesizer
 ```
@@ -65,6 +71,8 @@ function in `src/prompt_diary/prompts/__init__.py` and pass it through the `_ren
 6. Add a dedicated prompt doc page under `docs/src/generate/` that contains only an
    `{{#include}}` directive for the runtime prompt file. The include path from a prompt doc page
    to the package is `../../../src/prompt_diary/prompts/<filename>`.
+   Short follow-up prompts may instead be quoted from the parent contract page when they are only
+   used as a continuation of a full prompt.
 7. Add the prompt source note and a link to the prompt doc page on the relevant parent generation
    page.
 8. Add the prompt doc page to `docs/src/SUMMARY.md` as a child of that parent page.

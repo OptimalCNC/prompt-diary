@@ -95,8 +95,15 @@ Common record shapes:
 
 - `ReportCitation`: `project_key`, `session_ref`, and `lines`. `lines` uses the same
   `<start>-<end>` range as report Markdown citations.
-- `SourceRef`: `project_key` plus the most specific available synthesis or evidence handle, such
-  as `work_item_ref`, `session_ref`, or `chain_ref`.
+- `WorkItemRef`: `project_key` and `work_item_ref`.
+- `SessionRef`: `project_key` and `session_ref`.
+- `EvidenceChainRef`: `project_key`, `session_ref`, and `turn_ref`. `turn_ref` is never used
+  without `session_ref`.
+- `GapRef`: `project_key`, `session_ref`, and `turn_ref` for an indexed turn that has no committed
+  evidence chain.
+- `SourceRef`: the most specific available synthesis or evidence handle, such as `WorkItemRef`,
+  `SessionRef`, `EvidenceChainRef`, or `GapRef`. Turn-level source refs use `EvidenceChainRef` or
+  `GapRef`; a bare `turn_ref` is invalid.
 - `ReportClaim`: `summary`, `confidence`, `citations`, and `source_refs`. It may also include
   `verification_status`, `trigger`, `agent_reaction`, `result`, `risk`, or `recommended_next_action`
   when those fields serve the surrounding section.

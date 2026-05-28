@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from prompt_diary.cli import app
 from prompt_diary.prompts import (
     daily_synthesizer_prompt,
+    evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
     project_synthesizer_prompt,
 )
@@ -32,7 +33,20 @@ def test_evidence_extractor_prompt() -> None:
     assert isinstance(result, str)
     assert len(result) > 0
     assert "Project key: ReportGenerator-abc123" in result
-    assert "Target turn to extract now" in result
+    assert "Assigned turn to extract now" in result
+    assert "write_evidence" in result
+
+
+def test_evidence_extractor_next_turn_prompt() -> None:
+    result = evidence_extractor_next_turn_prompt(
+        write_evidence_result='{"status":"appended","turn_ref":"T0001"}',
+        target_turn='{"turn_ref":"T0002","turn_start_line":11,"turn_end_line":20}',
+    )
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "The previous turn was written successfully" in result
+    assert "T0002" in result
     assert "write_evidence" in result
 
 
@@ -54,6 +68,14 @@ def test_cli_prompts_evidence_extractor() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["prompts", "evidence-extractor"])
+
+    assert result.exit_code == 0
+
+
+def test_cli_prompts_evidence_extractor_next_turn() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["prompts", "evidence-extractor-next-turn"])
 
     assert result.exit_code == 0
 
