@@ -10,8 +10,8 @@ import pytest
 
 from prompt_diary.api import generate_prompt_diary
 from prompt_diary.errors import PromptDiaryError, ReportValidationError, ReportWriterError
+from prompt_diary.generate.report import write_empty_fallback_report
 from prompt_diary.models import SourceSpec
-from prompt_diary.report import write_empty_fallback_report
 
 if TYPE_CHECKING:
     from pathlib import Path

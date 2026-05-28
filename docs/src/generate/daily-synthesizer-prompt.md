@@ -1,1 +1,1 @@
-{{#include ../../../src/prompt_diary/prompts/daily-synthesizer.md}}
+{{#include ../../../src/prompt_diary/generate/prompts/daily-synthesizer.md}}

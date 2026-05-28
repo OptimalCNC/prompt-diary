@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import prompt_diary.targets as targets_module
+import prompt_diary.targeting.resolve as targets_module
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.models import serialize_datetime
-from prompt_diary.targets import resolve_report_target
+from prompt_diary.targeting.resolve import resolve_report_target
 
 
 def test_resolve_report_target_defaults_to_yesterday_completed_local_day() -> None:

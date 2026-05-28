@@ -1,78 +1,105 @@
 # Architecture
 
+## Page Role
+
+This page defines stable implementation boundaries for Prompt Diary. It should not prescribe
+phase-local classes, helper modules, migration steps, or other details that are likely to change.
+
+Product behavior remains defined by [Prompt Diary Product](../product.md),
+[Workspace Layout](../workspace-layout.md), and [Report Generation](../generate/index.md).
+
 ## Tool Shape
 
-Prompt Diary is a Python CLI tool structured in three layers:
+Prompt Diary is a Python CLI package with a small public root and workflow-owned implementation
+packages.
 
-- **CLI layer** (`cli.py`) — Typer commands that parse user options and delegate to the API layer.
-- **API layer** (`api.py`) — public workflow functions that orchestrate preparation and generation
-  by composing core modules.
-- **Core modules** — each module owns one concern: date resolution, workspace construction,
-  report writing and validation, or prompt template rendering.
+The package root should stay small. Implementation code should live with the workflow or named
+protocol adapter that owns its behavior instead of accumulating as package-root modules.
 
 ## Codemap
 
-The package lives at `src/prompt_diary/`.
+This codemap names stable homes by responsibility. It intentionally avoids phase-local helper
+modules and other details that may change as the implementation evolves.
 
-| Module | Purpose |
-|---|---|
-| `cli.py` | Typer CLI entry point. Registers commands and subcommands, maps CLI options to API calls. |
-| `api.py` | Public workflow functions (`prepare_prompt_diary`, `generate_prompt_diary`). Orchestrates the pipeline without owning any single concern. |
-| `models.py` | Shared typed models used across modules: `ReportTarget`, `TimeWindow`, result types, and type aliases. |
-| `errors.py` | Exception hierarchy. `PromptDiaryError` is the base for all user-facing failures. |
-| `targets.py` | Resolves CLI date and timezone options into a `ReportTarget` with local and UTC time windows. |
-| `workspace.py` | Parses source session files, applies time-window filtering, and writes the prepared workspace with metadata, copied sessions, and session indexes. |
-| `report.py` | Constructs the generation prompt, executes external report writers, and validates `report.md` against the report contract. |
-| `mcp_server.py` | Boilerplate MCP stdio server; currently exposes only the harmless `prompt_diary_ping` tool. |
-| `codex_runner.py` | Typed async skeleton for future Codex-backed agent turns. See [Codex Agent Runner](./codex-agent-runner.md). |
-| `prompts/` | Prompt template subpackage. Loads `.md` template files from package data and renders them with Jinja2. See [Prompt System](./prompt-system.md). |
+| Path | Stable meaning |
+| --- | --- |
+| `src/prompt_diary/` | Package root for stable imports, entry points, and shared package code. It should not be the default home for workflow internals. |
+| `src/prompt_diary/api.py` | Transport-independent public workflow API for preparation and generation. |
+| `src/prompt_diary/cli.py` | Console command interface that parses options, presents results and errors, and delegates to the public API. |
+| `src/prompt_diary/models.py` | Shared cross-workflow result models and value types that are intentionally public or broadly reused. |
+| `src/prompt_diary/errors.py` | Shared user-facing exception hierarchy. |
+| `src/prompt_diary/targeting/` | Date and timezone resolution into typed report targets used by both workflows. |
+| `src/prompt_diary/prepare/` | Preparation workflow implementation: source session ingestion and prepared workspace construction. |
+| `src/prompt_diary/generate/` | Generation workflow implementation: phase orchestration, generation artifacts, prompt assets, and report output behavior. |
+| `src/prompt_diary/generate/evidence_extraction/` | Evidence Extraction phase behavior and transport-independent APIs for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/project_synthesis/` | Project Synthesis phase behavior and transport-independent APIs for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/daily_synthesis/` | Daily Report Synthesis phase behavior and transport-independent APIs for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/prompts/` | Runtime prompt templates and prompt-rendering API used by generation phases. |
+| `src/prompt_diary/mcp/` | MCP protocol adapter. MCP code adapts requests and responses; it does not own workflow semantics. |
+| `src/prompt_diary/integrations/` | Optional external runner and bootstrap integrations that are not core workflow semantics. |
+
+## Generation Placement
+
+Generation implementation belongs under `src/prompt_diary/generate/`. The stable generation
+boundaries are the artifact-producing phases defined by
+[Report Generation](../generate/index.md):
+
+- Evidence Extraction
+- Project Synthesis
+- Daily Report Synthesis
+
+Generation subpackages mirror those broad phase boundaries. This architecture page should not name
+every phase helper module; those details belong in code and phase-local tests.
+
+`docs/src/generate/` defines generation contracts for humans and agents. It is not the Python
+implementation layout. Runtime prompt templates are generation assets and should live with the
+generation implementation while remaining includable from the documentation so docs and runtime use
+one prompt source.
+
+MCP tools are a protocol adapter over workflow APIs. MCP request parsing and response adaptation
+belong in `src/prompt_diary/mcp/`; canonical validation, artifact reads and writes, and generation
+behavior belong in the generation package that owns the relevant contract.
+
+MCP tool contracts live under `docs/src/generate/mcp-tools/`, grouped by generation phase. Shared
+workspace and error rules live on that section's index page; phase-specific tool schemas and write
+rules live on the owning phase page.
+
+## Test Layout
+
+Tests should follow the same stable boundaries without mirroring every helper module:
+
+| Path | Stable meaning |
+| --- | --- |
+| `tests/targeting/` | Target resolution tests. |
+| `tests/prepare/` | Preparation workflow and prepared workspace tests. |
+| `tests/generate/` | Generation report and prompt tests. |
+| `tests/mcp/` | MCP adapter tests. |
+| `tests/integrations/` | Optional external integration tests. |
+| Top-level `tests/test_*.py` | Public API, CLI, and end-to-end workflow tests that span multiple packages. |
 
 ## Workflows
 
 ### `prepare`
 
 Resolves a report target from CLI options, then builds a bounded workspace for that target day.
-The workspace contains only copied session files and deterministic indexes — it defines the
-evidence boundary that generation must not expand.
-
-Design principle: **bounded evidence scope**. Preparation decides what is in scope before any
-synthesis or generation agent runs. This prevents generation from discovering sessions outside
-the target window or reinterpreting the report date.
+The workspace contains only copied session files and deterministic indexes; it defines the evidence
+boundary that generation must not expand.
 
 Product contract: [Workspace Layout](../workspace-layout.md).
 
 ### `generate`
 
-Resolves a report target, ensures a prepared workspace exists (preparing if needed), constructs a
-generation prompt from the workspace inventory, invokes an external report writer, and validates
-the resulting `report.md` against the report contract.
-
-Design principle: **evidence-grounded reporting**. The generation prompt includes the workspace
-inventory and the report contract rules. The validation step checks that every citation in the
-report resolves to a real session and a line span contained by one indexed turn in the prepared
-workspace. Claims without valid citations fail validation.
+Resolves a report target, ensures a prepared workspace exists, then runs generation from that
+workspace. Generation consumes only the prepared workspace plus durable artifacts from earlier
+generation phases.
 
 Product contracts: [Report Generation](../generate/index.md),
 [Evidence Contract](../generate/evidence-contract.md),
-[Project Synthesis](../generate/project-synthesis.md),
+[Project Synthesis](../generate/project-synthesis.md), and
 [Daily Report Synthesis](../generate/daily-synthesis.md).
 
-### `prompts`
-
-Loads prompt templates from package data and renders them with variable substitution. The three
-generation prompts (evidence extractor, project synthesizer, daily synthesizer) are defined as
-`.md` files inside the `prompts/` subpackage and are also included in the product docs via mdbook.
-
-Design principle: **single source of truth**. Each prompt file is the authoritative source for
-both the runtime agent prompt and the rendered documentation. See
-[Prompt System](./prompt-system.md) for details.
-
-## CLI Surface
+## CLI Interface
 
 The user-facing CLI commands and date targeting rules are defined in
-[Prompt Diary Product](../product.md#cli-surface). `cli.py` implements those commands and adds the
-`prompts` subcommand group for prompt template inspection (see
-[Prompt System](./prompt-system.md)) and the `mcp serve` bootstrap command for the stdio MCP
-server.
-
-`report` and `prompt-diary` are both registered as console entry points and invoke the same CLI.
+[Prompt Diary Product](../product.md#cli-surface). `report` and `prompt-diary` are both registered
+as console entry points and invoke the same CLI.

@@ -1,7 +1,7 @@
 """Prompt Diary package."""
 
 from prompt_diary.api import generate_prompt_diary, prepare_prompt_diary
-from prompt_diary.prompts import (
+from prompt_diary.generate.prompts import (
     daily_synthesizer_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,

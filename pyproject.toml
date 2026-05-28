@@ -40,7 +40,7 @@ markers = [
 [tool.coverage.run]
 source = ["prompt_diary"]
 omit = [
-    "src/prompt_diary/codex_runner.py",
+    "src/prompt_diary/integrations/codex_runner.py",
 ]
 
 [tool.coverage.report]

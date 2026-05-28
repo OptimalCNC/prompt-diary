@@ -5,7 +5,7 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 from prompt_diary.cli import app
-from prompt_diary.prompts import (
+from prompt_diary.generate.prompts import (
     daily_synthesizer_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,

@@ -1,1 +1,1 @@
-{{#include ../../../src/prompt_diary/prompts/evidence-extractor.md}}
+{{#include ../../../src/prompt_diary/generate/prompts/evidence-extractor.md}}

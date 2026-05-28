@@ -5,7 +5,7 @@ synthesis, and daily report synthesis agents.
 
 ## Where Prompts Live
 
-Prompt files are `.md` files inside the `src/prompt_diary/prompts/` subpackage. This location
+Prompt files are `.md` files inside the `src/prompt_diary/generate/prompts/` subpackage. This location
 serves two purposes:
 
 - **Runtime**: the files are installed as package data with the wheel, so `importlib.resources`
@@ -17,7 +17,7 @@ serves two purposes:
 
 ## Python API
 
-The `prompt_diary.prompts` module exposes one function per prompt:
+The `prompt_diary.generate.prompts` module exposes one function per prompt:
 
 - `evidence_extractor_prompt(*, project_key: str, project_json: str, session_ref: str,
   session_path: str, session_index_record: str, target_turn: str) -> str`
@@ -54,23 +54,23 @@ environment, these commands confirm that the prompt files are accessible.
 
 ## How To Modify A Prompt
 
-Edit the `.md` file in `src/prompt_diary/prompts/`. The change takes effect in both the runtime
+Edit the `.md` file in `src/prompt_diary/generate/prompts/`. The change takes effect in both the runtime
 API and the rendered product docs automatically.
 
 If a prompt needs a new template variable, add it as a keyword argument to the corresponding
-function in `src/prompt_diary/prompts/__init__.py` and pass it through the `_render` call.
+function in `src/prompt_diary/generate/prompts/__init__.py` and pass it through the `_render` call.
 
 ## How To Add A New Prompt
 
-1. Create the `.md` template file in `src/prompt_diary/prompts/`.
-2. Add a public function in `src/prompt_diary/prompts/__init__.py` that calls `_render` with the
+1. Create the `.md` template file in `src/prompt_diary/generate/prompts/`.
+2. Add a public function in `src/prompt_diary/generate/prompts/__init__.py` that calls `_render` with the
    filename and any required variables.
 3. Export the function from `src/prompt_diary/__init__.py`.
 4. Add a CLI command in `src/prompt_diary/cli.py` under the `_prompts_app` Typer group.
-5. Add tests in `tests/test_prompts.py` — one for the API function, one for the CLI command.
+5. Add tests in `tests/generate/test_prompts.py` — one for the API function, one for the CLI command.
 6. Add a dedicated prompt doc page under `docs/src/generate/` that contains only an
    `{{#include}}` directive for the runtime prompt file. The include path from a prompt doc page
-   to the package is `../../../src/prompt_diary/prompts/<filename>`.
+   to the package is `../../../src/prompt_diary/generate/prompts/<filename>`.
    Short follow-up prompts may instead be quoted from the parent contract page when they are only
    used as a continuation of a full prompt.
 7. Add the prompt source note and a link to the prompt doc page on the relevant parent generation
@@ -84,7 +84,7 @@ package. For example, `docs/src/generate/evidence-extractor-prompt.md` includes 
 template with:
 
 ```text
-{{#include ../../../src/prompt_diary/prompts/evidence-extractor.md}}
+{{#include ../../../src/prompt_diary/generate/prompts/evidence-extractor.md}}
 ```
 
 mdbook resolves this path relative to the prompt page's directory (`docs/src/generate/`). The

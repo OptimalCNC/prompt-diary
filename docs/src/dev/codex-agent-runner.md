@@ -223,5 +223,5 @@ Run the live wrapper test from a development checkout by bootstrapping the optio
 
 ```bash
 uv run prompt-diary codex bootstrap
-uv run pytest -m codex_mcp --run-codex-mcp tests/test_codex_mcp_integration.py
+uv run pytest -m codex_mcp --run-codex-mcp tests/integrations/test_codex_mcp_integration.py
 ```

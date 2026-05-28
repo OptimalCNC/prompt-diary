@@ -112,7 +112,7 @@ EVIDENCE_MATERIALITY_VALUES: tuple[PromptEnumValue, ...] = (
 
 
 def _load(name: str) -> str:
-    return files("prompt_diary.prompts").joinpath(name).read_text(encoding="utf-8")
+    return files("prompt_diary.generate.prompts").joinpath(name).read_text(encoding="utf-8")
 
 
 def _render(name: str, **variables: str) -> str:

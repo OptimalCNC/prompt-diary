@@ -182,7 +182,7 @@ claim-bearing prose that is absent from `daily-report.json`.
 
 ## Daily Synthesizer Prompt
 
-Prompt source: `src/prompt_diary/prompts/daily-synthesizer.md` — loaded at runtime by the
+Prompt source: `src/prompt_diary/generate/prompts/daily-synthesizer.md` — loaded at runtime by the
 orchestrator.
 
 See [Daily Synthesizer Prompt](./daily-synthesizer-prompt.md).

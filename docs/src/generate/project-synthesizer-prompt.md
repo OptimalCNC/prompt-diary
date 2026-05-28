@@ -1,1 +1,1 @@
-{{#include ../../../src/prompt_diary/prompts/project-synthesizer.md}}
+{{#include ../../../src/prompt_diary/generate/prompts/project-synthesizer.md}}

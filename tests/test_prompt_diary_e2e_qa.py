@@ -12,10 +12,10 @@ from typer.testing import CliRunner
 
 from prompt_diary.api import generate_prompt_diary
 from prompt_diary.cli import app
+from prompt_diary.generate.report import REPORT_WRITER_COMMAND_ENV, write_empty_fallback_report
 from prompt_diary.models import JsonObject, SourceSpec
-from prompt_diary.report import REPORT_WRITER_COMMAND_ENV, write_empty_fallback_report
-from prompt_diary.targets import resolve_report_target
-from prompt_diary.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
+from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
+from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from pathlib import Path

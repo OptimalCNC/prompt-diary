@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import prompt_diary.codex_bootstrap as codex_bootstrap
-from prompt_diary.codex_bootstrap import (
+import prompt_diary.integrations.codex_bootstrap as codex_bootstrap
+from prompt_diary.integrations.codex_bootstrap import (
     CODEX_SDK_PACKAGE_SPEC,
     CodexBootstrapError,
     bootstrap_codex_sdk,

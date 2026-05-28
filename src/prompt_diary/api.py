@@ -6,23 +6,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from prompt_diary.errors import ReportValidationError
-from prompt_diary.models import (
-    GenerateResult,
-    PrepareResult,
-    SourceSpec,
-)
-from prompt_diary.report import (
+from prompt_diary.generate.report import (
     CommandReportWriter,
     ReportWriter,
     build_report_prompt,
     validate_report,
 )
-from prompt_diary.targets import resolve_report_target
-from prompt_diary.workspace import (
+from prompt_diary.models import (
+    GenerateResult,
+    PrepareResult,
+    SourceSpec,
+)
+from prompt_diary.prepare.workspace import (
     prepare_workspace,
     validate_workspace_matches_target,
     workspace_path_for_target,
 )
+from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from datetime import datetime

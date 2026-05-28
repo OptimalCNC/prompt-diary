@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from prompt_diary import mcp_server
+from prompt_diary.mcp import server as mcp_server
 
 if TYPE_CHECKING:
     import pytest

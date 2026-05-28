@@ -8,15 +8,15 @@ import typer
 
 from prompt_diary import __version__
 from prompt_diary.api import generate_prompt_diary, prepare_prompt_diary
-from prompt_diary.codex_bootstrap import bootstrap_codex_sdk
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.mcp_server import serve_mcp_server
-from prompt_diary.prompts import (
+from prompt_diary.generate.prompts import (
     daily_synthesizer_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
     project_synthesizer_prompt,
 )
+from prompt_diary.integrations.codex_bootstrap import bootstrap_codex_sdk
+from prompt_diary.mcp.server import serve_mcp_server
 
 app = typer.Typer(
     add_completion=False,

@@ -75,8 +75,8 @@ copied session file resolve `(project_key, session_ref)` through the project ses
 
 The canonical storage model is multiple per-session card files, not one flat
 `evidence_cards.jsonl` file. Agents write evidence through the tools on the
-[MCP Tools](./mcp-tools.md) page; the MCP server creates or updates canonical session evidence
-cards.
+[Evidence Extraction Tools](./mcp-tools/evidence-extraction.md) page; the MCP server creates or
+updates canonical session evidence cards.
 
 Each session evidence card contains one evidence chain for each `turns[]` item in the associated
 `sessions.index.jsonl` row. Because one turn maps to one chain, `turn_ref` is the chain's stable
@@ -167,23 +167,23 @@ values and their descriptions are maintained in the prompt Python API and render
 runtime prompt.
 
 The write surface for one extracted chain is
-[`write_evidence`](./mcp-tools.md#write_evidence), which accepts the chain as an
+[`write_evidence`](./mcp-tools/evidence-extraction.md#write_evidence), which accepts the chain as an
 `evidence_chain` and appends it to the canonical session evidence card. The committed write result
 uses the chain's `turn_ref`.
 Required write-time checks are listed in
-[MCP Tools: Structural Rules](./mcp-tools.md#structural-rules).
+[Evidence Extraction Tools: Structural Rules](./mcp-tools/evidence-extraction.md#structural-rules).
 
 ## Evidence Extractor Prompt
 
-Prompt source: `src/prompt_diary/prompts/evidence-extractor.md` — loaded at runtime by the
+Prompt source: `src/prompt_diary/generate/prompts/evidence-extractor.md` — loaded at runtime by the
 orchestrator.
 
 See [Evidence Extractor Prompt](./evidence-extractor-prompt.md).
 
-Short next-turn prompt source: `src/prompt_diary/prompts/evidence-extractor-next-turn.md` — loaded
+Short next-turn prompt source: `src/prompt_diary/generate/prompts/evidence-extractor-next-turn.md` — loaded
 at runtime by the orchestrator when the same extractor agent is assigned another turn from the same
 session.
 
 ````text
-{{#include ../../../src/prompt_diary/prompts/evidence-extractor-next-turn.md}}
+{{#include ../../../src/prompt_diary/generate/prompts/evidence-extractor-next-turn.md}}
 ````

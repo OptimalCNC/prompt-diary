@@ -92,7 +92,7 @@ uv run prompt-diary codex bootstrap
 Then run the opt-in real Codex agent wrapper test:
 
 ```bash
-uv run pytest -m codex_mcp --run-codex-mcp tests/test_codex_mcp_integration.py
+uv run pytest -m codex_mcp --run-codex-mcp tests/integrations/test_codex_mcp_integration.py
 ```
 
 ## Coverage

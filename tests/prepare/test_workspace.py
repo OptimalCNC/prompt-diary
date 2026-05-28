@@ -10,8 +10,7 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.models import ReportTarget, SourceSpec
-from prompt_diary.targets import resolve_report_target
-from prompt_diary.workspace import (
+from prompt_diary.prepare.workspace import (
     CLAUDE_SOURCE_ENV,
     CODEX_SOURCE_ENV,
     audit_path_for_target,
@@ -19,6 +18,7 @@ from prompt_diary.workspace import (
     prepare_workspace,
     validate_workspace_matches_target,
 )
+from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from pathlib import Path

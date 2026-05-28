@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from prompt_diary.errors import ReportWriterError
-from prompt_diary.report import (
+from prompt_diary.generate.report import (
     FALLBACK_BULLETS,
     REPORT_WRITER_COMMAND_ENV,
     REPORT_WRITER_TIMEOUT_ENV,
@@ -553,7 +553,7 @@ def test_validate_report_rejects_sensitive_content(tmp_path: Path) -> None:
     assert any("sensitive content or absolute path" in error for error in validation.errors)
 
 
-def test_validate_report_surfaces_metadata_load_errors(tmp_path: Path) -> None:
+def test_validate_report_reports_metadata_load_errors(tmp_path: Path) -> None:
     missing_metadata_workspace = tmp_path / "missing-metadata"
     missing_metadata_workspace.mkdir()
     _write_report_lines(missing_metadata_workspace, ["placeholder"])
@@ -603,7 +603,7 @@ def test_validate_report_surfaces_metadata_load_errors(tmp_path: Path) -> None:
     )
 
 
-def test_validate_report_surfaces_project_and_index_shape_errors(tmp_path: Path) -> None:
+def test_validate_report_reports_project_and_index_shape_errors(tmp_path: Path) -> None:
     missing_project_label_workspace = _workspace_fixture(tmp_path / "missing-label")
     project_dir = missing_project_label_workspace / "projects" / "ReportGenerator-abc123def456"
     project_json = project_dir / "project.json"

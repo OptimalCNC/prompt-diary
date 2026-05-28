@@ -71,7 +71,7 @@ The pipeline has three artifact-producing phases:
 
 | Phase | Input | Output | Output constraints |
 | --- | --- | --- | --- |
-| [Evidence Extraction](./evidence-contract.md) | Indexed sessions | Evidence cards | Cards record trigger-centered observations, terminal states, visible checks, and citations without verification judgment or unsupported outcomes. Canonical card writes use [MCP tools](./mcp-tools.md). |
+| [Evidence Extraction](./evidence-contract.md) | Indexed sessions | Evidence cards | Cards record trigger-centered observations, terminal states, visible checks, and citations without verification judgment or unsupported outcomes. Canonical card writes use [MCP evidence tools](./mcp-tools/evidence-extraction.md). |
 | [Project Synthesis](./project-synthesis.md) | Evidence cards | Work items | Work items group material and non-material evidence without losing indexed sessions, cards, or chains; every evidence input has a disposition. |
 | [Daily Report Synthesis](./daily-synthesis.md) | Work items | Daily report artifacts | The report model realizes all four product readings from the same evidence base: clear work communication, visible evidence quality, faithful engagement assessment, and reusable AI-agent usage learning. It preserves no-material signals where relevant, cites claim-bearing content, records confidence and evidence gaps structurally, and renders a required Markdown view. |
 

@@ -1,69 +1,40 @@
-# MCP Tools
+# Evidence Extraction Tools
 
-The Prompt Diary MCP server exposes agent-facing tools used during report generation. It is a thin
-wrapper over local validation and canonical write logic. It operates on prepared workspaces and
-must not rely on hidden global report-date state.
+Evidence extraction tools are the primary agent-facing write path for extracted session evidence.
+Agents submit one draft evidence chain at a time. The MCP server validates the draft through the
+generation API, creates or updates the canonical session evidence card, and commits the write.
 
-This page groups MCP tools by generation phase. The evidence data model is defined by the
-[Evidence Contract](./evidence-contract.md).
+Shared workspace, result, and error rules are defined in [MCP Tools](./index.md).
+The evidence data model is defined by the [Evidence Contract](../evidence-contract.md).
 
-## Evidence Tools
+## Required Tool
 
-Evidence tools are the primary agent-facing write surface for extracted session evidence.
-Agents submit one draft evidence chain at a time. The MCP server owns validation, canonical
-per-session evidence card creation, and atomic writes.
-
-### Required Tool
-
-The v1 MCP server must expose this tool:
+The Evidence Extraction phase requires this tool:
 
 | Tool | Purpose |
 | --- | --- |
 | `write_evidence` | Check one draft evidence chain and create or update the canonical session evidence card. |
 
-### Common Rules
+## Workspace Resolution
 
-MCP tools run with their process current working directory set to the prepared report workspace
-root. They must not infer the target report date from hidden global state; the prepared workspace
-root is the only filesystem root used by these tools.
-
-`project_key` identifies the project directory under `projects/<project_key>`. The server verifies
+`project_key` identifies the project directory under `projects/<project_key>`. The tool verifies
 it against `projects/<project_key>/project.json` before writing.
 
-`session_ref` is the associated indexed session. It is unique only within one project, so the server
-resolves it through `projects/<project_key>/sessions.index.jsonl`. The server determines the target
+`session_ref` is the associated indexed session. It is unique only within one project, so the tool
+resolves it through `projects/<project_key>/sessions.index.jsonl`. The tool determines the target
 evidence file as `projects/<project_key>/evidence/<session_ref>.json`.
 
-There is at most one canonical evidence card file per indexed session. The MCP server may append
+There is at most one canonical evidence card file per indexed session. The tool may append
 multiple chains to that card, but generation must not create a separate flat `evidence_cards.jsonl`
 as the source of truth. If no chain is written for an indexed session, downstream synthesis treats
 that missing card as an evidence gap for the indexed session.
 
-Normal write results should return stable references rather than filesystem paths. If a tool
-explicitly documents a returned file locator for debugging or inspection, that locator must be
-relative to the prepared report workspace root.
-
-Rejected writes should be structured and actionable:
-
-```json
-{
-  "status": "invalid",
-  "errors": [
-    {
-      "path": "evidence_chain.outcomes[0].citations[0].lines",
-      "message": "line span 240-245 is outside turn T0001 span 42-239",
-      "hint": "cite only lines inside the evidence chain's indexed turn"
-    }
-  ]
-}
-```
-
-### `write_evidence`
+## `write_evidence`
 
 Check one draft evidence chain and write it to the canonical session evidence card. Examples of
-canonical evidence chains are in the [Evidence Contract](./evidence-contract.md).
+canonical evidence chains are in the [Evidence Contract](../evidence-contract.md).
 The controlled values in this schema duplicate the enum definitions in
-`src/prompt_diary/prompts/__init__.py` so this tool contract remains self-contained.
+`src/prompt_diary/generate/prompts/__init__.py` so this tool contract remains self-contained.
 
 Input schema:
 
@@ -153,7 +124,7 @@ Successful result:
 }
 ```
 
-### Structural Rules
+## Structural Rules
 
 `write_evidence` must apply these rules before committing a chain:
 

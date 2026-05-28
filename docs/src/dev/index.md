@@ -7,7 +7,9 @@ Product-level purposes, principles, and contracts live in the [product](../produ
 [generation](../generate/index.md) docs. These development pages explain how the code implements
 them.
 
-- [Architecture](./architecture.md) — tool shape, codemap, workflow design, CLI surface.
+- [Architecture](./architecture.md) — tool shape, codemap, workflow design, CLI interface.
+- [MCP Tool Architecture](./mcp-tool-architecture.md) — required API and adapter layering for
+  MCP tool implementations.
 - [Codex Agent Runner](./codex-agent-runner.md) — initial needs and basic design for the async
   Codex SDK wrapper used by generation orchestration.
 - [Development Guide](./guide.md) — environment setup, build, test, lint, release.

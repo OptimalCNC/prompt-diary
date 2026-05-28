@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 import prompt_diary.cli as cli_module
 from prompt_diary import __version__
 from prompt_diary.cli import app, main
-from prompt_diary.codex_bootstrap import CodexBootstrapResult, CodexBootstrapTarget
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.integrations.codex_bootstrap import CodexBootstrapResult, CodexBootstrapTarget
 
 if TYPE_CHECKING:
     from pathlib import Path

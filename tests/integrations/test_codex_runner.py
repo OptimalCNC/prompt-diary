@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-import prompt_diary.codex_runner as codex_runner
-from prompt_diary.codex_runner import (
+import prompt_diary.integrations.codex_runner as codex_runner
+from prompt_diary.integrations.codex_runner import (
     AgentConfig,
     AgentTurnEvent,
     AgentTurnResult,

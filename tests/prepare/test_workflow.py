@@ -14,7 +14,7 @@ import prompt_diary.cli as cli_module
 from prompt_diary.api import prepare_prompt_diary
 from prompt_diary.cli import app
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec, TimeWindow
-from prompt_diary.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV
+from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV
 
 if TYPE_CHECKING:
     import pytest
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 TARGET_DATE = "2026-05-12"
 TARGET_TIMEZONE = "Asia/Shanghai"
 TARGET_NOW = datetime(2026, 5, 13, 9, 2, tzinfo=ZoneInfo(TARGET_TIMEZONE))
-FIXTURES_ROOT = Path(__file__).parent / "fixtures"
+FIXTURES_ROOT = Path(__file__).parents[1] / "fixtures"
 
 
 @dataclass(frozen=True)
