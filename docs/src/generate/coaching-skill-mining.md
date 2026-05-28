@@ -5,8 +5,8 @@ lessons about how the user drove AI coding agents. The required `AI-Agent Drivin
 in `report.md` gives the concise daily view; optional coaching artifacts expand that view for team
 learning. Neither should turn the report into personality judgment.
 
-This optional part should use evidence cards, work items, the daily report, and generation audit
-findings when available. It must not invent lessons from unsupported impressions.
+This optional part should use evidence cards, work items, the daily report, and available
+validation results. It must not invent lessons from unsupported impressions.
 
 When it runs before `report.md` is finalized, its findings may inform `AI-Agent Driving Quality`;
 when it runs after `report.md`, it expands the same evidence-backed lessons without replacing the
@@ -19,7 +19,7 @@ Inputs:
 - per-session evidence cards
 - project summaries and work items
 - draft or final `report.md`, when available
-- generation audit findings, when available
+- validation results, when available
 
 Optional outputs:
 
@@ -38,7 +38,7 @@ Look for behaviors that improved the agent's output:
 - examples or counterexamples
 - review and correction of weak output
 - resuming or redirecting a paused agent with a clear `Continue` or follow-up
-- explicit requests for tests, audits, or validation
+- explicit requests for tests or validation
 - decomposing broad work into smaller deliverables
 - asking for reusable templates, checklists, or standards
 
@@ -94,8 +94,7 @@ Coaching and skill mining may propose standards such as:
 - Every code completion claim must include a diff, test result, or explicit unverified status.
 - Every document migration task should include preservation checks for original rules and
   weakened constraints.
-- Every final report should either pass any enabled report audit checkpoint before deterministic
-  validation or state the uncertainty left by a disabled checkpoint.
+- Every final report should pass deterministic validation or state unresolved uncertainty.
 - Every blocker should include a recommended next action when evidence supports one.
 - Complex agent prompts should state acceptance criteria before generation begins.
 
@@ -106,8 +105,8 @@ Standards should be proposed as candidates, not silently imposed as product requ
 ```text
 You are an AI-agent usage coach for Prompt Diary.
 
-You will receive evidence cards, project synthesis outputs, the daily report, and optionally
-generation audit findings.
+You will receive evidence cards, project synthesis outputs, the daily report, and any available
+validation results.
 
 Your job is to identify reusable lessons about how the user drove AI coding agents.
 
@@ -144,4 +143,4 @@ Before accepting coaching output:
 - Recommendations are concrete enough to reuse.
 - Anti-patterns are not exaggerated from weak evidence.
 - Workflow improvements are implementable as tools, templates, tests, or standards.
-- Coaching output does not contradict generation audit findings.
+- Coaching output does not contradict available validation results.

@@ -27,8 +27,8 @@ The wrapper should support:
 - leaving artifact validation to callers.
 
 Multi-turn support matters for tool rejection repair, deterministic validation feedback, and
-audit-driven revision. The runner instance should preserve the SDK conversation state internally,
-so callers do not assign or manage conversation identifiers.
+artifact repair. The runner instance should preserve the SDK conversation state internally, so
+callers do not assign or manage conversation identifiers.
 
 A runner instance is not the concurrency unit for multiple sessions. Do not call `turn`
 concurrently on the same instance. To execute multiple agent sessions concurrently, create one

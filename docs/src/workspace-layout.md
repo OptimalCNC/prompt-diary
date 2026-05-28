@@ -10,19 +10,17 @@ flowchart LR
     adapters["Source adapters<br/>timestamps, ids, cwd, line numbers"]
     window["Report window<br/>half-open interval"]
     workspace["Prepared report workspace<br/>metadata, projects, copied sessions, project session indexes"]
-    audit["Preparation audit manifest<br/>source paths, checksums, parse warnings"]
     report["Report generation<br/>prompt + indexed evidence"]
 
     raw --> adapters
     window --> adapters
     adapters --> workspace
-    adapters --> audit
     workspace --> report
 ```
 
-Preparation owns data discovery, date-window handling, session copying, indexing, and audit output.
-The workspace keeps report inputs stable and reviewable; the detailed contracts below define how
-sources are selected, grouped, copied, and indexed.
+Preparation owns data discovery, date-window handling, session copying, and indexing. The workspace
+keeps report inputs stable and reviewable; the detailed contracts below define how sources are
+selected, grouped, copied, and indexed.
 
 For report date `2026-05-12`, the tool creates a prepared report workspace like this:
 
@@ -46,9 +44,6 @@ For report date `2026-05-12`, the tool creates a prepared report workspace like 
 │               │       └── subagents/
 │               │           └── 3e1dcfb6-32e7-4059-9d1c-5fddc8b8d0c3/
 │               │               └── agent-a9636c61b58788670.jsonl
-└── private/
-    └── 2026-05-12/
-        └── audit.manifest.json                # preparation audit, not report input
 ```
 
 Copied session files keep their source filenames. The examples above use UUID-based filenames
@@ -157,8 +152,8 @@ Each project folder contains `project.json`.
 ```
 
 `project_label` is a sanitized human-readable label for report display. Session counts and source
-lists are derived from the session index. Absolute project roots belong in the preparation audit
-manifest, not in `project.json`.
+lists are derived from the session index. Absolute project roots are not report inputs and do not
+belong in `project.json`.
 
 ## Session Context (`sessions/*.jsonl`)
 
@@ -183,8 +178,8 @@ are not human triggers unless they carry a new externally authored instruction.
 | Codex | top-level `timestamp`; fallback `payload.timestamp` only for session metadata | `session_meta.payload.id`; fallback filename stem | `session_meta.payload.cwd`, then `turn_context.payload.cwd` | cannot include a trigger-owned work unit; remains available only as copied context if another trigger includes the session |
 | Claude Code | top-level `timestamp` | filename stem | top-level `cwd`; fallback configured source root | cannot include a trigger-owned work unit; remains available only as copied context if another trigger includes the session |
 
-Malformed JSONL lines are never standalone evidence for a work claim. The adapter should record
-counts for malformed and untimestamped records in the preparation audit manifest.
+Malformed JSONL lines are never standalone evidence for a work claim. The adapter should treat
+malformed and untimestamped records as preparation diagnostics, not report evidence.
 
 Copied root session files keep original source filenames and original record order under
 `sessions/<source>/`. Copied subagent files keep original source filenames under
@@ -278,8 +273,8 @@ Each `target_subagents` item records one copied subagent transcript associated w
 
 Other parent references to the same subagent are not indexed by default. Subagent files are copied
 as richer context for parent agent reactions, not as independent report targets. Diagnostic data
-such as checksums, total line counts, event bounds, event counts, and parse warnings belongs in the
-preparation audit manifest.
+such as checksums, total line counts, event bounds, event counts, and parse warnings is not report
+input.
 
 Reference generation:
 
@@ -310,22 +305,6 @@ Target span and turn construction:
   not necessarily contiguous — pre-trigger scaffolding between turns is excluded.
 - If malformed, untimestamped, or non-monotonic records make a turn broader than the true
   trigger-owned work unit, preparation still records the inclusive turn it can determine
-  and records the anomaly in the preparation audit manifest.
+  and treats the anomaly as a preparation diagnostic.
 - No separate context index is generated. The reporter can inspect surrounding lines directly in the
   copied root session file, and can inspect listed subagent files when richer context is useful.
-
-## Preparation Audit Context (`audit.manifest.json`)
-
-The preparation audit manifest records enough information to reproduce and inspect preparation
-decisions.
-
-It may include:
-
-- Original source file paths.
-- Canonical project roots.
-- Source-to-workspace file mappings.
-- Source and workspace checksums.
-- Total line counts and parsed event bounds.
-- Parse warnings, malformed line counts, untimestamped record counts, and timestamp anomalies.
-
-The audit manifest is not an input to report generation.

@@ -10,7 +10,6 @@
     - [Project Synthesizer Prompt](./generate/project-synthesizer-prompt.md)
   - [Daily Report Synthesis](./generate/daily-synthesis.md)
     - [Daily Synthesizer Prompt](./generate/daily-synthesizer-prompt.md)
-  - [Generation Audits](./generate/evidence-audit.md)
   - [MCP Tools](./generate/mcp-tools.md)
 - [Development](./dev/index.md)
   - [Architecture](./dev/architecture.md)

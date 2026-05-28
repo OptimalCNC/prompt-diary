@@ -84,7 +84,7 @@ Strong signals:
 - concrete goals or constraints
 - examples, acceptance criteria, or priority guidance
 - review, correction, or rejection of weak output
-- requests for testing, audit, or validation
+- requests for testing or validation
 - connecting agent work to project goals
 - producing reusable prompts, checklists, or standards
 
