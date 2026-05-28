@@ -207,10 +207,13 @@ class CodexAgentRunner:
         self._turn_running = True
         try:
             thread = await self._ensure_thread_started()
-            result = await asyncio.wait_for(
-                thread.run(prompt, output_schema=output_schema),
-                timeout=timeout_seconds,
-            )
+            try:
+                result = await asyncio.wait_for(
+                    thread.run(prompt, output_schema=output_schema),
+                    timeout=timeout_seconds,
+                )
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError(_turn_timeout_message(timeout_seconds)) from exc
             return _agent_turn_result(result)
         finally:
             self._turn_running = False
@@ -385,6 +388,10 @@ def _backend_not_started_message() -> str:
 
 def _non_positive_timeout_message() -> str:
     return "timeout_seconds must be positive."
+
+
+def _turn_timeout_message(timeout_seconds: float) -> str:
+    return f"Codex agent turn timed out after {timeout_seconds:g} seconds."
 
 
 def _concurrent_turn_message() -> str:
