@@ -35,3 +35,12 @@ def test_build_no_material_chain_has_empty_outcomes() -> None:
     assert chain["outcomes"] == []
     assert chain["terminal_state"]["type"] == "no_material"
     assert chain["materiality"] == "none"
+
+
+def test_build_no_material_chain_is_accepted_by_validator(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    chain = build_evidence_chain(turn_ref="T0002", span=(9, 10), kind="no_material")
+    result = call_write_evidence_api(
+        workspace_path=workspace, session_ref=SESSION_REF, evidence_chain=chain
+    )
+    assert_appended_result(result, turn_ref="T0002")

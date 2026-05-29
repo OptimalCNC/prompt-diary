@@ -5,7 +5,7 @@ import json
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 
@@ -220,7 +220,7 @@ def build_evidence_chain(
     *,
     turn_ref: str,
     span: tuple[int, int],
-    kind: str = "material",
+    kind: Literal["material", "no_material"] = "material",
 ) -> dict[str, Any]:
     """Build a write-valid evidence chain whose citations all fall inside ``span``.
 
