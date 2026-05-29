@@ -9,11 +9,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.runner import run_daily_synthesis
-from prompt_diary.generate.evidence_extraction.runner import (
-    EvidenceExtractionRunner,
-    run_evidence_extraction,
-)
+from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
+from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import (
     ArtifactSpec,
     GeneratePipelineRunner,
@@ -29,14 +26,14 @@ from prompt_diary.generate.pipeline import (
     project_synthesis_task_id,
     run_generation_task,
 )
-from prompt_diary.generate.project_synthesis.runner import (
-    ProjectSynthesisRunner,
-    run_project_synthesis,
-)
+from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workspace import IndexedSession, PreparedProject, load_prepared_workspace
+from tests.agent_fakes import FakeAgentSessionFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from prompt_diary.agent import AgentConfig, AgentTurnResult
 
 TIMEOUT_MESSAGE = "timed out"
 
@@ -282,17 +279,20 @@ def test_failed_dependency_blocks_transitive_dependents(tmp_path: Path) -> None:
 
 def test_standalone_phase_placeholders_fail_explicitly(tmp_path: Path) -> None:
     task = TaskSpec(task_id="placeholder", kind="daily_synthesis")
+    factory = FakeAgentSessionFactory(script=_unused_agent_script)
 
     with pytest.raises(PromptDiaryError, match="evidence extraction phase runner"):
-        asyncio.run(run_evidence_extraction(workspace_path=tmp_path, task=task))
-    with pytest.raises(PromptDiaryError, match="evidence extraction phase runner"):
-        asyncio.run(EvidenceExtractionRunner().run(workspace_path=tmp_path, task=task))
+        asyncio.run(
+            EvidenceExtractionRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
+        )
     with pytest.raises(PromptDiaryError, match="project synthesis phase runner"):
-        asyncio.run(run_project_synthesis(workspace_path=tmp_path, task=task))
-    with pytest.raises(PromptDiaryError, match="project synthesis phase runner"):
-        asyncio.run(ProjectSynthesisRunner().run(workspace_path=tmp_path, task=task))
+        asyncio.run(
+            ProjectSynthesisRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
+        )
     with pytest.raises(PromptDiaryError, match="daily synthesis phase runner"):
-        asyncio.run(run_daily_synthesis(workspace_path=tmp_path, task=task))
+        asyncio.run(
+            DailySynthesisRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
+        )
 
 
 def test_pipeline_validation_errors_are_actionable(tmp_path: Path) -> None:
@@ -704,6 +704,15 @@ class FailingTaskRunner:
                 errors=("mock task failed",),
             )
         return TaskResult(task_id=task.task_id, status="success")
+
+
+def _unused_agent_script(prompt: str, config: AgentConfig) -> AgentTurnResult:
+    del prompt, config
+    raise AssertionError(_unused_agent_script_message())
+
+
+def _unused_agent_script_message() -> str:
+    return "placeholder phase runners must not mint an agent turn"
 
 
 def _all_phase_runners(phase_runner: PhaseRunner) -> dict[TaskKind, PhaseRunner]:

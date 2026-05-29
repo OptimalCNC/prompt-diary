@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -20,10 +21,46 @@ from prompt_diary.targeting.resolve import resolve_report_target
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from prompt_diary.agent import AgentSessionFactory
+
 PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
 BOOTSTRAP_FAILED = "bootstrap failed"
 PHASE_FAILED = "phase failed"
+
+
+@dataclass
+class _FakeWorkflowResult:
+    messages: tuple[str, ...]
+
+
+@dataclass
+class _FakeWorkflow:
+    pipeline_messages: tuple[str, ...] = ()
+    phase_messages: tuple[str, ...] = ()
+    pipeline_error: str | None = None
+    phase_error: str | None = None
+
+    def run_pipeline(
+        self, *, workspace_path: Path, messages: tuple[str, ...] = ()
+    ) -> _FakeWorkflowResult:
+        del workspace_path
+        if self.pipeline_error is not None:
+            raise PromptDiaryError(self.pipeline_error)
+        return _FakeWorkflowResult(messages=(*messages, *self.pipeline_messages))
+
+    def run_phase(
+        self,
+        *,
+        workspace_path: Path,
+        phase: str,
+        project_key: str | None = None,
+        session_ref: str | None = None,
+    ) -> _FakeWorkflowResult:
+        del workspace_path, phase, project_key, session_ref
+        if self.phase_error is not None:
+            raise PromptDiaryError(self.phase_error)
+        return _FakeWorkflowResult(messages=self.phase_messages)
 
 
 def test_report_help_lists_commands() -> None:
@@ -90,16 +127,16 @@ def test_generate_error_exits_with_stderr(
         del date, today, timezone_name
         return tmp_path, ()
 
-    def raise_error(*, workspace_path: Path, messages: tuple[str, ...]) -> None:
-        del workspace_path, messages
-        raise PromptDiaryError(GENERATE_FAILED)
-
     monkeypatch.setattr(
         generate_cmd,
         "workspace_for_generate_target",
         workspace_for_generate_target,
     )
-    monkeypatch.setattr(generate_cmd, "run_generate_pipeline", raise_error)
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(pipeline_error=GENERATE_FAILED),
+    )
     runner = CliRunner()
 
     result = runner.invoke(app, ["generate", "--date", "2026-05-12"])
@@ -112,9 +149,6 @@ def test_generate_prints_pipeline_messages(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    class Result:
-        messages = ("prepared", "generated")
-
     def workspace_for_generate_target(
         *,
         date: str | None,
@@ -124,16 +158,16 @@ def test_generate_prints_pipeline_messages(
         del date, today, timezone_name
         return tmp_path, ("prepared",)
 
-    def fake_run_generate_pipeline(*, workspace_path: Path, messages: tuple[str, ...]) -> Result:
-        del workspace_path, messages
-        return Result()
-
     monkeypatch.setattr(
         generate_cmd,
         "workspace_for_generate_target",
         workspace_for_generate_target,
     )
-    monkeypatch.setattr(generate_cmd, "run_generate_pipeline", fake_run_generate_pipeline)
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(pipeline_messages=("generated",)),
+    )
     runner = CliRunner()
 
     result = runner.invoke(app, ["generate", "--date", "2026-05-12"])
@@ -155,22 +189,16 @@ def test_generate_phase_error_exits_with_stderr(
         del date, today, timezone_name
         return tmp_path
 
-    def raise_error(
-        *,
-        workspace_path: Path,
-        phase: str,
-        project_key: str | None = None,
-        session_ref: str | None = None,
-    ) -> None:
-        del workspace_path, phase, project_key, session_ref
-        raise PromptDiaryError(PHASE_FAILED)
-
     monkeypatch.setattr(
         generate_cmd,
         "workspace_for_existing_target",
         workspace_for_existing_target,
     )
-    monkeypatch.setattr(generate_cmd, "run_generate_phase", raise_error)
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_error=PHASE_FAILED),
+    )
     runner = CliRunner()
 
     result = runner.invoke(
@@ -204,22 +232,16 @@ def test_generate_project_error_exits_with_stderr(
         del date, today, timezone_name
         return tmp_path
 
-    def raise_error(
-        *,
-        workspace_path: Path,
-        phase: str,
-        project_key: str | None = None,
-        session_ref: str | None = None,
-    ) -> None:
-        del workspace_path, phase, project_key, session_ref
-        raise PromptDiaryError(PHASE_FAILED)
-
     monkeypatch.setattr(
         generate_cmd,
         "workspace_for_existing_target",
         workspace_for_existing_target,
     )
-    monkeypatch.setattr(generate_cmd, "run_generate_phase", raise_error)
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_error=PHASE_FAILED),
+    )
     runner = CliRunner()
 
     result = runner.invoke(
@@ -244,22 +266,16 @@ def test_generate_daily_error_exits_with_stderr(
         del date, today, timezone_name
         return tmp_path
 
-    def raise_error(
-        *,
-        workspace_path: Path,
-        phase: str,
-        project_key: str | None = None,
-        session_ref: str | None = None,
-    ) -> None:
-        del workspace_path, phase, project_key, session_ref
-        raise PromptDiaryError(PHASE_FAILED)
-
     monkeypatch.setattr(
         generate_cmd,
         "workspace_for_existing_target",
         workspace_for_existing_target,
     )
-    monkeypatch.setattr(generate_cmd, "run_generate_phase", raise_error)
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_error=PHASE_FAILED),
+    )
     runner = CliRunner()
 
     result = runner.invoke(app, ["generate", "daily", "--date", "2026-05-12"])
@@ -274,19 +290,25 @@ def test_generate_phase_commands_delegate(
 ) -> None:
     calls: list[tuple[str, str | None, str | None]] = []
 
-    class Result:
-        messages = ("completed",)
+    @dataclass
+    class _RecordingWorkflow:
+        def run_pipeline(
+            self, *, workspace_path: Path, messages: tuple[str, ...] = ()
+        ) -> _FakeWorkflowResult:
+            del workspace_path
+            return _FakeWorkflowResult(messages=messages)
 
-    def fake_run_generate_phase(
-        *,
-        workspace_path: Path,
-        phase: str,
-        project_key: str | None = None,
-        session_ref: str | None = None,
-    ) -> Result:
-        del workspace_path
-        calls.append((phase, project_key, session_ref))
-        return Result()
+        def run_phase(
+            self,
+            *,
+            workspace_path: Path,
+            phase: str,
+            project_key: str | None = None,
+            session_ref: str | None = None,
+        ) -> _FakeWorkflowResult:
+            del workspace_path
+            calls.append((phase, project_key, session_ref))
+            return _FakeWorkflowResult(messages=("completed",))
 
     def workspace_for_existing_target(
         *,
@@ -302,7 +324,7 @@ def test_generate_phase_commands_delegate(
         "workspace_for_existing_target",
         workspace_for_existing_target,
     )
-    monkeypatch.setattr(generate_cmd, "run_generate_phase", fake_run_generate_phase)
+    monkeypatch.setattr(generate_cmd, "build_generation_workflow", _RecordingWorkflow)
     runner = CliRunner()
 
     evidence = runner.invoke(
@@ -332,6 +354,25 @@ def test_generate_phase_commands_delegate(
         ("project", "Project-123", None),
         ("daily", None, None),
     ]
+
+
+class _HasAgentFactory(Protocol):
+    agent_factory: AgentSessionFactory
+
+
+def test_build_generation_workflow_wires_one_shared_factory() -> None:
+    workflow = generate_cmd.build_generation_workflow()
+
+    assert set(workflow.phase_runners) == {
+        "evidence_extraction",
+        "project_synthesis",
+        "daily_synthesis",
+    }
+    factories = {
+        id(cast("_HasAgentFactory", runner).agent_factory)
+        for runner in workflow.phase_runners.values()
+    }
+    assert factories == {id(workflow.agent_factory)}
 
 
 def test_generate_existing_workspace_resolution(tmp_path: Path) -> None:

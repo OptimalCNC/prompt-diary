@@ -6,15 +6,18 @@ from __future__ import annotations
 import asyncio
 import importlib
 from collections.abc import Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
 
+from prompt_diary.agent import AgentTurnEvent, AgentTurnResult
 from prompt_diary.errors import PromptDiaryError
 
 if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
+    from prompt_diary.agent import AgentConfig, AgentRunner
     from prompt_diary.models import JsonObject
 
 
@@ -33,38 +36,6 @@ class CodexBackendConfig:
     mcp_config_overrides: tuple[str, ...] = ()
     codex_bin: Path | None = None
     env_overrides: Mapping[str, str] = field(default_factory=_empty_env_overrides)
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    """Per-conversation Codex agent configuration."""
-
-    working_directory: Path
-    model: str | None = None
-    model_provider: str | None = None
-    reasoning_effort: str | None = None
-    approval_mode: str | None = None
-    sandbox: str | None = None
-    base_instructions: str | None = None
-    developer_instructions: str | None = None
-    personality: str | None = None
-
-
-@dataclass(frozen=True)
-class AgentTurnEvent:
-    """Structured event summary emitted while running one agent turn."""
-
-    kind: str
-    summary: str
-    metadata: Mapping[str, object]
-
-
-@dataclass(frozen=True)
-class AgentTurnResult:
-    """Result from one Codex agent turn."""
-
-    assistant_text: str
-    events: tuple[AgentTurnEvent, ...]
 
 
 class _AppServerConfigFactory(Protocol):
@@ -270,6 +241,43 @@ class CodexAgentRunner:
             config=thread_config,
         )
         return self._thread
+
+
+class CodexAgentSessionFactory:
+    """Own one shared Codex backend and mint a fresh conversation per call."""
+
+    def __init__(self, backend_config: CodexBackendConfig) -> None:
+        self._backend_config = backend_config
+        self._stack: AsyncExitStack | None = None
+        self._backend: CodexBackend | None = None
+
+    async def __aenter__(self) -> CodexAgentSessionFactory:
+        """Start the shared backend."""
+        stack = AsyncExitStack()
+        await stack.__aenter__()
+        self._backend = await stack.enter_async_context(CodexBackend(self._backend_config))
+        self._stack = stack
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Stop the shared backend."""
+        stack = self._stack
+        self._stack = None
+        self._backend = None
+        if stack is None:
+            return None
+        return await stack.__aexit__(exc_type, exc, traceback)
+
+    async def runner(self, config: AgentConfig) -> AgentRunner:
+        """Return a fresh conversation bound to the shared backend."""
+        if self._backend is None:
+            raise CodexRunnerError(_backend_not_started_message())
+        return CodexAgentRunner(self._backend, config)
 
 
 def _load_openai_codex() -> _CodexSdkModule:

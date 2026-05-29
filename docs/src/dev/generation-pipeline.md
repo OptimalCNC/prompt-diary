@@ -49,10 +49,18 @@ Each real phase implementation should live in its phase package and implement th
 runner may use Codex, MCP tools, deterministic code, or mocks. The framework calls it only after
 dependencies are complete.
 
-A runner may also implement async context-manager methods when it owns shared resources, such as one
-Codex backend reused by multiple concurrent conversations. The full pipeline enters each unique
-managed runner once for the plan run; standalone phase workflows enter the selected runner around
-the single task.
+Concrete phase runners hold an injected `AgentSessionFactory` but do not own backend lifecycle.
+Backend ownership lives at the run scope: `GenerateWorkspaceWorkflow` enters one shared factory
+once per run (inside `asyncio.run`), and every task mints its own conversation off that shared
+backend via `factory.runner(config)`. The composition root `cmds/generate.py::build_generation_workflow()`
+constructs one `CodexAgentSessionFactory`, passes it to all three phase runners, and sets it as
+the workflow's `agent_factory`. `GeneratePipelineRunner` itself is agent-agnostic — it schedules
+tasks and calls `PhaseRunner.run`; backend and agent wiring are the workflow's concern.
+
+A phase runner therefore does not need to be an async context manager to obtain its backend: the
+shared `AgentSessionFactory` is entered once at the workflow scope, above the pipeline. The pipeline
+still enters any phase runner that *is* an async context manager (once per run), but that mechanism
+now serves only a runner's own additional resources, not the agent backend.
 
 `GenerateWorkspaceWorkflow` is the shared workspace executor for both the full pipeline and one
 standalone phase task. `run_generation_task` is the lower-level task API used after declared

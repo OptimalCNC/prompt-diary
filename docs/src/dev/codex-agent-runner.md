@@ -1,15 +1,57 @@
 # Codex Agent Runner
 
-This page records the initial package-level skeleton for a future wrapper over the OpenAI Codex
-Python SDK. It is for developers adding model-backed generation support.
+This page covers the neutral agent execution port (`prompt_diary/agent.py`) and the Codex SDK
+adapter (`integrations/codex_runner.py`). It is for developers adding or testing model-backed
+generation support.
 
 ## Role
 
-The Codex agent runner is a generic async execution boundary for model-backed work. It should make
-Codex conversations easier to start, continue, observe, and configure from this package.
+The agent port defines the execution contracts that generation phases depend on, decoupled from any
+specific backend. The Codex adapter implements those contracts using the OpenAI Codex Python SDK.
 
 The runner should not know Prompt Diary generation phases as domain concepts. Callers provide the
 prompt, input context, working directory, tool configuration, and any artifact checks they need.
+
+## Neutral Port: `prompt_diary/agent.py`
+
+`src/prompt_diary/agent.py` is the neutral agent execution port. Generation phases and the
+workflow layer depend only on this module — never on the Codex SDK adapter directly.
+
+It defines two protocols:
+
+- `AgentRunner` — one agent conversation. Its single `turn(prompt, *, timeout_seconds, output_schema)` method starts the conversation on first use and continues it on later calls.
+- `AgentSessionFactory` — owns one shared backend and mints a fresh `AgentRunner` per call via `runner(config)`. It is an async context manager: `__aenter__` starts the backend; `__aexit__` stops it.
+
+The shared agent value types also live here:
+
+```python
+@dataclass(frozen=True)
+class AgentConfig:
+    working_directory: Path
+    model: str | None = None
+    ...
+
+@dataclass(frozen=True)
+class AgentTurnEvent:
+    kind: str
+    summary: str
+    metadata: Mapping[str, object]
+
+@dataclass(frozen=True)
+class AgentTurnResult:
+    assistant_text: str
+    events: tuple[AgentTurnEvent, ...]
+```
+
+`CodexAgentSessionFactory` in `integrations/codex_runner.py` is the production adapter: it owns
+one `CodexBackend` (via `AsyncExitStack`) and mints a lifecycle-free `CodexAgentRunner`
+conversation per `runner()` call. Each `CodexAgentRunner` is bound to the shared backend but has
+no lifecycle of its own — it starts its SDK thread on the first `turn()` call.
+
+The generation phase wiring composition root is `cmds/generate.py::build_generation_workflow()`,
+the only place that imports both `generate/` and `integrations/`. It constructs one
+`CodexAgentSessionFactory`, passes it to all three phase runners, and sets it as the workflow's
+`agent_factory`.
 
 ## Needs
 
@@ -46,7 +88,8 @@ class CodexBackendConfig:
     mcp_config_overrides: tuple[str, ...] = ()
 ```
 
-The runner API is centered on a small agent configuration object:
+The runner API is centered on a small agent configuration object (`AgentConfig`, from
+`prompt_diary.agent`):
 
 ```python
 @dataclass(frozen=True)
@@ -68,7 +111,7 @@ validation feedback may need different limits or schemas in the same conversatio
 Package code should parse external or loosely structured configuration into internal typed values
 before starting a conversation.
 
-The primary interface should be async:
+The primary async interface in `integrations/codex_runner.py`:
 
 ```python
 class CodexBackend:
@@ -89,12 +132,22 @@ class CodexAgentRunner:
         timeout_seconds: float = 600.0,
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult: ...
+
+
+class CodexAgentSessionFactory:
+    def __init__(self, backend_config: CodexBackendConfig) -> None: ...
+
+    async def __aenter__(self) -> CodexAgentSessionFactory: ...
+
+    async def __aexit__(self, *exc_info: object) -> bool | None: ...
+
+    async def runner(self, config: AgentConfig) -> AgentRunner: ...
 ```
 
 The first `turn` call starts the underlying SDK conversation. Later `turn` calls continue that same
 conversation.
 
-Each turn result should include at least:
+`AgentTurnEvent` and `AgentTurnResult` (the turn result types) live in `prompt_diary.agent`:
 
 ```python
 @dataclass(frozen=True)
@@ -112,10 +165,12 @@ class AgentTurnResult:
 
 Artifact paths should usually be checked by the caller rather than trusted from assistant text.
 
-The current package module is an optional runtime wrapper: `CodexBackend.__aenter__` lazily imports
-`openai_codex`, starts the SDK app-server, and `CodexAgentRunner.turn(...)` starts one SDK thread on
-first use and reuses it for later turns. The package intentionally has no package-metadata Codex SDK
-dependency, and the module is not exported from `prompt_diary.__init__`.
+`CodexBackend.__aenter__` lazily imports `openai_codex`, starts the SDK app-server.
+`CodexAgentRunner.turn(...)` starts one SDK thread on first use and reuses it for later turns.
+`CodexAgentSessionFactory` wraps a `CodexBackend` in an `AsyncExitStack` and mints a fresh
+`CodexAgentRunner` per `runner()` call — each runner is lifecycle-free; only the factory is a
+managed context. The package intentionally has no package-metadata Codex SDK dependency, and the
+module is not exported from `prompt_diary.__init__`.
 
 ## Codex SDK Usage
 
@@ -215,7 +270,10 @@ async with CodexBackend(backend_config) as backend:
 
 ## Coverage
 
-Default unit tests mock the Codex SDK and cover the wrapper contracts without starting a real agent.
+Downstream phase tests mock at the `AgentSessionFactory` seam: they inject a `FakeAgentSessionFactory`
+(`tests/agent_fakes.py`) that never starts Codex and returns scripted results. The Codex adapter's own
+tests (`tests/integrations/test_codex_runner.py`) mock the `openai_codex` SDK import instead.
+
 Real integration tests for this module may spend model tokens, so they remain opt-in rather than
 part of the normal unit-test run.
 

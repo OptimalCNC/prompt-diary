@@ -26,6 +26,7 @@ modules and other details that may change as the implementation evolves.
 | `src/prompt_diary/` | Package root for stable imports, entry points, and shared package code. It should not be the default home for workflow internals. |
 | `src/prompt_diary/cli.py` | Console command interface that parses options, presents results and errors, and delegates to workflow implementation modules. |
 | `src/prompt_diary/models.py` | Shared cross-workflow result models and value types. |
+| `src/prompt_diary/agent.py` | Neutral agent execution contract (port): `AgentRunner`/`AgentSessionFactory` protocols and shared agent value types (`AgentConfig`, `AgentTurnEvent`, `AgentTurnResult`), depended on by generation phases and runner adapters. |
 | `src/prompt_diary/errors.py` | Shared user-facing exception hierarchy. |
 | `src/prompt_diary/targeting/` | Date and timezone resolution into typed report targets used by both workflows. |
 | `src/prompt_diary/prepare/` | Preparation workflow implementation: source session ingestion and prepared workspace construction. |
@@ -91,6 +92,12 @@ Product contract: [Workspace Layout](../workspace-layout.md).
 The CLI resolves a report target and ensures a prepared workspace exists, then calls the generation
 workflow with that workspace path. The generation package does not map dates to workspace folders; it
 consumes only the prepared workspace plus durable artifacts from earlier generation phases.
+
+The generation agent-wiring composition root is `cmds/generate.py::build_generation_workflow()` —
+the only place that imports both `generate/` and `integrations/`. It constructs one
+`CodexAgentSessionFactory` (from `integrations/codex_runner.py`) and passes it to all three phase
+runners and to the workflow. Generation phase code depends only on `prompt_diary.agent` (the
+neutral port), never on `integrations/` directly.
 
 Product contracts: [Report Generation](../generate/index.md),
 [Evidence Contract](../generate/evidence-contract.md),

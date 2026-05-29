@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.runner import DailySynthesisRunner
-from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import (
     GeneratePipelineRunner,
     PhaseRunner,
@@ -22,11 +20,13 @@ from prompt_diary.generate.pipeline import (
     project_synthesis_task_id,
     run_generation_task_with_lifecycle,
 )
-from prompt_diary.generate.project_synthesis.runner import ProjectSynthesisRunner
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
+
+    from prompt_diary.agent import AgentSessionFactory
+    from prompt_diary.generate.pipeline import GenerationPlan
 
 PhaseName = Literal["evidence", "project", "daily"]
 
@@ -57,6 +57,7 @@ class GenerateWorkspaceWorkflow:
     """Run generation workflows against one prepared workspace."""
 
     phase_runners: Mapping[TaskKind, PhaseRunner]
+    agent_factory: AgentSessionFactory
 
     def run_pipeline(
         self,
@@ -67,8 +68,7 @@ class GenerateWorkspaceWorkflow:
         """Run the full generation pipeline from a prepared workspace."""
         _require_workspace(workspace_path)
         plan = build_generation_plan(workspace_path)
-        runner = GeneratePipelineRunner(phase_runners=self.phase_runners)
-        pipeline_result = asyncio.run(runner.run(workspace_path=workspace_path, plan=plan))
+        pipeline_result = asyncio.run(self._run_plan(workspace_path=workspace_path, plan=plan))
         if not pipeline_result.ok:
             raise PromptDiaryError(_pipeline_failed_message(pipeline_result))
 
@@ -102,14 +102,7 @@ class GenerateWorkspaceWorkflow:
             project_key=project_key,
             session_ref=session_ref,
         )
-        phase_runner = self.phase_runners[task.kind]
-        task_result = asyncio.run(
-            run_generation_task_with_lifecycle(
-                workspace_path=workspace_path,
-                task=task,
-                phase_runner=phase_runner,
-            )
-        )
+        task_result = asyncio.run(self._run_task(workspace_path=workspace_path, task=task))
         if not task_result.ok:
             raise PromptDiaryError(_task_failed_message(task_result))
         return GeneratePhaseWorkflowResult(
@@ -119,56 +112,19 @@ class GenerateWorkspaceWorkflow:
             messages=(f"Completed generation task {task.task_id}.",),
         )
 
+    async def _run_plan(self, *, workspace_path: Path, plan: GenerationPlan) -> PipelineRunResult:
+        runner = GeneratePipelineRunner(phase_runners=self.phase_runners)
+        async with self.agent_factory:
+            return await runner.run(workspace_path=workspace_path, plan=plan)
 
-def run_generate_pipeline(
-    *,
-    workspace_path: Path,
-    phase_runners: Mapping[TaskKind, PhaseRunner] | None = None,
-    messages: tuple[str, ...] = (),
-) -> GeneratePipelineWorkflowResult:
-    """Run the full generation pipeline from a prepared workspace."""
-    return GenerateWorkspaceWorkflow(
-        phase_runners=_phase_runners_or_default(phase_runners)
-    ).run_pipeline(
-        workspace_path=workspace_path,
-        messages=messages,
-    )
-
-
-def run_generate_phase(
-    *,
-    workspace_path: Path,
-    phase: PhaseName,
-    project_key: str | None = None,
-    session_ref: str | None = None,
-    phase_runners: Mapping[TaskKind, PhaseRunner] | None = None,
-) -> GeneratePhaseWorkflowResult:
-    """Run one generation phase task from a prepared workspace."""
-    return GenerateWorkspaceWorkflow(
-        phase_runners=_phase_runners_or_default(phase_runners)
-    ).run_phase(
-        workspace_path=workspace_path,
-        phase=phase,
-        project_key=project_key,
-        session_ref=session_ref,
-    )
-
-
-def default_phase_runners() -> Mapping[TaskKind, PhaseRunner]:
-    """Return the default generation phase runners."""
-    return {
-        "evidence_extraction": EvidenceExtractionRunner(),
-        "project_synthesis": ProjectSynthesisRunner(),
-        "daily_synthesis": DailySynthesisRunner(),
-    }
-
-
-def _phase_runners_or_default(
-    phase_runners: Mapping[TaskKind, PhaseRunner] | None,
-) -> Mapping[TaskKind, PhaseRunner]:
-    if phase_runners is None:
-        return default_phase_runners()
-    return phase_runners
+    async def _run_task(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+        phase_runner = self.phase_runners[task.kind]
+        async with self.agent_factory:
+            return await run_generation_task_with_lifecycle(
+                workspace_path=workspace_path,
+                task=task,
+                phase_runner=phase_runner,
+            )
 
 
 def _select_task(

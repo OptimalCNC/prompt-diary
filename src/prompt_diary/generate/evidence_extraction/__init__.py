@@ -7,10 +7,7 @@ from prompt_diary.generate.evidence_extraction.mcp import (
     WriteEvidenceResult,
     write_evidence,
 )
-from prompt_diary.generate.evidence_extraction.runner import (
-    EvidenceExtractionRunner,
-    run_evidence_extraction,
-)
+from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 
 __all__ = [
     "EvidenceExtractionRunner",
@@ -18,6 +15,5 @@ __all__ = [
     "WriteEvidenceAppendedResult",
     "WriteEvidenceInvalidResult",
     "WriteEvidenceResult",
-    "run_evidence_extraction",
     "write_evidence",
 ]

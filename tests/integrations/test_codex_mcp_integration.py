@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from prompt_diary.agent import AgentConfig
 from prompt_diary.integrations.codex_runner import (
-    AgentConfig,
     CodexAgentRunner,
     CodexBackend,
     CodexBackendConfig,

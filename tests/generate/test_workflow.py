@@ -8,10 +8,29 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, TaskSpec
-from prompt_diary.generate.workflow import run_generate_phase, run_generate_pipeline
+from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
+from tests.agent_fakes import FakeAgentSessionFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from prompt_diary.agent import AgentConfig, AgentTurnResult
+
+
+def _no_agent_turns(prompt: str, config: AgentConfig) -> AgentTurnResult:
+    del prompt, config
+    raise AssertionError(_no_agent_turns_message())
+
+
+def _no_agent_turns_message() -> str:
+    return "workflow tests use file-writing phase runners, not agent turns"
+
+
+def _workflow(phase_runner: PhaseRunner) -> GenerateWorkspaceWorkflow:
+    return GenerateWorkspaceWorkflow(
+        phase_runners=_all_phase_runners(phase_runner),
+        agent_factory=FakeAgentSessionFactory(script=_no_agent_turns),
+    )
 
 
 def test_generate_workflow_runs_pipeline_with_injected_phase_runners(tmp_path: Path) -> None:
@@ -19,10 +38,13 @@ def test_generate_workflow_runs_pipeline_with_injected_phase_runners(tmp_path: P
     workspace = reports_root / "work" / "2026-05-12"
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
     phase_runner = WritingPhaseRunner()
+    factory = FakeAgentSessionFactory(script=_no_agent_turns)
 
-    result = run_generate_pipeline(
-        workspace_path=workspace,
+    result = GenerateWorkspaceWorkflow(
         phase_runners=_all_phase_runners(phase_runner),
+        agent_factory=factory,
+    ).run_pipeline(
+        workspace_path=workspace,
         messages=("Reusing existing workspace.",),
     )
 
@@ -32,25 +54,15 @@ def test_generate_workflow_runs_pipeline_with_injected_phase_runners(tmp_path: P
     assert result.pipeline_result.ok
     assert phase_runner.events == ["daily"]
     assert "Reusing existing workspace." in result.messages
+    assert factory.entered == 1
+    assert factory.exited == 1
 
 
 def test_generate_workflow_requires_prepared_workspace(tmp_path: Path) -> None:
     with pytest.raises(PromptDiaryError, match="prepared workspace is missing"):
-        run_generate_pipeline(
+        _workflow(WritingPhaseRunner()).run_pipeline(
             workspace_path=tmp_path / ".reports" / "work" / "2026-05-12",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
-
-
-def test_generate_workflow_default_pipeline_fails_until_phase_runners_are_implemented(
-    tmp_path: Path,
-) -> None:
-    reports_root = tmp_path / ".reports"
-    workspace = reports_root / "work" / "2026-05-12"
-    _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
-
-    with pytest.raises(PromptDiaryError, match="daily synthesis phase runner"):
-        run_generate_pipeline(workspace_path=workspace)
 
 
 def test_generate_workflow_rejects_phase_runner_missing_declared_outputs(tmp_path: Path) -> None:
@@ -59,10 +71,7 @@ def test_generate_workflow_rejects_phase_runner_missing_declared_outputs(tmp_pat
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
 
     with pytest.raises(PromptDiaryError) as exc_info:
-        run_generate_pipeline(
-            workspace_path=workspace,
-            phase_runners=_all_phase_runners(NoOutputPhaseRunner()),
-        )
+        _workflow(NoOutputPhaseRunner()).run_pipeline(workspace_path=workspace)
 
     assert "Generation pipeline failed:" in str(exc_info.value)
     assert "missing output artifact after success: daily-report.json" in str(exc_info.value)
@@ -76,10 +85,7 @@ def test_generate_workflow_treats_evidence_failure_as_gap_when_report_completes(
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
     _write_project(workspace=workspace, project_key="Project-123", session_ref="S0001")
 
-    result = run_generate_pipeline(
-        workspace_path=workspace,
-        phase_runners=_all_phase_runners(EvidenceGapPhaseRunner()),
-    )
+    result = _workflow(EvidenceGapPhaseRunner()).run_pipeline(workspace_path=workspace)
 
     assert result.pipeline_result.ok
     assert not result.pipeline_result.all_tasks_ok
@@ -92,17 +98,22 @@ def test_run_generate_phase_runs_one_task(tmp_path: Path) -> None:
     workspace = reports_root / "work" / "2026-05-12"
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
     phase_runner = WritingPhaseRunner()
+    factory = FakeAgentSessionFactory(script=_no_agent_turns)
 
-    result = run_generate_phase(
+    result = GenerateWorkspaceWorkflow(
+        phase_runners=_all_phase_runners(phase_runner),
+        agent_factory=factory,
+    ).run_phase(
         workspace_path=workspace,
         phase="daily",
-        phase_runners=_all_phase_runners(phase_runner),
     )
 
     assert result.workspace_path == workspace
     assert result.task.task_id == "daily"
     assert result.task_result.ok
     assert result.messages == ("Completed generation task daily.",)
+    assert factory.entered == 1
+    assert factory.exited == 1
 
 
 def test_run_generate_phase_enters_context_managed_runner(tmp_path: Path) -> None:
@@ -111,10 +122,9 @@ def test_run_generate_phase_enters_context_managed_runner(tmp_path: Path) -> Non
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
     phase_runner = ContextManagedWritingPhaseRunner()
 
-    result = run_generate_phase(
+    result = _workflow(phase_runner).run_phase(
         workspace_path=workspace,
         phase="daily",
-        phase_runners=_all_phase_runners(phase_runner),
     )
 
     assert result.task_result.ok
@@ -126,10 +136,9 @@ def test_run_generate_phase_enters_context_managed_runner(tmp_path: Path) -> Non
 
 def test_run_generate_phase_requires_existing_workspace(tmp_path: Path) -> None:
     with pytest.raises(PromptDiaryError, match="prepared workspace is missing"):
-        run_generate_phase(
+        _workflow(WritingPhaseRunner()).run_phase(
             workspace_path=tmp_path / ".reports" / "work" / "2026-05-12",
             phase="daily",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
 
 
@@ -139,16 +148,14 @@ def test_run_generate_phase_validates_phase_scope(tmp_path: Path) -> None:
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
 
     with pytest.raises(PromptDiaryError, match="evidence phase requires"):
-        run_generate_phase(
+        _workflow(WritingPhaseRunner()).run_phase(
             workspace_path=workspace,
             phase="evidence",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
     with pytest.raises(PromptDiaryError, match="project phase requires"):
-        run_generate_phase(
+        _workflow(WritingPhaseRunner()).run_phase(
             workspace_path=workspace,
             phase="project",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
 
 
@@ -158,11 +165,10 @@ def test_run_generate_phase_rejects_unknown_task(tmp_path: Path) -> None:
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
 
     with pytest.raises(PromptDiaryError, match="generation task is not present"):
-        run_generate_phase(
+        _workflow(WritingPhaseRunner()).run_phase(
             workspace_path=workspace,
             phase="project",
             project_key="Missing-123",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
 
 
@@ -173,11 +179,10 @@ def test_run_generate_phase_project_requires_evidence_cards(tmp_path: Path) -> N
     _write_project(workspace=workspace, project_key="Project-123", session_ref="S0001")
 
     with pytest.raises(PromptDiaryError) as exc_info:
-        run_generate_phase(
+        _workflow(WritingPhaseRunner()).run_phase(
             workspace_path=workspace,
             phase="project",
             project_key="Project-123",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
 
     assert "Generation task project:Project-123 failed:" in str(exc_info.value)
@@ -194,12 +199,11 @@ def test_run_generate_phase_reports_prerequisite_failures(tmp_path: Path) -> Non
     (workspace / "projects" / "Project-123" / "sessions" / "codex" / "session.jsonl").unlink()
 
     with pytest.raises(PromptDiaryError) as exc_info:
-        run_generate_phase(
+        _workflow(WritingPhaseRunner()).run_phase(
             workspace_path=workspace,
             phase="evidence",
             project_key="Project-123",
             session_ref="S0001",
-            phase_runners=_all_phase_runners(WritingPhaseRunner()),
         )
 
     assert "Generation task evidence:Project-123:S0001 failed:" in str(exc_info.value)
@@ -212,10 +216,21 @@ def test_run_generate_phase_reports_runner_failure_without_error_details(tmp_pat
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
 
     with pytest.raises(PromptDiaryError, match="failed with status failed"):
-        run_generate_phase(
+        _workflow(FailingWithoutDetailsPhaseRunner()).run_phase(
             workspace_path=workspace,
             phase="daily",
-            phase_runners=_all_phase_runners(FailingWithoutDetailsPhaseRunner()),
+        )
+
+
+def test_run_generate_phase_catches_prompt_diary_error_from_runner(tmp_path: Path) -> None:
+    reports_root = tmp_path / ".reports"
+    workspace = reports_root / "work" / "2026-05-12"
+    _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
+
+    with pytest.raises(PromptDiaryError, match="daily synthesis runner raised"):
+        _workflow(RaisingPhaseRunner()).run_phase(
+            workspace_path=workspace,
+            phase="daily",
         )
 
 
@@ -276,6 +291,17 @@ class FailingWithoutDetailsPhaseRunner:
     async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
         del workspace_path
         return TaskResult(task_id=task.task_id, status="failed")
+
+
+@dataclass
+class RaisingPhaseRunner:
+    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+        del workspace_path, task
+        raise PromptDiaryError(_raising_runner_message())
+
+
+def _raising_runner_message() -> str:
+    return "daily synthesis runner raised"
 
 
 def _all_phase_runners(phase_runner: PhaseRunner) -> dict[TaskKind, PhaseRunner]:

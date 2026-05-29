@@ -15,7 +15,11 @@ from prompt_diary.cmds.common import (
     exit_with_error,
 )
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.workflow import PhaseName, run_generate_phase, run_generate_pipeline
+from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
+from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
+from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
+from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
+from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
 from prompt_diary.prepare.workspace import (
     prepare_workspace,
     validate_workspace_matches_target,
@@ -36,6 +40,19 @@ GenerateSessionRefOption = Annotated[
     str,
     typer.Option(help="Prepared session reference for the evidence task."),
 ]
+
+
+def build_generation_workflow() -> GenerateWorkspaceWorkflow:
+    """Build the default generation workflow with one shared Codex agent backend."""
+    factory = CodexAgentSessionFactory(CodexBackendConfig())
+    return GenerateWorkspaceWorkflow(
+        phase_runners={
+            "evidence_extraction": EvidenceExtractionRunner(agent_factory=factory),
+            "project_synthesis": ProjectSynthesisRunner(agent_factory=factory),
+            "daily_synthesis": DailySynthesisRunner(agent_factory=factory),
+        },
+        agent_factory=factory,
+    )
 
 
 def register(app: typer.Typer) -> None:
@@ -67,7 +84,8 @@ def generate(
             today=today,
             timezone_name=timezone,
         )
-        result = run_generate_pipeline(workspace_path=workspace_path, messages=messages)
+        workflow = build_generation_workflow()
+        result = workflow.run_pipeline(workspace_path=workspace_path, messages=messages)
     except PromptDiaryError as exc:
         exit_with_error(exc)
     echo_messages(result.messages)
@@ -188,7 +206,8 @@ def _run_phase_command(
             today=today,
             timezone_name=timezone_name,
         )
-        result = run_generate_phase(
+        workflow = build_generation_workflow()
+        result = workflow.run_phase(
             workspace_path=workspace_path,
             phase=phase,
             project_key=project_key,

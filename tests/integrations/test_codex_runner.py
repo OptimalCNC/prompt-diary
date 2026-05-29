@@ -7,11 +7,10 @@ from typing import TYPE_CHECKING, ClassVar
 import pytest
 
 import prompt_diary.integrations.codex_runner as codex_runner
+from prompt_diary.agent import AgentConfig, AgentSessionFactory, AgentTurnEvent, AgentTurnResult
 from prompt_diary.integrations.codex_runner import (
-    AgentConfig,
-    AgentTurnEvent,
-    AgentTurnResult,
     CodexAgentRunner,
+    CodexAgentSessionFactory,
     CodexBackend,
     CodexBackendConfig,
     CodexRunnerError,
@@ -318,6 +317,31 @@ def test_runner_requires_started_backend(tmp_path: Path) -> None:
 
     with pytest.raises(CodexRunnerError, match="must be entered"):
         asyncio.run(exercise())
+
+
+def test_codex_session_factory_shares_one_backend_across_runners(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexAgentSessionFactory(CodexBackendConfig()) as factory:
+            runner_one = await factory.runner(AgentConfig(working_directory=tmp_path))
+            runner_two = await factory.runner(AgentConfig(working_directory=tmp_path))
+            await runner_one.turn("first")
+            await runner_two.turn("second")
+        assert FakeAsyncCodex.instances[0].exited
+
+    asyncio.run(exercise())
+
+    assert len(FakeAsyncCodex.instances) == 1
+    assert len(FakeAsyncCodex.instances[0].thread_start_calls) == 2
+
+
+def test_codex_session_factory_satisfies_agent_session_factory() -> None:
+    factory: AgentSessionFactory = CodexAgentSessionFactory(CodexBackendConfig())
+    assert isinstance(factory, CodexAgentSessionFactory)
 
 
 def _patch_sdk(monkeypatch: pytest.MonkeyPatch) -> None:

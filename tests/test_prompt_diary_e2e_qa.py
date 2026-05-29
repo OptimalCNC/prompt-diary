@@ -8,17 +8,21 @@ from zoneinfo import ZoneInfo
 
 from typer.testing import CliRunner
 
-import prompt_diary.generate.workflow as generate_workflow
+import prompt_diary.cmds.generate as generate_cmd
 from prompt_diary.cli import app
 from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, TaskSpec
+from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
 from prompt_diary.models import JsonObject, SourceSpec
 from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
 from prompt_diary.targeting.resolve import resolve_report_target
+from tests.agent_fakes import FakeAgentSessionFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+
+    from prompt_diary.agent import AgentConfig, AgentTurnResult
 
 TARGET_DATE = "2020-01-02"
 TARGET_TIMEZONE = "Asia/Shanghai"
@@ -38,6 +42,15 @@ class ReconstructedSources:
         )
 
 
+def _no_agent_turns(prompt: str, config: AgentConfig) -> AgentTurnResult:
+    del prompt, config
+    raise AssertionError(_no_agent_turns_message())
+
+
+def _no_agent_turns_message() -> str:
+    return "e2e uses a file-writing phase runner, not agent turns"
+
+
 def test_cli_generate_reuses_existing_workspace_from_env_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -47,9 +60,12 @@ def test_cli_generate_reuses_existing_workspace_from_env_roots(
     runner = CliRunner()
     workspace = _prepare_existing_workspace(reports_root=tmp_path / ".reports", sources=sources)
     monkeypatch.setattr(
-        generate_workflow,
-        "default_phase_runners",
-        lambda: _all_phase_runners(phase_runner),
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: GenerateWorkspaceWorkflow(
+            phase_runners=_all_phase_runners(phase_runner),
+            agent_factory=FakeAgentSessionFactory(script=_no_agent_turns),
+        ),
     )
     monkeypatch.chdir(tmp_path)
 
@@ -78,9 +94,12 @@ def test_cli_generate_prepares_missing_workspace_from_env_roots(
     phase_runner = WritingPhaseRunner()
     runner = CliRunner()
     monkeypatch.setattr(
-        generate_workflow,
-        "default_phase_runners",
-        lambda: _all_phase_runners(phase_runner),
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: GenerateWorkspaceWorkflow(
+            phase_runners=_all_phase_runners(phase_runner),
+            agent_factory=FakeAgentSessionFactory(script=_no_agent_turns),
+        ),
     )
     monkeypatch.chdir(tmp_path)
 
