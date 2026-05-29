@@ -10,8 +10,8 @@ Product behavior remains defined by [Prompt Diary Product](../product.md),
 
 ## Tool Shape
 
-Prompt Diary is a Python CLI package with a small public root and workflow-owned implementation
-packages.
+Prompt Diary is a Python CLI and MCP package with a small public root and workflow-owned
+implementation packages.
 
 The package root should stay small. Implementation code should live with the workflow or named
 protocol adapter that owns its behavior instead of accumulating as package-root modules.
@@ -24,17 +24,16 @@ modules and other details that may change as the implementation evolves.
 | Path | Stable meaning |
 | --- | --- |
 | `src/prompt_diary/` | Package root for stable imports, entry points, and shared package code. It should not be the default home for workflow internals. |
-| `src/prompt_diary/api.py` | Transport-independent public workflow API for preparation and generation. |
-| `src/prompt_diary/cli.py` | Console command interface that parses options, presents results and errors, and delegates to the public API. |
-| `src/prompt_diary/models.py` | Shared cross-workflow result models and value types that are intentionally public or broadly reused. |
+| `src/prompt_diary/cli.py` | Console command interface that parses options, presents results and errors, and delegates to workflow implementation modules. |
+| `src/prompt_diary/models.py` | Shared cross-workflow result models and value types. |
 | `src/prompt_diary/errors.py` | Shared user-facing exception hierarchy. |
 | `src/prompt_diary/targeting/` | Date and timezone resolution into typed report targets used by both workflows. |
 | `src/prompt_diary/prepare/` | Preparation workflow implementation: source session ingestion and prepared workspace construction. |
 | `src/prompt_diary/generate/` | Generation workflow implementation: phase orchestration, generation artifacts, prompt assets, and report output behavior. |
-| `src/prompt_diary/generate/evidence_extraction/` | Evidence Extraction phase behavior and transport-independent APIs for its canonical artifacts and tools. |
-| `src/prompt_diary/generate/project_synthesis/` | Project Synthesis phase behavior and transport-independent APIs for its canonical artifacts and tools. |
-| `src/prompt_diary/generate/daily_synthesis/` | Daily Report Synthesis phase behavior and transport-independent APIs for its canonical artifacts and tools. |
-| `src/prompt_diary/generate/prompts/` | Runtime prompt templates and prompt-rendering API used by generation phases. |
+| `src/prompt_diary/generate/evidence_extraction/` | Evidence Extraction phase behavior and internal contracts for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/project_synthesis/` | Project Synthesis phase behavior and internal contracts for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/daily_synthesis/` | Daily Report Synthesis phase behavior and internal contracts for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/prompts/` | Runtime prompt templates and prompt-rendering helpers used by generation phases and prompt CLI commands. |
 | `src/prompt_diary/mcp/` | MCP protocol adapter. MCP code adapts requests and responses; it does not own workflow semantics. |
 | `src/prompt_diary/integrations/` | Optional external runner and bootstrap integrations that are not core workflow semantics. |
 
@@ -72,10 +71,10 @@ Tests should follow the same stable boundaries without mirroring every helper mo
 | --- | --- |
 | `tests/targeting/` | Target resolution tests. |
 | `tests/prepare/` | Preparation workflow and prepared workspace tests. |
-| `tests/generate/` | Generation report and prompt tests. |
+| `tests/generate/` | Generation pipeline, workflow, and prompt tests. |
 | `tests/mcp/` | MCP adapter tests. |
 | `tests/integrations/` | Optional external integration tests. |
-| Top-level `tests/test_*.py` | Public API, CLI, and end-to-end workflow tests that span multiple packages. |
+| Top-level `tests/test_*.py` | CLI and end-to-end workflow tests that span multiple packages. |
 
 ## Workflows
 
@@ -89,14 +88,16 @@ Product contract: [Workspace Layout](../workspace-layout.md).
 
 ### `generate`
 
-Resolves a report target, ensures a prepared workspace exists, then runs generation from that
-workspace. Generation consumes only the prepared workspace plus durable artifacts from earlier
-generation phases.
+The CLI resolves a report target and ensures a prepared workspace exists, then calls the generation
+workflow with that workspace path. The generation package does not map dates to workspace folders; it
+consumes only the prepared workspace plus durable artifacts from earlier generation phases.
 
 Product contracts: [Report Generation](../generate/index.md),
 [Evidence Contract](../generate/evidence-contract.md),
 [Project Synthesis](../generate/project-synthesis.md), and
 [Daily Report Synthesis](../generate/daily-synthesis.md).
+
+Pipeline framework: [Generation Pipeline Framework](./generation-pipeline.md).
 
 ## CLI Interface
 

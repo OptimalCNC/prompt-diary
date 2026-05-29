@@ -1,6 +1,6 @@
 [project]
 name = "prompt-diary"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Review user prompts for evidence-backed improvement in AI coding collaboration."
 readme = "README.md"
 requires-python = ">=3.10"

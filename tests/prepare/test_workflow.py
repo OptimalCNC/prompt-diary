@@ -10,11 +10,11 @@ from zoneinfo import ZoneInfo
 
 from typer.testing import CliRunner
 
-import prompt_diary.cli as cli_module
-from prompt_diary.api import prepare_prompt_diary
+import prompt_diary.cmds.prepare as prepare_cmd
 from prompt_diary.cli import app
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec, TimeWindow
-from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV
+from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
+from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     import pytest
@@ -39,10 +39,30 @@ class PrepareFixture:
         )
 
 
-def test_prepare_api_uses_redacted_realistic_session_shapes(tmp_path: Path) -> None:
+def _prepare_workflow(
+    *,
+    date: str | None,
+    today: bool,
+    timezone_name: str | None,
+    force: bool,
+    reports_root: Path,
+    source_specs: tuple[SourceSpec, ...] | None = None,
+    now: datetime | None = None,
+) -> PrepareResult:
+    target = resolve_report_target(date=date, today=today, timezone_name=timezone_name, now=now)
+    return prepare_workspace(
+        target,
+        reports_root=reports_root,
+        source_specs=source_specs,
+        force=force,
+        prepared_at=now,
+    )
+
+
+def test_prepare_workflow_uses_redacted_realistic_session_shapes(tmp_path: Path) -> None:
     fixture = _prepare_fixture("prepare-realistic")
 
-    result = prepare_prompt_diary(
+    result = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -58,12 +78,12 @@ def test_prepare_api_uses_redacted_realistic_session_shapes(tmp_path: Path) -> N
     _assert_realistic_workspace(result.workspace_path, fixture)
 
 
-def test_prepare_api_assigns_row_local_turn_refs_for_multi_turn_sessions(
+def test_prepare_workflow_assigns_row_local_turn_refs_for_multi_turn_sessions(
     tmp_path: Path,
 ) -> None:
     fixture = _prepare_fixture("prepare-multi-turns")
 
-    result = prepare_prompt_diary(
+    result = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -90,10 +110,10 @@ def test_prepare_api_assigns_row_local_turn_refs_for_multi_turn_sessions(
     ] == [("T0001", 2, 5), ("T0002", 6, 8), ("T0003", 9, 10)]
 
 
-def test_prepare_api_copies_subagents_as_parent_session_context(tmp_path: Path) -> None:
+def test_prepare_workflow_copies_subagents_as_parent_session_context(tmp_path: Path) -> None:
     fixture = _prepare_fixture("prepare-subagents")
 
-    result = prepare_prompt_diary(
+    result = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -196,12 +216,12 @@ def test_prepare_api_copies_subagents_as_parent_session_context(tmp_path: Path) 
     assert not (project_dir / "sessions" / "claude-code" / "agent-a000000000000001.jsonl").exists()
 
 
-def test_prepare_api_reuses_existing_workspace_counts_projects_and_sessions(
+def test_prepare_workflow_reuses_existing_workspace_counts_projects_and_sessions(
     tmp_path: Path,
 ) -> None:
     fixture = _prepare_fixture("prepare-realistic")
     reports_root = tmp_path / ".reports"
-    prepare_prompt_diary(
+    _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -211,7 +231,7 @@ def test_prepare_api_reuses_existing_workspace_counts_projects_and_sessions(
         now=TARGET_NOW,
     )
 
-    reused = prepare_prompt_diary(
+    reused = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -230,7 +250,7 @@ def test_prepare_api_reuses_existing_workspace_counts_projects_and_sessions(
     )
 
 
-def test_prepare_api_force_recreates_invalid_existing_workspace_and_uses_now(
+def test_prepare_workflow_force_recreates_invalid_existing_workspace_and_uses_now(
     tmp_path: Path,
 ) -> None:
     fixture = _prepare_fixture("prepare-realistic")
@@ -243,7 +263,7 @@ def test_prepare_api_force_recreates_invalid_existing_workspace_and_uses_now(
     audit_dir.mkdir(parents=True)
     (audit_dir / "stale.txt").write_text("old", encoding="utf-8")
 
-    result = prepare_prompt_diary(
+    result = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -262,12 +282,12 @@ def test_prepare_api_force_recreates_invalid_existing_workspace_and_uses_now(
     assert metadata["prepared_at"] == "2026-05-13T09:01:02+08:00"
 
 
-def test_prepare_api_handles_payload_timestamp_turn_context_cwd_and_end_boundary(
+def test_prepare_workflow_handles_payload_timestamp_turn_context_cwd_and_end_boundary(
     tmp_path: Path,
 ) -> None:
     fixture = _prepare_fixture("prepare-edge-cases")
 
-    result = prepare_prompt_diary(
+    result = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -296,12 +316,12 @@ def test_prepare_api_handles_payload_timestamp_turn_context_cwd_and_end_boundary
     assert not (project_dir / "sessions" / "codex" / "end-boundary-only.jsonl").exists()
 
 
-def test_prepare_api_indexes_cross_day_agent_reactions_by_human_trigger(
+def test_prepare_workflow_indexes_cross_day_agent_reactions_by_human_trigger(
     tmp_path: Path,
 ) -> None:
     fixture = _prepare_fixture("prepare-cross-day-reactions")
 
-    may18 = prepare_prompt_diary(
+    may18 = _prepare_workflow(
         date="2026-05-18",
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -337,7 +357,7 @@ def test_prepare_api_indexes_cross_day_agent_reactions_by_human_trigger(
     )
     assert copied_session.read_text(encoding="utf-8") == fixture_session.read_text(encoding="utf-8")
 
-    may19 = prepare_prompt_diary(
+    may19 = _prepare_workflow(
         date="2026-05-19",
         today=False,
         timezone_name=TARGET_TIMEZONE,
@@ -368,35 +388,37 @@ def test_cli_prepare_forwards_today_timezone_and_force(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[dict[str, object]] = []
+    target = ReportTarget(
+        report_date=date_type(2026, 5, 23),
+        timezone="UTC",
+        status="partial",
+        report_window_local=TimeWindow(
+            start=datetime(2026, 5, 23, tzinfo=timezone.utc),
+            end=datetime(2026, 5, 24, tzinfo=timezone.utc),
+        ),
+        report_window_utc=TimeWindow(
+            start=datetime(2026, 5, 23, tzinfo=timezone.utc),
+            end=datetime(2026, 5, 24, tzinfo=timezone.utc),
+        ),
+    )
 
-    def fake_prepare_prompt_diary(
+    def fake_resolve_report_target(
         *,
         date: str | None,
         today: bool,
         timezone_name: str | None,
-        force: bool,
-    ) -> PrepareResult:
+    ) -> ReportTarget:
         captured.append(
             {
                 "date": date,
                 "today": today,
                 "timezone_name": timezone_name,
-                "force": force,
             }
         )
-        target = ReportTarget(
-            report_date=date_type(2026, 5, 23),
-            timezone="UTC",
-            status="partial",
-            report_window_local=TimeWindow(
-                start=datetime(2026, 5, 23, tzinfo=timezone.utc),
-                end=datetime(2026, 5, 24, tzinfo=timezone.utc),
-            ),
-            report_window_utc=TimeWindow(
-                start=datetime(2026, 5, 23, tzinfo=timezone.utc),
-                end=datetime(2026, 5, 24, tzinfo=timezone.utc),
-            ),
-        )
+        return target
+
+    def fake_prepare_workspace(target: ReportTarget, *, force: bool) -> PrepareResult:
+        captured.append({"target": target, "force": force})
         return PrepareResult(
             target=target,
             workspace_path=tmp_path / ".reports" / "work" / "2026-05-23",
@@ -407,7 +429,8 @@ def test_cli_prepare_forwards_today_timezone_and_force(
             messages=("prepared today",),
         )
 
-    monkeypatch.setattr(cli_module, "prepare_prompt_diary", fake_prepare_prompt_diary)
+    monkeypatch.setattr(prepare_cmd, "resolve_report_target", fake_resolve_report_target)
+    monkeypatch.setattr(prepare_cmd, "prepare_workspace", fake_prepare_workspace)
     runner = CliRunner()
 
     result = runner.invoke(app, ["prepare", "--today", "--timezone", "UTC", "--force"])
@@ -419,8 +442,8 @@ def test_cli_prepare_forwards_today_timezone_and_force(
             "date": None,
             "today": True,
             "timezone_name": "UTC",
-            "force": True,
-        }
+        },
+        {"target": target, "force": True},
     ]
 
 

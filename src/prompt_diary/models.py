@@ -61,29 +61,6 @@ class PrepareResult:
     messages: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class ValidationResult:
-    """Structured report validation result."""
-
-    errors: tuple[str, ...]
-
-    @property
-    def ok(self) -> bool:
-        """Return whether validation succeeded."""
-        return len(self.errors) == 0
-
-
-@dataclass(frozen=True)
-class GenerateResult:
-    """Result from report generation."""
-
-    target: ReportTarget
-    workspace_path: Path
-    report_path: Path
-    validation: ValidationResult
-    messages: tuple[str, ...]
-
-
 def serialize_datetime(value: datetime) -> str:
     """Serialize an aware datetime with stable seconds precision."""
     text = value.replace(microsecond=0).isoformat()

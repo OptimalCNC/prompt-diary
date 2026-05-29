@@ -16,6 +16,7 @@
     - [Daily Report Synthesis Tools](./generate/mcp-tools/daily-synthesis.md)
 - [Development](./dev/index.md)
   - [Architecture](./dev/architecture.md)
+  - [Generation Pipeline Framework](./dev/generation-pipeline.md)
   - [MCP Tool Architecture](./dev/mcp-tool-architecture.md)
   - [Codex Agent Runner](./dev/codex-agent-runner.md)
   - [Development Guide](./dev/guide.md)

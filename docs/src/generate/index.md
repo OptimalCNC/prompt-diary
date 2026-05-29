@@ -28,6 +28,8 @@ shape, and phase-local checks.
   returning success.
 - Missing, stale, or invalid prerequisite artifacts must be reported as actionable errors instead
   of causing a phase to silently re-run the whole pipeline.
+- Evidence extraction failures may be carried into project synthesis as evidence gaps only when
+  represented by durable evidence-card artifacts.
 - Each phase owns the correctness of its output. If an output misses required evidence, drops an
   input, overstates a claim, or violates structural rules, that is a bug in the producing phase.
 - Phase-local quality checks are implementation details. The overview states what each phase must

@@ -30,19 +30,19 @@ Then run:
 report --help
 prompt-diary --help
 report prepare --date 2026-05-12 --timezone Asia/Shanghai
-```
-
-Generation runs an external report-writing model command inside the prepared workspace. The
-command must read the generated prompt from standard input and create `report.md` in its current
-working directory. Configure it before running `generate`; for example, with Codex CLI:
-
-```bash
-export PROMPT_DIARY_REPORT_WRITER_COMMAND="codex exec -"
 report generate --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
-Set `PROMPT_DIARY_REPORT_WRITER_TIMEOUT_SECONDS` to override the default 600-second writer
-timeout.
+Generation is an artifact-first pipeline with standalone phase commands:
+
+```bash
+report generate evidence --date 2026-05-12 --timezone Asia/Shanghai --project-key <project> --session-ref S0001
+report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key <project>
+report generate daily --date 2026-05-12 --timezone Asia/Shanghai
+```
+
+The generation framework and CLI are in place. The model-backed phase implementations are still
+under development, so generation currently fails clearly at the unimplemented phase runner.
 
 ## Development
 
