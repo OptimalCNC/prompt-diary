@@ -5,17 +5,19 @@ import json
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from prompt_diary.generate.evidence_extraction.mcp import (
-    EvidenceWriteError,
     WriteEvidenceAppendedResult,
     WriteEvidenceInvalidResult,
     WriteEvidenceResult,
     write_evidence,
 )
+
+if TYPE_CHECKING:
+    from prompt_diary.generate.evidence_extraction.model import EvidenceWriteError
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 SESSION_REF = "S0001"
@@ -97,6 +99,13 @@ def valid_no_material_chain() -> dict[str, Any]:
         },
         "materiality": "none",
     }
+
+
+def material_result_without_outcomes_chain() -> dict[str, Any]:
+    chain = valid_no_material_chain()
+    chain["terminal_state"]["type"] = "material_result"
+    chain["materiality"] = "material"
+    return chain
 
 
 def chain_with_value(path: tuple[str | int, ...], value: Any) -> dict[str, Any]:

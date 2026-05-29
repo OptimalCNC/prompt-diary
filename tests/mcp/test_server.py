@@ -119,7 +119,7 @@ def test_write_evidence_mcp_invalid_result_matches_api_shape(
         )
     )
 
-    assert mcp_result == api_result
+    assert mcp_result == result_to_dict(api_result)
     assert_invalid_result(mcp_result, path="evidence_chain.outcomes[0].category")
 
 

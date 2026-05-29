@@ -15,6 +15,7 @@ from tests.support.evidence_extraction import (
     deep_copy_json,
     evidence_card_text,
     load_evidence_card,
+    material_result_without_outcomes_chain,
     valid_material_doc_chain,
     valid_no_material_chain,
 )
@@ -117,9 +118,10 @@ def test_write_evidence_rejects_citations_outside_indexed_turn(tmp_path: Path) -
     )
 
 
-def test_write_evidence_rejects_malformed_citation_spans(tmp_path: Path) -> None:
+@pytest.mark.parametrize("lines", ["2", 2])
+def test_write_evidence_rejects_malformed_citation_spans(tmp_path: Path, lines: object) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
-    chain = chain_with_value(("trigger", "citations", 0, "lines"), "2")
+    chain = chain_with_value(("trigger", "citations", 0, "lines"), lines)
 
     result = call_write_evidence_api(workspace_path=workspace, evidence_chain=chain)
 
@@ -156,6 +158,20 @@ def test_write_evidence_rejects_empty_required_summaries(tmp_path: Path) -> None
         path="evidence_chain.trigger.summary",
         message_contains="non-empty",
         hint_contains="summary",
+    )
+
+
+def test_write_evidence_rejects_material_result_without_outcomes(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    chain = material_result_without_outcomes_chain()
+
+    result = call_write_evidence_api(workspace_path=workspace, evidence_chain=chain)
+
+    assert_invalid_result(
+        result,
+        path="evidence_chain.outcomes",
+        message_contains="material_result",
+        hint_contains="non-success ending",
     )
 
 
