@@ -214,3 +214,62 @@ def assert_invalid_result(
 
 def deep_copy_json(value: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(value)
+
+
+def build_evidence_chain(
+    *,
+    turn_ref: str,
+    span: tuple[int, int],
+    kind: str = "material",
+) -> dict[str, Any]:
+    """Build a write-valid evidence chain whose citations all fall inside ``span``.
+
+    Trigger/quoted cite the first line; reaction/outcome/terminal cite the last line, so a
+    material outcome always intersects reaction evidence (never only the trigger) for any
+    span of one or more lines.
+    """
+    start, end = span
+    start_lines = f"{start}-{start}"
+    end_lines = f"{end}-{end}"
+    trigger = {
+        "type": "explicit_user_message",
+        "summary": f"User request captured for {turn_ref}.",
+        "quoted_messages": [
+            {"text": "Captured user message.", "citations": [{"lines": start_lines}]}
+        ],
+        "citations": [{"lines": start_lines}],
+    }
+    reactions: list[dict[str, Any]] = [
+        {"summary": f"Agent reaction for {turn_ref}.", "citations": [{"lines": end_lines}]}
+    ]
+    if kind == "material":
+        outcomes: list[dict[str, Any]] = [
+            {
+                "category": "document_outcome",
+                "summary": f"Material result for {turn_ref}.",
+                "citations": [{"lines": end_lines}],
+            }
+        ]
+        terminal: dict[str, Any] = {
+            "type": "material_result",
+            "summary": f"Material result reported for {turn_ref}.",
+            "citations": [{"lines": end_lines}],
+        }
+        materiality = "material"
+    else:
+        outcomes = []
+        terminal = {
+            "type": "no_material",
+            "summary": f"No material result for {turn_ref}.",
+            "citations": [{"lines": end_lines}],
+        }
+        materiality = "none"
+    return {
+        "turn_ref": turn_ref,
+        "trigger": trigger,
+        "agent_reactions": reactions,
+        "outcomes": outcomes,
+        "observed_checks": [],
+        "terminal_state": terminal,
+        "materiality": materiality,
+    }
