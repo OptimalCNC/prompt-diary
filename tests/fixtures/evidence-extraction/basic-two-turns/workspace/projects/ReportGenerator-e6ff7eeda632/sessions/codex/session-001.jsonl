@@ -1,0 +1,10 @@
+{"type":"session_metadata","content":"Prepared workspace fixture derived from the 2026-05-28 ReportGenerator project."}
+{"role":"user","content":"Please update the evidence contract docs for the MCP write surface."}
+{"role":"assistant","content":"I will inspect the generation docs and MCP tool contract."}
+{"role":"assistant","tool":"read","content":"Inspected docs/src/generate/evidence-contract.md and mcp-tools/evidence-extraction.md."}
+{"role":"assistant","tool":"edit","content":"Edited the docs to describe canonical evidence card writes."}
+{"role":"assistant","tool":"test","content":"Ran uv run pytest tests/generate/test_prompts.py."}
+{"role":"tool","content":"1 passed."}
+{"role":"assistant","content":"Updated the docs and verified the prompt test passed."}
+{"role":"user","content":"continue"}
+{"role":"assistant","content":"There is no further assigned work in this fixture turn."}
