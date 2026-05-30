@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path, PurePosixPath
@@ -22,9 +23,13 @@ from prompt_diary.models import (
     SourceSpec,
     serialize_datetime,
 )
+from prompt_diary.progress.events import PrepareFinished, PrepareStarted, PrepareStep
+from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+
+    from prompt_diary.progress.reporter import ProgressReporter
 
 CODEX_SOURCE_ENV = "PROMPT_DIARY_CODEX_SESSIONS"
 CLAUDE_SOURCE_ENV = "PROMPT_DIARY_CLAUDE_PROJECTS"
@@ -195,6 +200,7 @@ def prepare_workspace(
     source_specs: tuple[SourceSpec, ...] | None = None,
     force: bool = False,
     prepared_at: datetime | None = None,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> PrepareResult:
     """Prepare the deterministic report workspace for a target day."""
     workspace_path = reports_root / "work" / target.workspace_name
@@ -208,8 +214,16 @@ def prepare_workspace(
         _remove_existing_workspace(workspace_path, audit_dir)
 
     specs = default_source_specs() if source_specs is None else source_specs
+    reporter.emit(PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs)))
     prepared_at_local = _timestamp_for_target(target, prepared_at)
     parsed_sessions = tuple(_selected_sessions(specs, target))
+    reporter.emit(
+        PrepareStep(at=time.monotonic(), name="discovering", done=len(parsed_sessions), total=None)
+    )
+    project_count = len({session.project.key for session in parsed_sessions})
+    reporter.emit(
+        PrepareStep(at=time.monotonic(), name="assigning_projects", done=project_count, total=None)
+    )
     _write_prepared_workspace(
         target=target,
         workspace_path=workspace_path,
@@ -217,12 +231,15 @@ def prepare_workspace(
         source_specs=specs,
         sessions=parsed_sessions,
         prepared_at=prepared_at_local,
+        reporter=reporter,
     )
 
-    project_count = len({session.project.key for session in parsed_sessions})
     message = (
         f"Prepared workspace {workspace_path} "
         f"with {project_count} project(s) and {len(parsed_sessions)} session(s)."
+    )
+    reporter.emit(
+        PrepareFinished(at=time.monotonic(), projects=project_count, sessions=len(parsed_sessions))
     )
     return PrepareResult(
         target=target,
@@ -1262,13 +1279,14 @@ def _write_prepared_workspace(
     source_specs: tuple[SourceSpec, ...],
     sessions: tuple[ParsedSession, ...],
     prepared_at: datetime,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> None:
     workspace_path.mkdir(parents=True, exist_ok=True)
     (workspace_path / "projects").mkdir(exist_ok=True)
     audit_path.parent.mkdir(parents=True, exist_ok=True)
 
     _write_json(workspace_path / "metadata.json", _metadata_json(target, prepared_at))
-    _write_project_workspaces(workspace_path, sessions)
+    _write_project_workspaces(workspace_path, sessions, reporter=reporter)
     _write_json(audit_path, _audit_manifest(target, prepared_at, source_specs, sessions))
 
 
@@ -1290,14 +1308,19 @@ def _metadata_json(target: ReportTarget, prepared_at: datetime) -> JsonObject:
     }
 
 
-def _write_project_workspaces(workspace_path: Path, sessions: tuple[ParsedSession, ...]) -> None:
+def _write_project_workspaces(
+    workspace_path: Path,
+    sessions: tuple[ParsedSession, ...],
+    *,
+    reporter: ProgressReporter = NULL_REPORTER,
+) -> None:
     seen_destinations: set[tuple[str, str]] = set()
     for project in _projects_from_sessions(sessions):
         project_dir = workspace_path / "projects" / project.key
         project_dir.mkdir(parents=True, exist_ok=True)
         _write_json(project_dir / "project.json", _project_json(project))
         project_sessions = _sessions_for_project(sessions, project.key)
-        _copy_project_sessions(project_dir, project_sessions, seen_destinations)
+        _copy_project_sessions(project_dir, project_sessions, seen_destinations, reporter=reporter)
 
 
 def _projects_from_sessions(sessions: tuple[ParsedSession, ...]) -> tuple[ProjectIdentity, ...]:
@@ -1334,8 +1357,11 @@ def _copy_project_sessions(
     project_dir: Path,
     sessions: tuple[ParsedSession, ...],
     seen_destinations: set[tuple[str, str]],
+    *,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> None:
     index_rows: list[JsonObject] = []
+    total = len(sessions)
     for position, session in enumerate(sessions, start=1):
         session_path = _session_relative_path(session)
         destination_key = (session.project.key, session_path)
@@ -1347,6 +1373,9 @@ def _copy_project_sessions(
         shutil.copy2(session.source_path, destination)
         _copy_target_subagents(project_dir, session, seen_destinations)
         index_rows.append(_session_index_row(session, session_ref=f"S{position:04d}"))
+        reporter.emit(
+            PrepareStep(at=time.monotonic(), name="copying_transcripts", done=position, total=total)
+        )
 
     _write_jsonl(project_dir / "sessions.index.jsonl", index_rows)
 
