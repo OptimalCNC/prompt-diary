@@ -44,6 +44,10 @@ report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 The generation framework and CLI are in place. The model-backed phase implementations are still
 under development, so generation currently fails clearly at the unimplemented phase runner.
 
+Both `prepare` and `generate` show a live progress dashboard when running on a TTY and write
+append-only log lines when output is piped, redirected, or running in CI. Pass `--quiet` to either
+command to suppress the live output and print only the final summary.
+
 ## Development
 
 This project uses [`uv`](https://docs.astral.sh/uv/) for Python version, environment,

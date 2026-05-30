@@ -95,8 +95,8 @@ range; generation writes the report from that prepared boundary.
 The user-facing CLI surface should stay thin and map directly to the workflow:
 
 ```text
-prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force]
-prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City]
+prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force] [--quiet]
+prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City] [--quiet]
 prompt-diary mcp serve
 ```
 

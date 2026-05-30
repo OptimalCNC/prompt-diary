@@ -12,5 +12,7 @@ them.
   MCP tool implementations.
 - [Codex Agent Runner](./codex-agent-runner.md) — initial needs and basic design for the async
   Codex SDK wrapper used by generation orchestration.
+- [Progress Reporting](./progress-reporting.md) — the events → state → reporter seam that surfaces
+  prepare and generate progress in the terminal.
 - [Development Guide](./guide.md) — environment setup, build, test, lint, release.
 - [Prompt System](./prompt-system.md) — how prompt templates are stored, loaded, and modified.

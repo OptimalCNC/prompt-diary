@@ -114,6 +114,12 @@ from that variable, falling back to cwd. The agent runs non-interactively
 (`approval_mode="auto_review"`, `sandbox="workspace-write"`) using the system `codex` binary on
 PATH.
 
+## Progress
+
+The scheduler emits `TaskStarted`/`TaskFinished` events and threads a `ProgressReporter` into each
+phase runner's `run(...)`; the evidence runner emits `TurnAdvanced` per turn. See
+[Progress Reporting](./progress-reporting.md).
+
 ## Boundaries
 
 The framework checks only generic output existence. Phase-local validation belongs to the phase
