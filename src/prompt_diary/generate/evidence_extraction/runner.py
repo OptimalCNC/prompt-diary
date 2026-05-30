@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,6 +16,8 @@ from prompt_diary.generate.prompts import (
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
 )
+from prompt_diary.progress.events import TurnAdvanced
+from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,6 +28,7 @@ if TYPE_CHECKING:
         SessionExtractionInputs,
     )
     from prompt_diary.generate.pipeline import TaskSpec
+    from prompt_diary.progress.reporter import ProgressReporter
 
 
 @dataclass(frozen=True)
@@ -33,7 +37,13 @@ class EvidenceExtractionRunner:
 
     agent_factory: AgentSessionFactory
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self,
+        *,
+        workspace_path: Path,
+        task: TaskSpec,
+        reporter: ProgressReporter = NULL_REPORTER,
+    ) -> TaskResult:
         """Run one session evidence extraction task."""
         project_key, session_ref = _require_scope(task)
         inputs = build_session_extraction_inputs(
@@ -56,6 +66,7 @@ class EvidenceExtractionRunner:
                 sandbox="workspace-write",
             )
         )
+        total_turns = len(inputs.turns)
         previous_result_json: str | None = None
         for index, turn in enumerate(inputs.turns):
             await runner.turn(_prompt_for_turn(inputs, turn, index, previous_result_json))
@@ -65,6 +76,15 @@ class EvidenceExtractionRunner:
                     status="failed",
                     errors=(_uncommitted_turn_message(session_ref, turn.turn_ref),),
                 )
+            reporter.emit(
+                TurnAdvanced(
+                    at=time.monotonic(),
+                    task_id=task.task_id,
+                    turn_index=index + 1,
+                    total_turns=total_turns,
+                    turn_ref=turn.turn_ref,
+                )
+            )
             previous_result_json = _committed_result_json(project_key, session_ref, turn.turn_ref)
         return TaskResult(task_id=task.task_id, status="success")
 

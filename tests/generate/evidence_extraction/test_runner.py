@@ -9,6 +9,7 @@ import pytest
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import TaskSpec, evidence_card_artifact, evidence_task_id
+from prompt_diary.progress.events import TurnAdvanced
 from tests.support.evidence_agent import EvidenceWritingAgentSessionFactory
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
@@ -16,6 +17,7 @@ from tests.support.evidence_extraction import (
     copy_basic_evidence_workspace,
     load_evidence_card,
 )
+from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -141,6 +143,26 @@ def test_runner_fails_when_first_turn_not_committed(tmp_path: Path) -> None:
     assert any("T0001" in error for error in result.errors)
     card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
     assert not card_path.exists()
+
+
+def test_runner_emits_turn_advanced_per_committed_turn(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    factory = EvidenceWritingAgentSessionFactory()
+    reporter = RecordingReporter()
+    runner = EvidenceExtractionRunner(agent_factory=factory)
+
+    async def run() -> TaskResult:
+        async with factory:
+            return await runner.run(
+                workspace_path=workspace, task=_evidence_task(), reporter=reporter
+            )
+
+    result = asyncio.run(run())
+
+    assert result.status == "success"
+    turns = [event for event in reporter.events if isinstance(event, TurnAdvanced)]
+    assert [(event.turn_index, event.total_turns) for event in turns] == [(1, 2), (2, 2)]
+    assert [event.turn_ref for event in turns] == ["T0001", "T0002"]
 
 
 def _strip_turns_from_index(workspace: Path) -> None:
