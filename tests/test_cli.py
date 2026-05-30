@@ -40,7 +40,7 @@ class _FakeWorkflow:
     phase_error: str | None = None
 
     def run_pipeline(
-        self, *, workspace_path: Path, messages: tuple[str, ...] = ()
+        self, *, workspace_path: Path, messages: tuple[str, ...] = (), **_kwargs: object
     ) -> _FakeWorkflowResult:
         del workspace_path
         if self.pipeline_error is not None:
@@ -54,6 +54,7 @@ class _FakeWorkflow:
         phase: str,
         project_key: str | None = None,
         session_ref: str | None = None,
+        **_kwargs: object,
     ) -> _FakeWorkflowResult:
         del workspace_path, phase, project_key, session_ref
         if self.phase_error is not None:
@@ -121,6 +122,7 @@ def test_generate_error_exits_with_stderr(
         date: str | None,
         today: bool,
         timezone_name: str | None,
+        **_kwargs: object,
     ) -> tuple[Path, tuple[str, ...]]:
         del date, today, timezone_name
         return tmp_path, ()
@@ -152,6 +154,7 @@ def test_generate_prints_pipeline_messages(
         date: str | None,
         today: bool,
         timezone_name: str | None,
+        **_kwargs: object,
     ) -> tuple[Path, tuple[str, ...]]:
         del date, today, timezone_name
         return tmp_path, ("prepared",)
@@ -291,7 +294,7 @@ def test_generate_phase_commands_delegate(
     @dataclass
     class _RecordingWorkflow:
         def run_pipeline(
-            self, *, workspace_path: Path, messages: tuple[str, ...] = ()
+            self, *, workspace_path: Path, messages: tuple[str, ...] = (), **_kwargs: object
         ) -> _FakeWorkflowResult:
             del workspace_path
             return _FakeWorkflowResult(messages=messages)
@@ -303,6 +306,7 @@ def test_generate_phase_commands_delegate(
             phase: str,
             project_key: str | None = None,
             session_ref: str | None = None,
+            **_kwargs: object,
         ) -> _FakeWorkflowResult:
             del workspace_path
             calls.append((phase, project_key, session_ref))

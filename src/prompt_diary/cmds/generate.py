@@ -10,8 +10,10 @@ import typer
 
 from prompt_diary.cmds.common import (
     DateOption,
+    QuietOption,
     TimezoneOption,
     TodayOption,
+    build_cli_reporter,
     echo_messages,
     exit_with_error,
 )
@@ -27,6 +29,7 @@ from prompt_diary.prepare.workspace import (
     validate_workspace_matches_target,
     workspace_path_for_target,
 )
+from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
@@ -35,6 +38,7 @@ if TYPE_CHECKING:
     from prompt_diary.agent import AgentSessionFactory
     from prompt_diary.generate.pipeline import PhaseRunner, TaskKind
     from prompt_diary.models import SourceSpec
+    from prompt_diary.progress.reporter import ProgressReporter
 
 GenerateProjectKeyOption = Annotated[
     str,
@@ -90,18 +94,23 @@ def generate(
     date: DateOption = None,
     today: TodayOption = False,
     timezone: TimezoneOption = None,
+    quiet: QuietOption = False,
 ) -> None:
     """Run the full generation pipeline."""
     if ctx.invoked_subcommand is not None:
         return
     try:
-        workspace_path, messages = workspace_for_generate_target(
-            date=date,
-            today=today,
-            timezone_name=timezone,
-        )
-        workflow = build_generation_workflow()
-        result = workflow.run_pipeline(workspace_path=workspace_path, messages=messages)
+        with build_cli_reporter(quiet=quiet) as reporter:
+            workspace_path, messages = workspace_for_generate_target(
+                date=date,
+                today=today,
+                timezone_name=timezone,
+                reporter=reporter,
+            )
+            workflow = build_generation_workflow()
+            result = workflow.run_pipeline(
+                workspace_path=workspace_path, messages=messages, reporter=reporter
+            )
     except PromptDiaryError as exc:
         exit_with_error(exc)
     echo_messages(result.messages)
@@ -114,6 +123,7 @@ def generate_evidence(
     date: DateOption = None,
     today: TodayOption = False,
     timezone: TimezoneOption = None,
+    quiet: QuietOption = False,
 ) -> None:
     """Run one evidence extraction task."""
     _run_phase_command(
@@ -123,6 +133,7 @@ def generate_evidence(
         timezone_name=timezone,
         project_key=project_key,
         session_ref=session_ref,
+        quiet=quiet,
     )
 
 
@@ -132,6 +143,7 @@ def generate_project(
     date: DateOption = None,
     today: TodayOption = False,
     timezone: TimezoneOption = None,
+    quiet: QuietOption = False,
 ) -> None:
     """Run one project synthesis task."""
     _run_phase_command(
@@ -140,6 +152,7 @@ def generate_project(
         today=today,
         timezone_name=timezone,
         project_key=project_key,
+        quiet=quiet,
     )
 
 
@@ -148,6 +161,7 @@ def generate_daily(
     date: DateOption = None,
     today: TodayOption = False,
     timezone: TimezoneOption = None,
+    quiet: QuietOption = False,
 ) -> None:
     """Run daily report synthesis."""
     _run_phase_command(
@@ -155,6 +169,7 @@ def generate_daily(
         date=date,
         today=today,
         timezone_name=timezone,
+        quiet=quiet,
     )
 
 
@@ -166,6 +181,7 @@ def workspace_for_generate_target(
     reports_root: Path = Path(".reports"),
     source_specs: tuple[SourceSpec, ...] | None = None,
     now: datetime | None = None,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> tuple[Path, tuple[str, ...]]:
     """Resolve a CLI target and ensure its prepared workspace exists."""
     target = resolve_report_target(date=date, today=today, timezone_name=timezone_name, now=now)
@@ -186,6 +202,7 @@ def workspace_for_generate_target(
         source_specs=source_specs,
         force=False,
         prepared_at=now,
+        reporter=reporter,
     )
     return prepare_result.workspace_path, prepare_result.messages
 
@@ -215,6 +232,7 @@ def _run_phase_command(
     timezone_name: str | None,
     project_key: str | None = None,
     session_ref: str | None = None,
+    quiet: bool = False,
 ) -> None:
     try:
         workspace_path = workspace_for_existing_target(
@@ -223,12 +241,14 @@ def _run_phase_command(
             timezone_name=timezone_name,
         )
         workflow = build_generation_workflow()
-        result = workflow.run_phase(
-            workspace_path=workspace_path,
-            phase=phase,
-            project_key=project_key,
-            session_ref=session_ref,
-        )
+        with build_cli_reporter(quiet=quiet) as reporter:
+            result = workflow.run_phase(
+                workspace_path=workspace_path,
+                phase=phase,
+                project_key=project_key,
+                session_ref=session_ref,
+                reporter=reporter,
+            )
     except PromptDiaryError as exc:
         exit_with_error(exc)
     echo_messages(result.messages)

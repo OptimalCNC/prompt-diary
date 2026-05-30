@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
+
+from prompt_diary.progress.console import build_reporter
+from prompt_diary.progress.reporter import select_reporter_mode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from prompt_diary.errors import PromptDiaryError
+    from prompt_diary.progress.reporter import ProgressReporter
 
 DateOption = Annotated[str | None, typer.Option(help="Target local date in YYYY-MM-DD format.")]
 TodayOption = Annotated[bool, typer.Option(help="Target the current local day.")]
@@ -17,6 +22,13 @@ TimezoneOption = Annotated[
     str | None,
     typer.Option(help="IANA timezone name, e.g. Asia/Shanghai."),
 ]
+QuietOption = Annotated[bool, typer.Option(help="Suppress progress; print only the final summary.")]
+
+
+def build_cli_reporter(*, quiet: bool) -> ProgressReporter:
+    """Build the progress reporter for a CLI invocation."""
+    mode = select_reporter_mode(quiet=quiet, isatty=sys.stderr.isatty())
+    return build_reporter(mode)
 
 
 def echo_messages(messages: Iterable[str]) -> None:

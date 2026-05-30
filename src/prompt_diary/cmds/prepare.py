@@ -8,8 +8,10 @@ import typer
 
 from prompt_diary.cmds.common import (
     DateOption,
+    QuietOption,
     TimezoneOption,
     TodayOption,
+    build_cli_reporter,
     echo_messages,
     exit_with_error,
 )
@@ -31,11 +33,13 @@ def prepare(
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     force: ForceOption = False,
+    quiet: QuietOption = False,
 ) -> None:
     """Prepare a prompt diary workspace."""
     try:
         target = resolve_report_target(date=date, today=today, timezone_name=timezone)
-        result = prepare_workspace(target, force=force)
+        with build_cli_reporter(quiet=quiet) as reporter:
+            result = prepare_workspace(target, force=force, reporter=reporter)
     except PromptDiaryError as exc:
         exit_with_error(exc)
     echo_messages(result.messages)

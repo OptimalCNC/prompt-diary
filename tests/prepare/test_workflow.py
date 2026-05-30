@@ -417,7 +417,9 @@ def test_cli_prepare_forwards_today_timezone_and_force(
         )
         return target
 
-    def fake_prepare_workspace(target: ReportTarget, *, force: bool) -> PrepareResult:
+    def fake_prepare_workspace(
+        target: ReportTarget, *, force: bool, **_kwargs: object
+    ) -> PrepareResult:
         captured.append({"target": target, "force": force})
         return PrepareResult(
             target=target,
