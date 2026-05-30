@@ -57,14 +57,15 @@ def test_cli_generate_reuses_existing_workspace_from_env_roots(
 ) -> None:
     sources = _write_reconstructed_sources(tmp_path)
     phase_runner = WritingPhaseRunner()
+    factory = FakeAgentSessionFactory(script=_no_agent_turns)
     runner = CliRunner()
     workspace = _prepare_existing_workspace(reports_root=tmp_path / ".reports", sources=sources)
     monkeypatch.setattr(
         generate_cmd,
         "build_generation_workflow",
         lambda: GenerateWorkspaceWorkflow(
-            phase_runners=_all_phase_runners(phase_runner),
-            agent_factory=FakeAgentSessionFactory(script=_no_agent_turns),
+            build_agent_factory=lambda _workspace: factory,
+            build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
         ),
     )
     monkeypatch.chdir(tmp_path)
@@ -92,13 +93,14 @@ def test_cli_generate_prepares_missing_workspace_from_env_roots(
 ) -> None:
     sources = _write_reconstructed_sources(tmp_path)
     phase_runner = WritingPhaseRunner()
+    factory = FakeAgentSessionFactory(script=_no_agent_turns)
     runner = CliRunner()
     monkeypatch.setattr(
         generate_cmd,
         "build_generation_workflow",
         lambda: GenerateWorkspaceWorkflow(
-            phase_runners=_all_phase_runners(phase_runner),
-            agent_factory=FakeAgentSessionFactory(script=_no_agent_turns),
+            build_agent_factory=lambda _workspace: factory,
+            build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
         ),
     )
     monkeypatch.chdir(tmp_path)

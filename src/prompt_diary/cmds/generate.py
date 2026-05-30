@@ -20,6 +20,7 @@ from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
+from prompt_diary.mcp.codex_config import prompt_diary_mcp_overrides
 from prompt_diary.prepare.workspace import (
     prepare_workspace,
     validate_workspace_matches_target,
@@ -30,6 +31,8 @@ from prompt_diary.targeting.resolve import resolve_report_target
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from prompt_diary.agent import AgentSessionFactory
+    from prompt_diary.generate.pipeline import PhaseRunner, TaskKind
     from prompt_diary.models import SourceSpec
 
 GenerateProjectKeyOption = Annotated[
@@ -43,15 +46,23 @@ GenerateSessionRefOption = Annotated[
 
 
 def build_generation_workflow() -> GenerateWorkspaceWorkflow:
-    """Build the default generation workflow with one shared Codex agent backend."""
-    factory = CodexAgentSessionFactory(CodexBackendConfig())
-    return GenerateWorkspaceWorkflow(
-        phase_runners={
+    """Build the default generation workflow with a workspace-aware Codex backend per run."""
+
+    def build_agent_factory(workspace_path: Path) -> AgentSessionFactory:
+        return CodexAgentSessionFactory(
+            CodexBackendConfig(mcp_config_overrides=prompt_diary_mcp_overrides(workspace_path))
+        )
+
+    def build_phase_runners(factory: AgentSessionFactory) -> dict[TaskKind, PhaseRunner]:
+        return {
             "evidence_extraction": EvidenceExtractionRunner(agent_factory=factory),
             "project_synthesis": ProjectSynthesisRunner(agent_factory=factory),
             "daily_synthesis": DailySynthesisRunner(agent_factory=factory),
-        },
-        agent_factory=factory,
+        }
+
+    return GenerateWorkspaceWorkflow(
+        build_agent_factory=build_agent_factory,
+        build_phase_runners=build_phase_runners,
     )
 
 

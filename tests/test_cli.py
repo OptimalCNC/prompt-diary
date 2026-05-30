@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
@@ -20,8 +20,6 @@ from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from prompt_diary.agent import AgentSessionFactory
 
 PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
@@ -354,25 +352,6 @@ def test_generate_phase_commands_delegate(
         ("project", "Project-123", None),
         ("daily", None, None),
     ]
-
-
-class _HasAgentFactory(Protocol):
-    agent_factory: AgentSessionFactory
-
-
-def test_build_generation_workflow_wires_one_shared_factory() -> None:
-    workflow = generate_cmd.build_generation_workflow()
-
-    assert set(workflow.phase_runners) == {
-        "evidence_extraction",
-        "project_synthesis",
-        "daily_synthesis",
-    }
-    factories = {
-        id(cast("_HasAgentFactory", runner).agent_factory)
-        for runner in workflow.phase_runners.values()
-    }
-    assert factories == {id(workflow.agent_factory)}
 
 
 def test_generate_existing_workspace_resolution(tmp_path: Path) -> None:

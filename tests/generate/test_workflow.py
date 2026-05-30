@@ -27,9 +27,10 @@ def _no_agent_turns_message() -> str:
 
 
 def _workflow(phase_runner: PhaseRunner) -> GenerateWorkspaceWorkflow:
+    factory = FakeAgentSessionFactory(script=_no_agent_turns)
     return GenerateWorkspaceWorkflow(
-        phase_runners=_all_phase_runners(phase_runner),
-        agent_factory=FakeAgentSessionFactory(script=_no_agent_turns),
+        build_agent_factory=lambda _workspace: factory,
+        build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
     )
 
 
@@ -41,8 +42,8 @@ def test_generate_workflow_runs_pipeline_with_injected_phase_runners(tmp_path: P
     factory = FakeAgentSessionFactory(script=_no_agent_turns)
 
     result = GenerateWorkspaceWorkflow(
-        phase_runners=_all_phase_runners(phase_runner),
-        agent_factory=factory,
+        build_agent_factory=lambda _workspace: factory,
+        build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
     ).run_pipeline(
         workspace_path=workspace,
         messages=("Reusing existing workspace.",),
@@ -101,8 +102,8 @@ def test_run_generate_phase_runs_one_task(tmp_path: Path) -> None:
     factory = FakeAgentSessionFactory(script=_no_agent_turns)
 
     result = GenerateWorkspaceWorkflow(
-        phase_runners=_all_phase_runners(phase_runner),
-        agent_factory=factory,
+        build_agent_factory=lambda _workspace: factory,
+        build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
     ).run_phase(
         workspace_path=workspace,
         phase="daily",

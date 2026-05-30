@@ -22,7 +22,7 @@ from prompt_diary.generate.pipeline import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from prompt_diary.agent import AgentSessionFactory
@@ -56,8 +56,8 @@ class GeneratePhaseWorkflowResult:
 class GenerateWorkspaceWorkflow:
     """Run generation workflows against one prepared workspace."""
 
-    phase_runners: Mapping[TaskKind, PhaseRunner]
-    agent_factory: AgentSessionFactory
+    build_agent_factory: Callable[[Path], AgentSessionFactory]
+    build_phase_runners: Callable[[AgentSessionFactory], Mapping[TaskKind, PhaseRunner]]
 
     def run_pipeline(
         self,
@@ -67,8 +67,17 @@ class GenerateWorkspaceWorkflow:
     ) -> GeneratePipelineWorkflowResult:
         """Run the full generation pipeline from a prepared workspace."""
         _require_workspace(workspace_path)
+        factory = self.build_agent_factory(workspace_path)
+        phase_runners = self.build_phase_runners(factory)
         plan = build_generation_plan(workspace_path)
-        pipeline_result = asyncio.run(self._run_plan(workspace_path=workspace_path, plan=plan))
+        pipeline_result = asyncio.run(
+            self._run_plan(
+                workspace_path=workspace_path,
+                plan=plan,
+                factory=factory,
+                phase_runners=phase_runners,
+            )
+        )
         if not pipeline_result.ok:
             raise PromptDiaryError(_pipeline_failed_message(pipeline_result))
 
@@ -102,7 +111,16 @@ class GenerateWorkspaceWorkflow:
             project_key=project_key,
             session_ref=session_ref,
         )
-        task_result = asyncio.run(self._run_task(workspace_path=workspace_path, task=task))
+        factory = self.build_agent_factory(workspace_path)
+        phase_runners = self.build_phase_runners(factory)
+        task_result = asyncio.run(
+            self._run_task(
+                workspace_path=workspace_path,
+                task=task,
+                factory=factory,
+                phase_runners=phase_runners,
+            )
+        )
         if not task_result.ok:
             raise PromptDiaryError(_task_failed_message(task_result))
         return GeneratePhaseWorkflowResult(
@@ -112,14 +130,28 @@ class GenerateWorkspaceWorkflow:
             messages=(f"Completed generation task {task.task_id}.",),
         )
 
-    async def _run_plan(self, *, workspace_path: Path, plan: GenerationPlan) -> PipelineRunResult:
-        runner = GeneratePipelineRunner(phase_runners=self.phase_runners)
-        async with self.agent_factory:
+    async def _run_plan(
+        self,
+        *,
+        workspace_path: Path,
+        plan: GenerationPlan,
+        factory: AgentSessionFactory,
+        phase_runners: Mapping[TaskKind, PhaseRunner],
+    ) -> PipelineRunResult:
+        runner = GeneratePipelineRunner(phase_runners=phase_runners)
+        async with factory:
             return await runner.run(workspace_path=workspace_path, plan=plan)
 
-    async def _run_task(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        phase_runner = self.phase_runners[task.kind]
-        async with self.agent_factory:
+    async def _run_task(
+        self,
+        *,
+        workspace_path: Path,
+        task: TaskSpec,
+        factory: AgentSessionFactory,
+        phase_runners: Mapping[TaskKind, PhaseRunner],
+    ) -> TaskResult:
+        phase_runner = phase_runners[task.kind]
+        async with factory:
             return await run_generation_task_with_lifecycle(
                 workspace_path=workspace_path,
                 task=task,
