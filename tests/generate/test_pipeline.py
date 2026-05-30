@@ -10,7 +10,6 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
-from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import (
     ArtifactSpec,
     GeneratePipelineRunner,
@@ -281,10 +280,6 @@ def test_standalone_phase_placeholders_fail_explicitly(tmp_path: Path) -> None:
     task = TaskSpec(task_id="placeholder", kind="daily_synthesis")
     factory = FakeAgentSessionFactory(script=_unused_agent_script)
 
-    with pytest.raises(PromptDiaryError, match="evidence extraction phase runner"):
-        asyncio.run(
-            EvidenceExtractionRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
-        )
     with pytest.raises(PromptDiaryError, match="project synthesis phase runner"):
         asyncio.run(
             ProjectSynthesisRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
