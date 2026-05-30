@@ -13,6 +13,7 @@ from prompt_diary.generate.evidence_extraction.model import (
     InvalidEvidenceChain,
     Outcome,
     evidence_chain_to_json,
+    new_session_card,
     parse_evidence_chain,
 )
 from prompt_diary.generate.workspace import load_prepared_workspace
@@ -258,12 +259,7 @@ def _append_chain_to_card(
 
 
 def _new_card(project_key: str, session_ref: str) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "project_key": project_key,
-        "session_ref": session_ref,
-        "evidence_chains": [],
-    }
+    return new_session_card(project_key, session_ref)
 
 
 def _read_card(card_path: Path) -> dict[str, Any] | None:

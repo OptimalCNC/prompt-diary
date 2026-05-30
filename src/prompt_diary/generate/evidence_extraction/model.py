@@ -421,6 +421,16 @@ def _citations_to_json(citations: tuple[CitationSpan, ...]) -> list[dict[str, st
     return [{"lines": f"{citation.start}-{citation.end}"} for citation in citations]
 
 
+def new_session_card(project_key: str, session_ref: str) -> dict[str, Any]:
+    """Return the canonical empty session-evidence-card skeleton."""
+    return {
+        "schema_version": 1,
+        "project_key": project_key,
+        "session_ref": session_ref,
+        "evidence_chains": [],
+    }
+
+
 def _summary_message(path: str) -> str:
     return f"{path} must be a non-empty string"
 
