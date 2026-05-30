@@ -9,6 +9,7 @@ import pytest
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, TaskSpec
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
+from prompt_diary.progress.events import RunFinished, RunStarted
 from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
 from tests.support.progress import RecordingReporter
@@ -247,9 +248,18 @@ def test_run_pipeline_emits_run_started_and_finished(tmp_path: Path) -> None:
     reporter = RecordingReporter()
     workflow.run_pipeline(workspace_path=workspace, reporter=reporter)
 
-    kinds = [type(event).__name__ for event in reporter.events]
-    assert kinds[0] == "RunStarted"
-    assert kinds[-1] == "RunFinished"
+    started = reporter.events[0]
+    finished = reporter.events[-1]
+    assert isinstance(started, RunStarted)
+    assert isinstance(finished, RunFinished)
+    total_tasks = sum(count for _, count in started.kind_totals)
+    assert total_tasks > 0
+    assert finished.succeeded + finished.failed + finished.blocked == total_tasks
+    # The fixture has no projects, so the plan contains only the daily_synthesis task,
+    # and WritingPhaseRunner always returns status="success".
+    assert finished.succeeded == total_tasks
+    assert finished.failed == 0
+    assert finished.blocked == 0
 
 
 @dataclass
