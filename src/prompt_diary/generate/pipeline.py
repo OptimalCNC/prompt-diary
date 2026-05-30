@@ -255,7 +255,7 @@ class GeneratePipelineRunner:
     concurrency_limits: Mapping[TaskKind, int] = field(
         default_factory=lambda: DEFAULT_CONCURRENCY_LIMITS
     )
-    reporter: ProgressReporter = field(default_factory=lambda: NULL_REPORTER)
+    reporter: ProgressReporter = NULL_REPORTER
 
     async def run(self, *, workspace_path: Path, plan: GenerationPlan) -> PipelineRunResult:
         """Run all tasks in dependency order."""
