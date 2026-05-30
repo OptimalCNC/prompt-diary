@@ -91,6 +91,29 @@ report generate daily --date YYYY-MM-DD
 The phase commands do not rerun earlier phases or prepare missing workspaces. They are development
 and repair entrypoints for the phase boundary rule.
 
+## Evidence Extraction Runner
+
+The evidence extraction phase runner drives one agent conversation per session. It sends the full
+extractor prompt on the first turn; each subsequent turn carries the prior committed result via the
+next-turn prompt. Turns are driven in indexed order until the session is complete.
+
+After each turn the runner verifies the result by reading the evidence card from the workspace
+directly. It never trusts the assistant's text response. An uncommitted turn — one where the card
+on disk does not reflect the expected turn — fails the task immediately.
+
+At the start of every run the runner deletes any existing evidence card and re-extracts all turns
+from scratch. This reset means a re-run is always clean and never encounters `write_evidence`'s
+duplicate-turn rejection. A failed mid-run may leave a partial card on disk; project synthesis
+treats an incomplete card as an evidence gap, which is outside the scope of this phase.
+
+The runner builds a workspace-aware agent factory once per run. For the Codex backend the factory
+registers the package MCP server (`report mcp serve`) with the prepared workspace path in the
+`PROMPT_DIARY_WORKSPACE` environment variable. A Codex-spawned stdio MCP server does not inherit
+the calling thread's working directory, so the MCP `write_evidence` tool resolves its workspace
+from that variable, falling back to cwd. The agent runs non-interactively
+(`approval_mode="auto_review"`, `sandbox="workspace-write"`) using the system `codex` binary on
+PATH.
+
 ## Boundaries
 
 The framework checks only generic output existence. Phase-local validation belongs to the phase

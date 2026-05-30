@@ -81,18 +81,21 @@ strict config and marker validation.
 uv run pytest
 ```
 
-Codex/MCP integration contract tests are opt-in because they may spend model tokens and require
-local SDK setup. Bootstrap the optional SDK into the current development environment before running
-the live wrapper test:
+Codex/MCP integration tests are opt-in because they may spend model tokens and require local SDK
+setup. Bootstrap the optional SDK into the current development environment before running live
+tests:
 
 ```bash
 uv run prompt-diary codex bootstrap
 ```
 
-Then run the opt-in real Codex agent wrapper test:
+Then run opt-in tests with the `--run-codex-mcp` flag. Pass it to the full suite or to a specific
+file:
 
 ```bash
-uv run pytest -m codex_mcp --run-codex-mcp tests/integrations/test_codex_mcp_integration.py
+uv run pytest --run-codex-mcp
+uv run pytest tests/integrations/test_codex_mcp_integration.py --run-codex-mcp
+uv run pytest tests/integrations/test_evidence_extraction_codex.py --run-codex-mcp
 ```
 
 ## Coverage
