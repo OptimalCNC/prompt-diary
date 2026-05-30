@@ -136,6 +136,19 @@ def test_serve_mcp_server_runs_stdio_transport(monkeypatch: pytest.MonkeyPatch) 
     assert fake_server.run_calls == ["stdio"]
 
 
+def test_write_evidence_uses_workspace_env_var(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path / "ws")
+    monkeypatch.chdir(tmp_path)  # cwd is deliberately NOT the workspace
+    monkeypatch.setenv("PROMPT_DIARY_WORKSPACE", str(workspace))
+
+    result = mcp_server.write_evidence(PROJECT_KEY, SESSION_REF, valid_material_doc_chain())
+
+    assert result_to_dict(result)["status"] == "appended"
+
+
 async def _call_mcp_tool(
     server: CallableMcpServer,
     name: str,

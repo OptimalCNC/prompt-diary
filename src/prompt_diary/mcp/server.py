@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from prompt_diary.generate.evidence_extraction.mcp import write_evidence as write_evidence_api
+
+_WORKSPACE_ENV = "PROMPT_DIARY_WORKSPACE"
+
+
+def _resolve_workspace() -> Path:
+    """Resolve the prepared workspace root for MCP tool calls."""
+    override = os.environ.get(_WORKSPACE_ENV)
+    return Path(override) if override else Path.cwd()
 
 
 def prompt_diary_ping() -> dict[str, str]:
@@ -19,9 +28,9 @@ def write_evidence(
     session_ref: str,
     evidence_chain: dict[str, object],
 ) -> object:
-    """Validate and append one evidence chain from the current prepared workspace."""
+    """Validate and append one evidence chain from the resolved prepared workspace."""
     return write_evidence_api(
-        workspace_path=Path.cwd(),
+        workspace_path=_resolve_workspace(),
         project_key=project_key,
         session_ref=session_ref,
         evidence_chain=evidence_chain,
