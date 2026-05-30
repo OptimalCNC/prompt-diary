@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "jinja2>=3.1",
     "mcp>=1.2",
+    "rich>=13",
     "typer>=0.25.1",
 ]
 
@@ -41,6 +42,7 @@ markers = [
 source = ["prompt_diary"]
 omit = [
     "src/prompt_diary/integrations/codex_runner.py",
+    "src/prompt_diary/progress/console.py",
 ]
 
 [tool.coverage.report]

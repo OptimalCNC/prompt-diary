@@ -632,6 +632,7 @@ source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
     { name = "mcp" },
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -647,6 +648,7 @@ dev = [
 requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.2" },
+    { name = "rich", specifier = ">=13" },
     { name = "typer", specifier = ">=0.25.1" },
 ]
 
