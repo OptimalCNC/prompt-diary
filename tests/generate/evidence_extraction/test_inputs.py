@@ -60,3 +60,15 @@ def test_inputs_reject_unknown_project(tmp_path: Path) -> None:
         build_session_extraction_inputs(
             workspace_path=workspace, project_key="Missing-000", session_ref=SESSION_REF
         )
+
+
+def test_inputs_tolerate_blank_index_lines(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    index_path = workspace / "projects" / PROJECT_KEY / "sessions.index.jsonl"
+    index_path.write_text("\n" + index_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    inputs = build_session_extraction_inputs(
+        workspace_path=workspace, project_key=PROJECT_KEY, session_ref=SESSION_REF
+    )
+
+    assert [turn.turn_ref for turn in inputs.turns] == ["T0001", "T0002"]

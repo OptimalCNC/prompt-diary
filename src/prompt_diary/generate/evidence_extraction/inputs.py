@@ -53,7 +53,7 @@ def build_session_extraction_inputs(
     session = _find_session(project, session_ref, project_key)
 
     project_dir = workspace_path / "projects" / project_key
-    raw_row = _find_index_row(project_dir / "sessions.index.jsonl", session_ref, project_key)
+    raw_row = _find_index_row(project_dir / "sessions.index.jsonl", session_ref)
     raw_turns = _raw_turns_by_ref(raw_row)
     record_without_turns = {key: value for key, value in raw_row.items() if key != "turns"}
 
@@ -93,17 +93,16 @@ def _find_session(
     return session
 
 
-def _find_index_row(index_path: Path, session_ref: str, project_key: str) -> dict[str, Any]:
+def _find_index_row(index_path: Path, session_ref: str) -> dict[str, Any]:
+    rows_by_ref: dict[str, dict[str, Any]] = {}
     for line in index_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        raw: object = json.loads(line)
-        if not isinstance(raw, dict):
-            continue
-        row = cast("dict[str, Any]", raw)
-        if row.get("session_ref") == session_ref:
-            return row
-    raise PromptDiaryError(_unknown_session_in_index_message(session_ref, project_key, index_path))
+        if line.strip():
+            row = cast("dict[str, Any]", json.loads(line))
+            rows_by_ref[cast("str", row["session_ref"])] = row
+    # session_ref was already validated to exist by load_prepared_workspace, which parsed this
+    # same index; we re-read only to keep raw row fields the typed model drops (e.g. per-turn
+    # target_subagents).
+    return rows_by_ref[session_ref]
 
 
 def _raw_turns_by_ref(raw_row: dict[str, Any]) -> dict[str, Any]:
@@ -125,7 +124,3 @@ def _unknown_project_message(project_key: str) -> str:
 
 def _unknown_session_message(session_ref: str, project_key: str) -> str:
     return f"unknown session_ref {session_ref!r} for project {project_key!r}"
-
-
-def _unknown_session_in_index_message(session_ref: str, project_key: str, index_path: Path) -> str:
-    return f"unknown session_ref {session_ref!r} for project {project_key!r} in {index_path}"
