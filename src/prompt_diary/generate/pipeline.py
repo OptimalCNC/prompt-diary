@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -10,11 +11,14 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeGuard
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.workspace import load_prepared_workspace
+from prompt_diary.progress.events import TaskFinished, TaskStarted
+from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
 
     from prompt_diary.generate.workspace import PreparedProject, PreparedWorkspace
+    from prompt_diary.progress.reporter import ProgressReporter
 
 TaskKind = Literal["evidence_extraction", "project_synthesis", "daily_synthesis"]
 TaskStatus = Literal["success", "failed", "blocked"]
@@ -116,7 +120,9 @@ class PipelineRunResult:
 class PhaseRunner(Protocol):
     """Protocol implemented by phase-specific task runners."""
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter
+    ) -> TaskResult:
         """Run one phase invocation and return its result."""
         ...
 
@@ -178,6 +184,7 @@ async def run_generation_task(
     workspace_path: Path,
     task: TaskSpec,
     phase_runner: PhaseRunner,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> TaskResult:
     """Run one task after checking only its declared durable prerequisites."""
     missing_prerequisites = _missing_artifacts(workspace_path, task.prerequisite_artifacts)
@@ -192,7 +199,7 @@ async def run_generation_task(
         )
 
     try:
-        result = await phase_runner.run(workspace_path=workspace_path, task=task)
+        result = await phase_runner.run(workspace_path=workspace_path, task=task, reporter=reporter)
     except PromptDiaryError as exc:
         return TaskResult(task_id=task.task_id, status="failed", errors=(str(exc),))
     except Exception as exc:  # noqa: BLE001
@@ -228,6 +235,7 @@ async def run_generation_task_with_lifecycle(
     workspace_path: Path,
     task: TaskSpec,
     phase_runner: PhaseRunner,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> TaskResult:
     """Run one task while honoring an optional phase-runner lifecycle."""
     async with _phase_runner_lifecycle((phase_runner,)):
@@ -235,6 +243,7 @@ async def run_generation_task_with_lifecycle(
             workspace_path=workspace_path,
             task=task,
             phase_runner=phase_runner,
+            reporter=reporter,
         )
 
 
@@ -246,6 +255,7 @@ class GeneratePipelineRunner:
     concurrency_limits: Mapping[TaskKind, int] = field(
         default_factory=lambda: DEFAULT_CONCURRENCY_LIMITS
     )
+    reporter: ProgressReporter = field(default_factory=lambda: NULL_REPORTER)
 
     async def run(self, *, workspace_path: Path, plan: GenerationPlan) -> PipelineRunResult:
         """Run all tasks in dependency order."""
@@ -367,6 +377,17 @@ class GeneratePipelineRunner:
                         for dependency in failed_dependencies
                     ),
                 )
+                self.reporter.emit(
+                    TaskFinished(
+                        at=time.monotonic(),
+                        kind=task.kind,
+                        task_id=task.task_id,
+                        project_key=task.project_key,
+                        session_ref=task.session_ref,
+                        status="blocked",
+                        error=result.errors[0] if result.errors else None,
+                    )
+                )
                 completed[task.task_id] = result
                 results.append(result)
 
@@ -378,11 +399,33 @@ class GeneratePipelineRunner:
         semaphore: asyncio.Semaphore,
     ) -> TaskResult:
         async with semaphore:
-            return await run_generation_task(
+            self.reporter.emit(
+                TaskStarted(
+                    at=time.monotonic(),
+                    kind=task.kind,
+                    task_id=task.task_id,
+                    project_key=task.project_key,
+                    session_ref=task.session_ref,
+                )
+            )
+            result = await run_generation_task(
                 workspace_path=workspace_path,
                 task=task,
                 phase_runner=self.phase_runners[task.kind],
+                reporter=self.reporter,
             )
+            self.reporter.emit(
+                TaskFinished(
+                    at=time.monotonic(),
+                    kind=task.kind,
+                    task_id=task.task_id,
+                    project_key=task.project_key,
+                    session_ref=task.session_ref,
+                    status=result.status,
+                    error=result.errors[0] if result.errors else None,
+                )
+            )
+            return result
 
 
 def _evidence_tasks(project: PreparedProject) -> tuple[TaskSpec, ...]:

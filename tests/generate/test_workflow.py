@@ -9,12 +9,14 @@ import pytest
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, TaskSpec
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
+from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from prompt_diary.agent import AgentConfig, AgentTurnResult
+    from prompt_diary.progress.reporter import ProgressReporter
 
 
 def _no_agent_turns(prompt: str, config: AgentConfig) -> AgentTurnResult:
@@ -239,7 +241,10 @@ def test_run_generate_phase_catches_prompt_diary_error_from_runner(tmp_path: Pat
 class WritingPhaseRunner:
     events: list[str] = field(default_factory=list)
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         self.events.append(task.task_id)
         _write_declared_outputs(workspace_path=workspace_path, task=task)
         return TaskResult(task_id=task.task_id, status="success")
@@ -268,14 +273,19 @@ class ContextManagedWritingPhaseRunner(WritingPhaseRunner):
 
 @dataclass
 class NoOutputPhaseRunner:
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        del workspace_path
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del workspace_path, reporter
         return TaskResult(task_id=task.task_id, status="success")
 
 
 @dataclass
 class EvidenceGapPhaseRunner:
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         if task.kind == "evidence_extraction":
             _write_declared_outputs(workspace_path=workspace_path, task=task)
             return TaskResult(
@@ -289,15 +299,19 @@ class EvidenceGapPhaseRunner:
 
 @dataclass
 class FailingWithoutDetailsPhaseRunner:
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        del workspace_path
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del workspace_path, reporter
         return TaskResult(task_id=task.task_id, status="failed")
 
 
 @dataclass
 class RaisingPhaseRunner:
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        del workspace_path, task
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del workspace_path, task, reporter
         raise PromptDiaryError(_raising_runner_message())
 
 

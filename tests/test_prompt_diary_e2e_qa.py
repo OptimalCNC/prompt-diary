@@ -14,6 +14,7 @@ from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, Ta
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
 from prompt_diary.models import JsonObject, SourceSpec
 from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
+from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.targeting.resolve import resolve_report_target
 from tests.agent_fakes import FakeAgentSessionFactory
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     import pytest
 
     from prompt_diary.agent import AgentConfig, AgentTurnResult
+    from prompt_diary.progress.reporter import ProgressReporter
 
 TARGET_DATE = "2020-01-02"
 TARGET_TIMEZONE = "Asia/Shanghai"
@@ -328,7 +330,10 @@ def _source_env(sources: ReconstructedSources) -> dict[str, str]:
 class WritingPhaseRunner:
     events: list[str] = field(default_factory=list)
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         self.events.append(task.task_id)
         for artifact in task.output_artifacts:
             output_path = workspace_path / artifact.path

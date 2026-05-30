@@ -27,12 +27,16 @@ from prompt_diary.generate.pipeline import (
 )
 from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workspace import IndexedSession, PreparedProject, load_prepared_workspace
+from prompt_diary.progress.events import TaskFinished
+from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
+from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from prompt_diary.agent import AgentConfig, AgentTurnResult
+    from prompt_diary.progress.reporter import ProgressReporter
 
 TIMEOUT_MESSAGE = "timed out"
 
@@ -276,17 +280,65 @@ def test_failed_dependency_blocks_transitive_dependents(tmp_path: Path) -> None:
     assert result.result_for("c").errors == ("dependency did not complete successfully: b",)
 
 
+def test_pipeline_emits_task_started_and_finished(tmp_path: Path) -> None:
+    workspace = _workspace_fixture(tmp_path, {"Alpha-111111111111": 1})
+    plan = build_generation_plan(workspace)
+    reporter = RecordingReporter()
+
+    asyncio.run(
+        GeneratePipelineRunner(
+            phase_runners=_all_phase_runners(WritingPhaseRunner()),
+            concurrency_limits={
+                "evidence_extraction": 1,
+                "project_synthesis": 1,
+                "daily_synthesis": 1,
+            },
+            reporter=reporter,
+        ).run(workspace_path=workspace, plan=plan)
+    )
+
+    kinds = [type(event).__name__ for event in reporter.events]
+    assert "TaskStarted" in kinds
+    assert "TaskFinished" in kinds
+
+
+def test_pipeline_emits_blocked_task_finished(tmp_path: Path) -> None:
+    plan = GenerationPlan(
+        tasks=(
+            TaskSpec(task_id="a", kind="daily_synthesis"),
+            TaskSpec(task_id="b", kind="daily_synthesis", depends_on=("a",)),
+        )
+    )
+    reporter = RecordingReporter()
+
+    result = asyncio.run(
+        GeneratePipelineRunner(
+            phase_runners={"daily_synthesis": FailingTaskRunner(failed_task_id="a")},
+            reporter=reporter,
+        ).run(workspace_path=tmp_path, plan=plan)
+    )
+
+    assert result.result_for("b").status == "blocked"
+    finished_events = [event for event in reporter.events if isinstance(event, TaskFinished)]
+    blocked_event = next(e for e in finished_events if e.task_id == "b")
+    assert blocked_event.status == "blocked"
+
+
 def test_standalone_phase_placeholders_fail_explicitly(tmp_path: Path) -> None:
     task = TaskSpec(task_id="placeholder", kind="daily_synthesis")
     factory = FakeAgentSessionFactory(script=_unused_agent_script)
 
     with pytest.raises(PromptDiaryError, match="project synthesis phase runner"):
         asyncio.run(
-            ProjectSynthesisRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
+            ProjectSynthesisRunner(agent_factory=factory).run(
+                workspace_path=tmp_path, task=task, reporter=NULL_REPORTER
+            )
         )
     with pytest.raises(PromptDiaryError, match="daily synthesis phase runner"):
         asyncio.run(
-            DailySynthesisRunner(agent_factory=factory).run(workspace_path=tmp_path, task=task)
+            DailySynthesisRunner(agent_factory=factory).run(
+                workspace_path=tmp_path, task=task, reporter=NULL_REPORTER
+            )
         )
 
 
@@ -570,7 +622,10 @@ def test_load_prepared_workspace_reports_session_index_shape_errors(tmp_path: Pa
 class WritingPhaseRunner:
     events: list[str] = field(default_factory=list)
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         self.events.append(task.task_id)
         _write_task_output(workspace_path, task)
         return TaskResult(task_id=task.task_id, status="success")
@@ -580,16 +635,20 @@ class WritingPhaseRunner:
 class CalledFlagRunner:
     called: bool = False
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        del workspace_path
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del workspace_path, reporter
         self.called = True
         return TaskResult(task_id=task.task_id, status="success")
 
 
 @dataclass
 class UnexpectedErrorRunner:
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        del workspace_path, task
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del workspace_path, task, reporter
         raise TimeoutError(TIMEOUT_MESSAGE)
 
 
@@ -619,7 +678,10 @@ class ProjectLocalFanInRunner:
     alpha_project_started: asyncio.Event
     events: list[str] = field(default_factory=list)
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         project_key = task.project_key
         if task.kind == "evidence_extraction" and project_key == "Beta-222222222222":
             self.events.append(f"start {task.task_id}")
@@ -644,7 +706,10 @@ class ProjectLocalFanInRunner:
 class FailingEvidenceRunner:
     failed_task_id: str
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         if task.task_id == self.failed_task_id:
             _write_task_output(workspace_path, task)
             return TaskResult(
@@ -660,7 +725,10 @@ class FailingEvidenceRunner:
 class MissingEvidenceCardRunner:
     failed_task_id: str
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         if task.task_id == self.failed_task_id:
             return TaskResult(
                 task_id=task.task_id,
@@ -675,7 +743,10 @@ class MissingEvidenceCardRunner:
 class FailingProjectRunner:
     failed_task_id: str
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         if task.task_id == self.failed_task_id:
             return TaskResult(
                 task_id=task.task_id,
@@ -690,8 +761,10 @@ class FailingProjectRunner:
 class FailingTaskRunner:
     failed_task_id: str
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
-        del workspace_path
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del workspace_path, reporter
         if task.task_id == self.failed_task_id:
             return TaskResult(
                 task_id=task.task_id,

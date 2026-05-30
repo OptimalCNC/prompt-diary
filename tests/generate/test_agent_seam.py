@@ -15,12 +15,14 @@ from prompt_diary.generate.pipeline import (
     TaskResult,
     TaskSpec,
 )
+from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from prompt_diary.agent import AgentSessionFactory
+    from prompt_diary.progress.reporter import ProgressReporter
 
 
 def _ok_turn(prompt: str, config: AgentConfig) -> AgentTurnResult:
@@ -35,7 +37,10 @@ class AgentDrivingRunner:
     agent_factory: AgentSessionFactory
     prompts: list[str] = field(default_factory=list)
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         runner = await self.agent_factory.runner(AgentConfig(working_directory=workspace_path))
         result = await runner.turn(f"do {task.task_id}")
         self.prompts.append(result.assistant_text)
@@ -106,7 +111,10 @@ class _ConcurrentDrivingRunner:
     all_arrived: asyncio.Event
     arrived: list[str] = field(default_factory=list)
 
-    async def run(self, *, workspace_path: Path, task: TaskSpec) -> TaskResult:
+    async def run(
+        self, *, workspace_path: Path, task: TaskSpec, reporter: ProgressReporter = NULL_REPORTER
+    ) -> TaskResult:
+        del reporter
         runner = await self.agent_factory.runner(AgentConfig(working_directory=workspace_path))
         self.arrived.append(task.task_id)
         if len(self.arrived) >= self.expected:
