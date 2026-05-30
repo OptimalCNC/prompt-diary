@@ -16,10 +16,10 @@ on the reporter protocol, never on Rich.
   `RunStarted`, `TaskStarted`, `TurnAdvanced`, `TaskFinished`, `RunFinished`). Each carries only
   deterministic identifiers and counts; never transcript or agent text.
 - `state.py` — `reduce(state, event) -> ProgressState`, a pure fold (per-kind counts, per-task
-  rows, `turn x/y`, finished-task elapsed). All display logic lives here and is unit-tested.
+  rows, `turn x/y`, finished-task elapsed). All the state that drives the display lives here and is unit-tested.
 - `reporter.py` — the `ProgressReporter` protocol, `NullProgressReporter` (the default), and
   `select_reporter_mode(quiet, isatty)`.
-- `log.py` — `LogReporter` for non-TTY/CI: one tested log line per event.
+- `log.py` — `LogReporter` for non-TTY/CI: one tested log line per event (`RunFinished` produces no line; the CLI prints the final summary separately).
 - `console.py` — `LiveConsoleReporter` (Rich `Live` dashboard) and `build_reporter`.
 
 ## Emit sites
