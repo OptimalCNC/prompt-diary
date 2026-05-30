@@ -93,9 +93,14 @@ def _prompt_for_turn(
 def _committed_turn_refs(card_path: Path) -> frozenset[str]:
     if not card_path.exists():
         return frozenset()
-    card = cast("dict[str, Any]", json.loads(card_path.read_text(encoding="utf-8")))
-    chains = cast("list[dict[str, Any]]", card["evidence_chains"])
-    return frozenset(cast("str", chain["turn_ref"]) for chain in chains)
+    card_obj: object = json.loads(card_path.read_text(encoding="utf-8"))
+    card = cast("dict[str, Any]", card_obj) if isinstance(card_obj, dict) else {}
+    chains_obj = card.get("evidence_chains")
+    chains = cast("list[Any]", chains_obj) if isinstance(chains_obj, list) else []
+    committed = (
+        cast("dict[str, Any]", row).get("turn_ref") for row in chains if isinstance(row, dict)
+    )
+    return frozenset(ref for ref in committed if isinstance(ref, str))
 
 
 def _committed_result_json(project_key: str, session_ref: str, turn_ref: str) -> str:
