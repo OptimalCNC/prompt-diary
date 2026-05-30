@@ -21,7 +21,7 @@ from prompt_diary.generate.pipeline import (
     project_synthesis_task_id,
     run_generation_task_with_lifecycle,
 )
-from prompt_diary.progress.events import RunFinished, RunStarted
+from prompt_diary.progress.events import RunFinished, RunStarted, TaskFinished, TaskStarted
 from prompt_diary.progress.reporter import NULL_REPORTER, ProgressReporter
 
 if TYPE_CHECKING:
@@ -141,6 +141,22 @@ class GenerateWorkspaceWorkflow:
         )
         factory = self.build_agent_factory(workspace_path)
         phase_runners = self.build_phase_runners(factory)
+        reporter.emit(
+            RunStarted(
+                at=time.monotonic(),
+                label=workspace_path.name,
+                kind_totals=((task.kind, 1),),
+            )
+        )
+        reporter.emit(
+            TaskStarted(
+                at=time.monotonic(),
+                kind=task.kind,
+                task_id=task.task_id,
+                project_key=task.project_key,
+                session_ref=task.session_ref,
+            )
+        )
         task_result = asyncio.run(
             self._run_task(
                 workspace_path=workspace_path,
@@ -148,6 +164,25 @@ class GenerateWorkspaceWorkflow:
                 factory=factory,
                 phase_runners=phase_runners,
                 reporter=reporter,
+            )
+        )
+        reporter.emit(
+            TaskFinished(
+                at=time.monotonic(),
+                kind=task.kind,
+                task_id=task.task_id,
+                project_key=task.project_key,
+                session_ref=task.session_ref,
+                status=task_result.status,
+                error=task_result.errors[0] if task_result.errors else None,
+            )
+        )
+        reporter.emit(
+            RunFinished(
+                at=time.monotonic(),
+                succeeded=1 if task_result.status == "success" else 0,
+                failed=1 if task_result.status == "failed" else 0,
+                blocked=1 if task_result.status == "blocked" else 0,
             )
         )
         if not task_result.ok:

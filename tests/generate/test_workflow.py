@@ -9,7 +9,7 @@ import pytest
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, TaskSpec
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
-from prompt_diary.progress.events import RunFinished, RunStarted
+from prompt_diary.progress.events import RunFinished, RunStarted, TaskFinished, TaskStarted
 from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
 from tests.support.progress import RecordingReporter
@@ -260,6 +260,27 @@ def test_run_pipeline_emits_run_started_and_finished(tmp_path: Path) -> None:
     assert finished.succeeded == total_tasks
     assert finished.failed == 0
     assert finished.blocked == 0
+
+
+def test_run_phase_emits_run_and_task_envelope(tmp_path: Path) -> None:
+    reports_root = tmp_path / ".reports"
+    workspace = reports_root / "work" / "2026-05-12"
+    _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
+    workflow = _workflow(WritingPhaseRunner())
+
+    reporter = RecordingReporter()
+    workflow.run_phase(workspace_path=workspace, phase="daily", reporter=reporter)
+
+    names = [type(e).__name__ for e in reporter.events]
+    assert names[0] == "RunStarted"
+    assert names[1] == "TaskStarted"
+    assert names[-2] == "TaskFinished"
+    assert names[-1] == "RunFinished"
+    started = reporter.events[1]
+    finished = reporter.events[-2]
+    assert isinstance(started, TaskStarted)
+    assert isinstance(finished, TaskFinished)
+    assert finished.status == "success"
 
 
 @dataclass
