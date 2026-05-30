@@ -1,0 +1,60 @@
+"""Tests for progress event value types."""
+
+from __future__ import annotations
+
+import dataclasses
+
+import pytest
+
+from prompt_diary.progress.events import (
+    PrepareFinished,
+    PrepareStarted,
+    PrepareStep,
+    RunFinished,
+    RunStarted,
+    TaskFinished,
+    TaskStarted,
+    TurnAdvanced,
+)
+
+
+def test_events_are_frozen_and_carry_fields() -> None:
+    started = TaskStarted(
+        at=1.0,
+        kind="evidence_extraction",
+        task_id="evidence:p:S1",
+        project_key="p",
+        session_ref="S1",
+    )
+    assert started.at == 1.0
+    assert started.task_id == "evidence:p:S1"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        started.at = 2.0  # type: ignore[misc]
+
+
+def test_event_construction_covers_all_types() -> None:
+    events = [
+        PrepareStarted(at=0.0, sources=("codex", "claude-code")),
+        PrepareStep(at=0.1, name="copying_transcripts", done=2, total=9),
+        PrepareFinished(at=0.2, projects=2, sessions=9),
+        RunStarted(at=0.3, label="2026-05-30", kind_totals=(("evidence_extraction", 9),)),
+        TaskStarted(
+            at=0.4,
+            kind="evidence_extraction",
+            task_id="t",
+            project_key="p",
+            session_ref="S1",
+        ),
+        TurnAdvanced(at=0.5, task_id="t", turn_index=1, total_turns=5, turn_ref="T0001"),
+        TaskFinished(
+            at=0.6,
+            kind="evidence_extraction",
+            task_id="t",
+            project_key="p",
+            session_ref="S1",
+            status="success",
+            error=None,
+        ),
+        RunFinished(at=0.7, succeeded=8, failed=1, blocked=0),
+    ]
+    assert len(events) == 8
