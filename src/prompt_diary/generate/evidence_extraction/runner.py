@@ -49,7 +49,13 @@ class EvidenceExtractionRunner:
             _write_empty_card(card_path, project_key, session_ref)
             return TaskResult(task_id=task.task_id, status="success")
 
-        runner = await self.agent_factory.runner(AgentConfig(working_directory=workspace_path))
+        runner = await self.agent_factory.runner(
+            AgentConfig(
+                working_directory=workspace_path,
+                approval_mode="deny_all",
+                sandbox="workspace-write",
+            )
+        )
         previous_result_json: str | None = None
         for index, turn in enumerate(inputs.turns):
             await runner.turn(_prompt_for_turn(inputs, turn, index, previous_result_json))
