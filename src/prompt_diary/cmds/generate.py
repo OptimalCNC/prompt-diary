@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -49,8 +50,12 @@ def build_generation_workflow() -> GenerateWorkspaceWorkflow:
     """Build the default generation workflow with a workspace-aware Codex backend per run."""
 
     def build_agent_factory(workspace_path: Path) -> AgentSessionFactory:
+        codex_path = shutil.which("codex")
         return CodexAgentSessionFactory(
-            CodexBackendConfig(mcp_config_overrides=prompt_diary_mcp_overrides(workspace_path))
+            CodexBackendConfig(
+                codex_bin=Path(codex_path) if codex_path is not None else None,
+                mcp_config_overrides=prompt_diary_mcp_overrides(workspace_path),
+            )
         )
 
     def build_phase_runners(factory: AgentSessionFactory) -> dict[TaskKind, PhaseRunner]:

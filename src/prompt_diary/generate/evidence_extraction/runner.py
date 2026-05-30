@@ -52,7 +52,7 @@ class EvidenceExtractionRunner:
         runner = await self.agent_factory.runner(
             AgentConfig(
                 working_directory=workspace_path,
-                approval_mode="deny_all",
+                approval_mode="auto_review",
                 sandbox="workspace-write",
             )
         )
