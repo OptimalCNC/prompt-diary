@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -20,6 +21,8 @@ from prompt_diary.generate.pipeline import (
     project_synthesis_task_id,
     run_generation_task_with_lifecycle,
 )
+from prompt_diary.progress.events import RunFinished, RunStarted
+from prompt_diary.progress.reporter import NULL_REPORTER, ProgressReporter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -29,6 +32,20 @@ if TYPE_CHECKING:
     from prompt_diary.generate.pipeline import GenerationPlan
 
 PhaseName = Literal["evidence", "project", "daily"]
+
+
+def _kind_totals(plan: GenerationPlan) -> tuple[tuple[str, int], ...]:
+    counts: dict[str, int] = {}
+    for task in plan.tasks:
+        counts[task.kind] = counts.get(task.kind, 0) + 1
+    return tuple(sorted(counts.items()))
+
+
+def _run_finished(result: PipelineRunResult) -> RunFinished:
+    succeeded = sum(1 for item in result.results if item.status == "success")
+    failed = sum(1 for item in result.results if item.status == "failed")
+    blocked = sum(1 for item in result.results if item.status == "blocked")
+    return RunFinished(at=time.monotonic(), succeeded=succeeded, failed=failed, blocked=blocked)
 
 
 @dataclass(frozen=True)
@@ -64,20 +81,30 @@ class GenerateWorkspaceWorkflow:
         *,
         workspace_path: Path,
         messages: tuple[str, ...] = (),
+        reporter: ProgressReporter = NULL_REPORTER,
     ) -> GeneratePipelineWorkflowResult:
         """Run the full generation pipeline from a prepared workspace."""
         _require_workspace(workspace_path)
         factory = self.build_agent_factory(workspace_path)
         phase_runners = self.build_phase_runners(factory)
         plan = build_generation_plan(workspace_path)
+        reporter.emit(
+            RunStarted(
+                at=time.monotonic(),
+                label=workspace_path.name,
+                kind_totals=_kind_totals(plan),
+            )
+        )
         pipeline_result = asyncio.run(
             self._run_plan(
                 workspace_path=workspace_path,
                 plan=plan,
                 factory=factory,
                 phase_runners=phase_runners,
+                reporter=reporter,
             )
         )
+        reporter.emit(_run_finished(pipeline_result))
         if not pipeline_result.ok:
             raise PromptDiaryError(_pipeline_failed_message(pipeline_result))
 
@@ -102,6 +129,7 @@ class GenerateWorkspaceWorkflow:
         phase: PhaseName,
         project_key: str | None = None,
         session_ref: str | None = None,
+        reporter: ProgressReporter = NULL_REPORTER,
     ) -> GeneratePhaseWorkflowResult:
         """Run one generation phase task from a prepared workspace."""
         _require_workspace(workspace_path)
@@ -119,6 +147,7 @@ class GenerateWorkspaceWorkflow:
                 task=task,
                 factory=factory,
                 phase_runners=phase_runners,
+                reporter=reporter,
             )
         )
         if not task_result.ok:
@@ -137,8 +166,9 @@ class GenerateWorkspaceWorkflow:
         plan: GenerationPlan,
         factory: AgentSessionFactory,
         phase_runners: Mapping[TaskKind, PhaseRunner],
+        reporter: ProgressReporter,
     ) -> PipelineRunResult:
-        runner = GeneratePipelineRunner(phase_runners=phase_runners)
+        runner = GeneratePipelineRunner(phase_runners=phase_runners, reporter=reporter)
         async with factory:
             return await runner.run(workspace_path=workspace_path, plan=plan)
 
@@ -149,6 +179,7 @@ class GenerateWorkspaceWorkflow:
         task: TaskSpec,
         factory: AgentSessionFactory,
         phase_runners: Mapping[TaskKind, PhaseRunner],
+        reporter: ProgressReporter,
     ) -> TaskResult:
         phase_runner = phase_runners[task.kind]
         async with factory:
@@ -156,6 +187,7 @@ class GenerateWorkspaceWorkflow:
                 workspace_path=workspace_path,
                 task=task,
                 phase_runner=phase_runner,
+                reporter=reporter,
             )
 
 

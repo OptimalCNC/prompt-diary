@@ -11,6 +11,7 @@ from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, Ta
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
 from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
+from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -235,6 +236,20 @@ def test_run_generate_phase_catches_prompt_diary_error_from_runner(tmp_path: Pat
             workspace_path=workspace,
             phase="daily",
         )
+
+
+def test_run_pipeline_emits_run_started_and_finished(tmp_path: Path) -> None:
+    reports_root = tmp_path / ".reports"
+    workspace = reports_root / "work" / "2026-05-12"
+    _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
+    workflow = _workflow(WritingPhaseRunner())
+
+    reporter = RecordingReporter()
+    workflow.run_pipeline(workspace_path=workspace, reporter=reporter)
+
+    kinds = [type(event).__name__ for event in reporter.events]
+    assert kinds[0] == "RunStarted"
+    assert kinds[-1] == "RunFinished"
 
 
 @dataclass
