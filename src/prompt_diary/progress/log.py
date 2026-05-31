@@ -66,6 +66,7 @@ class LogReporter:
         line = format_event(event)
         if line is not None:
             self._stream.write(line + "\n")
+            self._stream.flush()
 
     def __enter__(self) -> LogReporter:
         return self

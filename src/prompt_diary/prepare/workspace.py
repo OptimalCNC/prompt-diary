@@ -216,7 +216,7 @@ def prepare_workspace(
     specs = default_source_specs() if source_specs is None else source_specs
     reporter.emit(PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs)))
     prepared_at_local = _timestamp_for_target(target, prepared_at)
-    parsed_sessions = tuple(_selected_sessions(specs, target))
+    parsed_sessions = tuple(_selected_sessions(specs, target, reporter=reporter))
     reporter.emit(
         PrepareStep(at=time.monotonic(), name="discovering", done=len(parsed_sessions), total=None)
     )
@@ -389,12 +389,30 @@ def _remove_existing_workspace(workspace_path: Path, audit_dir: Path) -> None:
 def _selected_sessions(
     source_specs: tuple[SourceSpec, ...],
     target: ReportTarget,
+    *,
+    reporter: ProgressReporter = NULL_REPORTER,
 ) -> Iterable[ParsedSession]:
-    for spec in sorted(source_specs, key=lambda item: (item.source, item.root.as_posix())):
-        source_paths = _jsonl_source_files(spec.root)
+    per_source = [
+        (spec, _jsonl_source_files(spec.root))
+        for spec in sorted(source_specs, key=lambda item: (item.source, item.root.as_posix()))
+    ]
+    total = sum(len(paths) for _, paths in per_source)
+    stride = max(1, total // 100)
+    scanned = 0
+    for spec, source_paths in per_source:
         subagent_index = _source_subagent_index(source_paths, source=spec.source, root=spec.root)
         for source_path in source_paths:
             parsed = _parse_session_file(source_path=source_path, spec=spec, target=target)
+            scanned += 1
+            if scanned % stride == 0 or scanned == total:
+                reporter.emit(
+                    PrepareStep(
+                        at=time.monotonic(),
+                        name="scanning_sessions",
+                        done=scanned,
+                        total=total,
+                    )
+                )
             if parsed is not None:
                 yield _with_target_subagents(parsed, subagent_index)
 
