@@ -1,146 +1,275 @@
 # Project Synthesis
 
-Project synthesis groups per-session evidence chains into project-level work items. Its job is to
-reduce session noise while preserving the chain that makes a claim trustworthy:
+Project synthesis groups one project's per-session evidence chains into a small set of project-level
+**work items**. It is the noise-reduction layer between evidence extraction and daily report
+synthesis. A single day can produce on the order of a hundred evidence chains across a project's
+sessions; feeding them to daily synthesis raw would bury the signal. Project synthesis **groups**
+related chains, **cites** them by reference, and **summarizes** them, so daily synthesis reads a
+handful of work items instead of a hundred chains.
 
-```text
-trigger -> agent reaction -> observed outcome or terminal state
-```
+This step runs from the prepared report workspace root and operates on one prepared project scope at
+a time, identified by `project_key`.
 
-This step runs from the prepared report workspace root and operates on one prepared project scope
-at a time, identified by `project_key`. It uses `projects/<project_key>/project.json`,
-`projects/<project_key>/sessions.index.jsonl`, and the canonical per-session evidence cards under
-`projects/<project_key>/evidence/`.
+## Role: Group, Cite, Summarize
+
+A work item is a thread-level summary node over a group of evidence chains. It never copies chain
+content.
+
+- **Group.** Collect the evidence chains that belong to the same work thread.
+- **Cite, do not paste.** Reference grouped chains by `(session_ref, turn_ref)`. Never embed quoted
+  messages, observed-check text, or line citations. Detail stays in the evidence cards and is reached
+  by reference. The citation chain is `report.md -> work item -> evidence card -> turn_ref + lines`.
+- **Summarize.** Describe the thread at a higher altitude than any single chain. A card summarizes
+  one turn; a work item summarizes the whole thread.
+
+The work item is therefore a compact index plus narrative. Daily synthesis works from these
+summaries and opens evidence cards only to pull the exact lines for a claim it decides to promote.
 
 ## Inputs And Outputs
 
-Inputs:
+Inputs, under `projects/<project_key>/`:
 
-- `projects/<project_key>/project.json`
-- `projects/<project_key>/sessions.index.jsonl`
-- `projects/<project_key>/evidence/<session_ref>.json` files created by the MCP evidence tools
-- copied session files only when a card or citation needs inspection
+- `project.json` — project identity for the work-item envelope.
+- `evidence/<session_ref>.json` — the per-session evidence cards. The orchestrator trims these to
+  summaries (no line citations or quoted text) and pastes them into the synthesizer prompt; the
+  synthesis agent works only from that inline content and has no file access.
+- `sessions.index.jsonl` — the coverage universe. The `write_work_item` tool reads it to report
+  uncovered turns.
 
-Outputs:
+The pasted chains are grouped by session under a `#### Session <session_ref>` heading, and each chain
+is labelled `<session_ref>/<turn_ref>` — `turn_ref` restarts per session and the work item references
+turns as `{session_ref, turn_ref}`, so the session must be unambiguous for every chain. Each chain
+keeps its trigger, reaction, outcome (with `category`), and terminal (with `type`) summaries plus
+materiality; citations and quoted text are dropped.
 
-- project work items
-- evidence accounting dispositions
-- a project summary used by daily report synthesis
+Output:
 
-Project synthesis artifacts should stay inside the prepared report workspace and must not change
-the preparation layout or the meaning of `sessions.index.jsonl`.
+- `projects/<project_key>/project-synthesis.json` — a work-item envelope
 
-## Work Item Contract
+Project synthesis artifacts stay inside the prepared report workspace and must not change the
+preparation layout or the meaning of `sessions.index.jsonl`.
 
-A project work item is a synthesis artifact. It references committed evidence chains with full
-`EvidenceChainRef` objects: `project_key`, `session_ref`, and `turn_ref`. `evidence_refs` are only
-for committed evidence chains; missing evidence uses `gap_refs`. Any claim promoted to `report.md`
-must use the report citation format from the [Evidence Contract](./evidence-contract.md).
+## Boundary: What Project Synthesis Does Not Own
+
+Project synthesis owns grouping and coverage only. It does not produce:
+
+- executive or project progress summaries
+- cross-project blocker prioritization
+- reusable agent-driving patterns or antipatterns
+- engagement verdicts
+- day-level verification or evidence-quality conclusions
+
+These belong to [Daily Report Synthesis](./daily-synthesis.md) because the signals only become
+meaningful after comparing work items across every project. One weak prompt or one missing
+verification in a single project may be noise, while the same pattern repeated across projects is a
+real day-level lesson. Project synthesis preserves the local, evidence-backed material those
+judgments need; it does not make the judgments itself.
+
+## Grouping
+
+Group by coherent work thread, not by session. Merge evidence chains into one work item when they
+share:
+
+- the same user goal
+- the same artifact
+- the same bug, blocker, or validation loop
+- the same design decision
+- a correction loop around the same output
+- a test-fix-test sequence
+- an interruption followed by a human continue or resume for the same goal
+
+Keep chains in separate work items when they pursue unrelated goals, independent decisions, separate
+blockers, different artifacts, or different project areas.
+
+The session boundary is irrelevant in both directions:
+
+- One thread may span several sessions, so `covered_turns` and `evidence_refs` may list turns from
+  different `session_ref`s.
+- One long session may contain several unrelated threads, which become several work items.
+
+**Supporting turns fold in.** A low-value turn that fed a material thread — a clarification, an
+approval, a resume — is covered inside the work item it supports, not split out.
+
+**Trivial turns bucket.** Turns with no material outcome that support no thread — a connectivity
+ping, a throwaway question — are grouped into a single `no_material_work_item` for the project rather
+than producing many tiny items.
+
+## Outcome Consolidation
+
+A work item's `outcomes` are consolidated claims, not copies of card outcomes. Merge the card-level
+outcomes that describe the same achievement into one work-item outcome, and cite the set of turns
+that support it. The number of outcomes on a work item should be far smaller than the summed outcomes
+of its covered chains.
+
+Reuse the `category` already present on the evidence-card outcomes you consolidate, and the `type` on
+their terminal states; do not invent new values. The controlled outcome categories and terminal-state
+types are defined by the [Evidence Contract](./evidence-contract.md).
+
+## No Prescriptions
+
+A work item describes blocked or unfinished state through a `blocker_outcome`; it does not recommend a
+next action. This boundary is local to project synthesis so it stays focused on grouping; pairing
+blockers with supported next actions is the job of [Daily Report Synthesis](./daily-synthesis.md).
+
+## Coverage Invariant
+
+Every indexed turn is accounted for:
+
+> Every `(session_ref, turn_ref)` in the project's `sessions.index.jsonl` appears in exactly one work
+> item's `covered_turns`.
+
+This includes material, minor, interrupted, clarification-only, failed, blocked, and trivial turns,
+as well as evidence gaps. A turn that has a committed evidence chain is grouped into a normal work
+item by its content. A turn that is indexed but has no committed chain — its content is unknowable to
+synthesis — is collected into an `evidence_gap_item` instead. Turns intentionally left unreported,
+such as duplicate evidence already represented elsewhere, go into an `excluded_with_reason` item that
+records the reason. Nothing is dropped silently.
+
+## Work Item Kinds
+
+`kind` is the work item's coverage disposition. It is one of:
+
+- `material_work_item` — grouped work that produced material progress.
+- `no_material_work_item` — reportable low-value or negative turns with no material output, including
+  the trivial-turn bucket.
+- `evidence_gap_item` — accounts for indexed turns that have no extractable evidence.
+- `excluded_with_reason` — turns intentionally left out of reportable work items; requires `reason`.
+
+`kind` is deliberately small and mutually exclusive. Finer signals that can co-occur are not kinds:
+an interruption is a `terminal_states[].type`, and a blocker is an `outcomes[].category` of
+`blocker_outcome`. A single thread can be material, interrupted, and contain a blocker at once; daily
+synthesis routes its sections off these finer fields.
+
+`kind` is maintained as controlled values in the prompt API (`PROJECT_WORK_ITEM_KINDS`) and rendered
+into the [Project Synthesizer Prompt](./project-synthesizer-prompt.md), so it has one source of
+truth.
+
+## Schema
+
+### Envelope
 
 ```json
 {
   "schema_version": 1,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator",
+  "work_items": [],
+  "source_user_messages": []
+}
+```
+
+References inside the file are `{"session_ref": "...", "turn_ref": "..."}`. `project_key` is implied
+by the envelope and re-attached by daily synthesis when it loads the file, matching how a session
+evidence card carries `session_ref` once on the envelope and a bare `turn_ref` on each chain.
+
+`work_items` are agent-authored. `source_user_messages` is **tool-populated**: `write_work_item`
+fills it once, on the first write, and the synthesizer agent neither reads nor writes it — so the
+[Project Synthesizer Prompt](./project-synthesizer-prompt.md) needs no change. It carries the
+original user-message content per indexed turn, copied verbatim from each extracted chain's
+`trigger.quoted_messages` in `evidence/<session_ref>.json`:
+
+```json
+"source_user_messages": [
+  {
+    "session_ref": "S0001",
+    "turn_ref": "T0001",
+    "quoted_messages": [
+      {"text": "<redacted user-authored text>", "citations": [{"lines": "45-46"}]}
+    ]
+  }
+]
+```
+
+It is messages-only — content, not structure: no `trigger_type`, `terminal_state`, or check
+information, because daily synthesis reopens the card for committed structure when it needs it. The
+text is already secret-redacted by the extractor; the tool copies it verbatim and does not re-redact
+or recompute citations. There is one entry per indexed turn whose chain has at least one quoted
+message; turns with no extractable user text are simply absent, still accounted for through
+`covered_turns` and the coverage invariant. Entries are ordered by `(session_ref, turn_ref)`. This
+block is the user-message content substrate for daily synthesis's engagement and team-learning
+readings.
+
+### Work Item
+
+```json
+{
   "work_item_ref": "W0001",
-  "title": "Clarified report generation evidence contract",
   "kind": "material_work_item",
+  "title": "Finalize and freeze the evidence-extraction contract",
+  "covered_turns": [
+    {"session_ref": "S0001", "turn_ref": "T0001"}
+  ],
   "trigger": {
-    "summary": "User asked for evidence-backed report generation documentation.",
+    "summary": "User drove the evidence-extraction surface to top-level turn_ref, ordered a consistency review, and finalized the design choices.",
     "evidence_refs": [
-      {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001"}
+      {"session_ref": "S0001", "turn_ref": "T0001"},
+      {"session_ref": "S0001", "turn_ref": "T0006"}
     ]
   },
   "agent_reaction": {
-    "summary": "Agent compared existing docs, identified conflicts, and updated generation contracts.",
-    "main_actions": [
-      "compared source docs with existing generate docs",
-      "updated evidence and report contracts",
-      "added synthesis guidance"
-    ]
+    "summary": "Migrated the contract, MCP tools, and prompt to turn_ref identity, ran review subagents, implemented the finalized choices, and froze with a commit.",
+    "main_actions": ["turn_ref migration", "consistency review", "implement finalized choices", "freeze commit"]
   },
   "outcomes": [
     {
       "category": "document_outcome",
-      "summary": "Generation documentation was expanded while preserving the prepared-workspace model.",
+      "summary": "Evidence contract and MCP tool docs moved to top-level turn_ref; chain_ref removed.",
+      "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+      "confidence": "high"
+    },
+    {
+      "category": "process_outcome",
+      "summary": "Froze the agreed contract as a checkpoint commit.",
+      "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0010"}],
       "confidence": "high"
     }
   ],
   "terminal_states": [
     {
-      "type": "material_result",
-      "evidence_refs": [
-        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001"}
-      ]
+      "type": "interrupted",
+      "summary": "Prompt-test verification of the placeholder edit was interrupted; test ownership left to concurrent agents.",
+      "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0008"}]
     }
   ],
-  "risks": [
-    "The implementation still needs to enforce the expanded report shape."
-  ],
-  "evidence_refs": [
-    {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001"}
-  ],
+  "limits": ["Prompt-test suite not confirmed green within these turns."],
   "confidence": "high"
 }
 ```
 
-## Project Summary
+### Fields
 
-Daily report synthesis needs a compact project summary:
+- `work_item_ref` — project-local handle, `W0001`, `W0002`, and so on, assigned in work-item order.
+- `kind` — coverage disposition (see [Work Item Kinds](#work-item-kinds)).
+- `title` — a one-line name for the thread. There is deliberately no fused work-item `summary`: the
+  `trigger`, `agent_reaction`, `outcomes`, and `terminal_states` summaries are the work item's
+  summary, kept separable so each stays independently citable and daily synthesis can recompose them.
+- `covered_turns[]` — every turn this item accounts for, as `{session_ref, turn_ref}`. The union
+  across all work items covers the session index exactly once.
+- `trigger` — the earliest meaningful human trigger for the thread, as `{summary, evidence_refs}`.
+  Later corrections, approvals, and resumes are summarized in `agent_reaction` and remain in
+  `covered_turns`.
+- `agent_reaction` — what the agent actually did across the thread, as `{summary, main_actions}`.
+- `outcomes[]` — consolidated achievements, as `{category, summary, evidence_refs, confidence}`.
+  `category` reuses the Evidence Contract outcome categories. A blocker is an outcome with category
+  `blocker_outcome`.
+- `terminal_states[]` — how the thread or its notable branches ended, as
+  `{type, summary, evidence_refs}`. `type` reuses the Evidence Contract terminal-state types,
+  including `interrupted`, `blocked`, and `failed`.
+- `limits[]` — short honesty notes: what the thread did not verify or could not confirm.
+- `reason` — required for `excluded_with_reason`; why the covered turns are not reportable, such as
+  duplicate evidence already represented in another work item.
+- `confidence` — `high`, `medium`, or `low` for the work item as synthesized evidence.
 
-```json
-{
-  "schema_version": 1,
-  "project_key": "ReportGenerator-e6ff7eeda632",
-  "project_label": "ReportGenerator",
-  "progress_summary": "Evidence-backed summary of what changed in this project.",
-  "work_items": ["ProjectWorkItem"],
-  "evidence_accounting": [
-    {
-      "session_ref": "S0001",
-      "turn_ref": "T0001",
-      "disposition": "material_work_item",
-      "work_item_ref": "W0001",
-      "reason": "Primary documentation outcome for the project."
-    },
-    {
-      "session_ref": "S0002",
-      "turn_ref": "T0001",
-      "disposition": "evidence_gap_item",
-      "work_item_ref": "W0002",
-      "reason": "The indexed turn produced no evidence chain."
-    }
-  ],
-  "blockers": [
-    {
-      "summary": "What is blocked or unresolved.",
-      "gap_refs": [
-        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0002", "turn_ref": "T0001"}
-      ],
-      "recommended_next_action": "Concrete next action if supported by evidence."
-    }
-  ],
-  "useful_agent_driving_patterns": [
-    {
-      "pattern": "User supplied concrete acceptance criteria before generation.",
-      "evidence_refs": [
-        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0002"}
-      ],
-      "why_it_worked": "It gave the agent checkable constraints."
-    }
-  ],
-  "risks_or_antipatterns": [
-    {
-      "risk": "Agent claimed success without visible verification.",
-      "evidence_refs": [
-        {"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0003", "turn_ref": "T0001"}
-      ],
-      "mitigation": "Mark the result unverified and request command output or review."
-    }
-  ],
-  "confidence": "high"
-}
-```
+### Required Fields Per Kind
+
+- All kinds: `work_item_ref`, `kind`, `title`, a non-empty `covered_turns`, and `confidence`.
+- `material_work_item`: also `trigger`, `agent_reaction`, and at least one of `outcomes` or
+  `terminal_states`.
+- `no_material_work_item`: `trigger`, `agent_reaction`, and `outcomes` may be empty; `title` plus
+  `covered_turns` carry it.
+- `evidence_gap_item`: covers only turns that have no committed evidence chain; narrative fields are
+  empty; `confidence` is usually `low`.
+- `excluded_with_reason`: requires `reason`; narrative fields are empty.
 
 ## Project Synthesizer Prompt
 
@@ -155,11 +284,8 @@ orchestrator.
 
 See [Project Synthesizer Prompt](./project-synthesizer-prompt.md).
 
-## Quality Checklist
+## Write Tool
 
-Before accepting project synthesis output, check:
-
-- Every `evidence_refs` item resolves to a committed evidence chain.
-- Every `gap_refs` item resolves to an indexed turn that has no committed evidence chain.
-- Every indexed turn has exactly one evidence-accounting disposition.
-- Any claim intended for `report.md` can be expanded to valid work-claim citations.
+Work items are committed through the `write_work_item` MCP tool, which also populates
+`source_user_messages` on first write. Its input schema, validation rules, and result shape are
+defined in [Project Synthesis Tools](./mcp-tools/project-synthesis.md).

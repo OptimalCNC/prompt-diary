@@ -53,9 +53,11 @@ belongs to the target report date when its human-authored trigger falls inside t
    session; the user's offline thinking, planning, and preparation are not. The report names its
    uncertainty rather than backfilling continuity.
 
-6. **Faithful judgment, not surveillance.** Any evaluation of engagement or quality is
-   evidence-based, proportionate, and explicit about uncertainty. The primary reader of the report
-   is the person being reported on.
+6. **Faithful judgment of observable work.** Any evaluation of engagement or quality is
+   evidence-based, proportionate, and explicit about uncertainty. It assesses only what the session
+   makes observable and is a per-person reading, never a comparative score or ranking across
+   people. The person being reported on is always a primary reader; a manager may also read an
+   individual's report.
 
 7. **Four readings, one substrate.** The same evidence base supports work communication, evidence
    trust, engagement review, and team learning. The report should be structured so each reading is

@@ -17,7 +17,7 @@ report.
 Inputs:
 
 - per-session evidence cards
-- project summaries and work items
+- project work items
 - draft or final `report.md`, when available
 - validation results, when available
 

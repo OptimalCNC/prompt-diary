@@ -28,6 +28,9 @@ TargetTurnOption = Annotated[str, typer.Option(help="Target turn for template su
 WriteEvidenceResultOption = Annotated[
     str, typer.Option(help="write_evidence result for template substitution.")
 ]
+EvidenceChainsOption = Annotated[
+    str, typer.Option(help="Trimmed evidence chains (summaries) for template substitution.")
+]
 
 
 def register(app: typer.Typer) -> None:
@@ -76,9 +79,20 @@ def prompts_evidence_extractor_next_turn(
     )
 
 
-def prompts_project_synthesizer() -> None:
+def prompts_project_synthesizer(
+    *,
+    project_key: ProjectKeyOption = "<PROJECT_KEY>",
+    project_json: ProjectJsonOption = "<PROJECT_JSON>",
+    evidence_chains: EvidenceChainsOption = "<EVIDENCE_CHAINS>",
+) -> None:
     """Print the project synthesizer prompt."""
-    typer.echo(project_synthesizer_prompt())
+    typer.echo(
+        project_synthesizer_prompt(
+            project_key=project_key,
+            project_json=project_json,
+            evidence_chains=evidence_chains,
+        )
+    )
 
 
 def prompts_daily_synthesizer() -> None:

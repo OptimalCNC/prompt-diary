@@ -110,6 +110,23 @@ EVIDENCE_MATERIALITY_VALUES: tuple[PromptEnumValue, ...] = (
     PromptEnumValue("none", "no material evidence was extracted from the assigned turn"),
 )
 
+PROJECT_WORK_ITEM_KINDS: tuple[PromptEnumValue, ...] = (
+    PromptEnumValue("material_work_item", "grouped work that produced material progress"),
+    PromptEnumValue(
+        "no_material_work_item",
+        "reportable low-value or negative turns with no material output, including the "
+        "trivial-turn bucket",
+    ),
+    PromptEnumValue(
+        "evidence_gap_item",
+        "accounts for indexed turns that have no extractable evidence",
+    ),
+    PromptEnumValue(
+        "excluded_with_reason",
+        "turns intentionally left out of reportable work items; requires a reason",
+    ),
+)
+
 
 def _load(name: str) -> str:
     return files("prompt_diary.generate.prompts").joinpath(name).read_text(encoding="utf-8")
@@ -163,9 +180,15 @@ def evidence_extractor_next_turn_prompt(
     )
 
 
-def project_synthesizer_prompt() -> str:
-    """Return the project synthesizer prompt."""
-    return _render("project-synthesizer.md")
+def project_synthesizer_prompt(*, project_key: str, project_json: str, evidence_chains: str) -> str:
+    """Return the project synthesizer prompt with substituted workspace values."""
+    return _render(
+        "project-synthesizer.md",
+        project_key=project_key,
+        project_json=project_json,
+        evidence_chains=evidence_chains,
+        work_item_kind_descriptions=_format_enum_values(PROJECT_WORK_ITEM_KINDS),
+    )
 
 
 def daily_synthesizer_prompt() -> str:

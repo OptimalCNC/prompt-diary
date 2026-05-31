@@ -35,6 +35,8 @@ def test_evidence_extractor_prompt() -> None:
     assert "Project key: ReportGenerator-abc123" in result
     assert "Assigned turn to extract now" in result
     assert "write_evidence" in result
+    assert "Do not read existing evidence files" in result
+    assert "reading evidence files provides no value" in result
 
 
 def test_evidence_extractor_next_turn_prompt() -> None:
@@ -51,10 +53,38 @@ def test_evidence_extractor_next_turn_prompt() -> None:
 
 
 def test_project_synthesizer_prompt() -> None:
-    result = project_synthesizer_prompt()
+    result = project_synthesizer_prompt(
+        project_key="ReportGenerator-abc123",
+        project_json='{"project_key":"ReportGenerator-abc123","project_label":"ReportGenerator"}',
+        evidence_chains=(
+            "#### Session S0001 (2 chains)\n"
+            "\n"
+            "**S0001/T0001** [material]\n"
+            "trigger: User asked to simplify the MCP evidence tools and remove chain_ref.\n"
+            "reaction: Updated the MCP tools page, evidence contract, and extractor prompt.\n"
+            "outcomes:\n"
+            "- document_outcome: top-level turn_ref; chain_ref removed.\n"
+            "terminal: material_result: extraction surface updated to turn_ref identity.\n"
+            "\n"
+            "**S0001/T0002** [minor]\n"
+            "trigger: User asked whether the placeholder was misleading.\n"
+            "terminal: clarification_only: wording direction chosen.\n"
+            "\n"
+            "#### Session S0002 (1 chain)\n"
+            "\n"
+            "**S0002/T0001** [material]\n"
+            "trigger: User asked to design the evidence-extraction QA approach.\n"
+            "terminal: material_result: QA design delivered.\n"
+        ),
+    )
 
     assert isinstance(result, str)
     assert len(result) > 0
+    assert "Project key: ReportGenerator-abc123" in result
+    assert "write_work_item" in result
+    assert "#### Session S0001" in result
+    assert "#### Session S0002" in result
+    assert "S0001/T0001" in result
 
 
 def test_daily_synthesizer_prompt() -> None:
