@@ -19,6 +19,24 @@ from tests.support.evidence_extraction import (
     result_to_dict,
     valid_material_doc_chain,
 )
+from tests.support.project_synthesis import (
+    PROJECT_KEY as PS_PROJECT_KEY,
+)
+from tests.support.project_synthesis import (
+    assert_appended_result as assert_work_item_appended,
+)
+from tests.support.project_synthesis import (
+    assert_invalid_result as assert_work_item_invalid,
+)
+from tests.support.project_synthesis import (
+    call_write_work_item_api,
+    copy_basic_project_workspace,
+    valid_material_work_item,
+    work_item_with_value,
+)
+from tests.support.project_synthesis import (
+    result_to_dict as work_item_result_to_dict,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -147,6 +165,77 @@ def test_write_evidence_uses_workspace_env_var(
     result = mcp_server.write_evidence(PROJECT_KEY, SESSION_REF, valid_material_doc_chain())
 
     assert result_to_dict(result)["status"] == "appended"
+
+
+def test_write_work_item_is_registered_by_mcp_server() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert "write_work_item" in [tool.name for tool in tools]
+
+
+def test_write_work_item_mcp_input_shape_contains_contract_fields() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    write_tool = next(tool for tool in tools if tool.name == "write_work_item")
+
+    properties = write_tool.inputSchema["properties"]
+    assert {"project_key", "work_item"} <= set(properties)
+    assert {"project_key", "work_item"} <= set(write_tool.inputSchema["required"])
+
+
+def test_write_work_item_mcp_success_returns_appended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+
+    result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "write_work_item",
+            {"project_key": PS_PROJECT_KEY, "work_item": valid_material_work_item()},
+        )
+    )
+
+    assert_work_item_appended(
+        result, work_item_ref="W0001", uncovered=[("S0001", "T0003"), ("S0002", "T0001")]
+    )
+
+
+def test_write_work_item_mcp_invalid_result_matches_api_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_workspace = copy_basic_project_workspace(tmp_path / "api")
+    mcp_workspace = copy_basic_project_workspace(tmp_path / "mcp")
+    invalid = work_item_with_value(("kind",), "material")
+    api_result = call_write_work_item_api(workspace_path=api_workspace, work_item=invalid)
+    monkeypatch.chdir(mcp_workspace)
+    server = mcp_server.build_mcp_server()
+
+    mcp_result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "write_work_item",
+            {"project_key": PS_PROJECT_KEY, "work_item": invalid},
+        )
+    )
+
+    assert mcp_result == work_item_result_to_dict(api_result)
+    assert_work_item_invalid(mcp_result, path="work_item.kind")
+
+
+def test_write_work_item_uses_workspace_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_project_workspace(tmp_path / "ws")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PROMPT_DIARY_WORKSPACE", str(workspace))
+
+    result = mcp_server.write_work_item(PS_PROJECT_KEY, valid_material_work_item())
+
+    assert work_item_result_to_dict(result)["status"] == "appended"
 
 
 async def _call_mcp_tool(

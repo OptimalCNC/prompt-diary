@@ -8,6 +8,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from prompt_diary.generate.evidence_extraction.mcp import write_evidence as write_evidence_api
+from prompt_diary.generate.project_synthesis.mcp import write_work_item as write_work_item_api
 
 _WORKSPACE_ENV = "PROMPT_DIARY_WORKSPACE"
 
@@ -37,11 +38,24 @@ def write_evidence(
     )
 
 
+def write_work_item(
+    project_key: str,
+    work_item: dict[str, object],
+) -> object:
+    """Validate and append one work item from the resolved prepared workspace."""
+    return write_work_item_api(
+        workspace_path=_resolve_workspace(),
+        project_key=project_key,
+        work_item=work_item,
+    )
+
+
 def build_mcp_server() -> FastMCP[None]:
     """Build the Prompt Diary MCP server without starting a transport."""
     server: FastMCP[None] = FastMCP("Prompt Diary")
     server.tool()(prompt_diary_ping)
     server.tool()(write_evidence)
+    server.tool()(write_work_item)
     return server
 
 
