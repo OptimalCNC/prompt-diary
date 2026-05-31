@@ -25,7 +25,6 @@ from prompt_diary.generate.pipeline import (
     project_synthesis_task_id,
     run_generation_task,
 )
-from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workspace import IndexedSession, PreparedProject, load_prepared_workspace
 from prompt_diary.progress.events import TaskFinished
 from prompt_diary.progress.reporter import NULL_REPORTER
@@ -324,16 +323,10 @@ def test_pipeline_emits_blocked_task_finished(tmp_path: Path) -> None:
     assert blocked_event.status == "blocked"
 
 
-def test_standalone_phase_placeholders_fail_explicitly(tmp_path: Path) -> None:
+def test_standalone_daily_phase_placeholder_fails_explicitly(tmp_path: Path) -> None:
     task = TaskSpec(task_id="placeholder", kind="daily_synthesis")
     factory = FakeAgentSessionFactory(script=_unused_agent_script)
 
-    with pytest.raises(PromptDiaryError, match="project synthesis phase runner"):
-        asyncio.run(
-            ProjectSynthesisRunner(agent_factory=factory).run(
-                workspace_path=tmp_path, task=task, reporter=NULL_REPORTER
-            )
-        )
     with pytest.raises(PromptDiaryError, match="daily synthesis phase runner"):
         asyncio.run(
             DailySynthesisRunner(agent_factory=factory).run(
