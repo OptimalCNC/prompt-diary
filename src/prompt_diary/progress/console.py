@@ -41,18 +41,21 @@ class LiveConsoleReporter:
         self._console = console
         self._state = ProgressState()
         self._lock = threading.Lock()
+        # Draw synchronously on each emit (refresh=True) rather than relying on a
+        # background auto-refresh thread: progress between emits is static, and a
+        # fast phase can finish inside one auto-refresh tick, leaving only the final
+        # frame painted. Synchronous draws make every event visible immediately.
         self._live = Live(
             self._render(),
             console=console,
-            auto_refresh=True,
-            refresh_per_second=12,
+            auto_refresh=False,
             transient=False,
         )
 
     def emit(self, event: ProgressEvent) -> None:
         with self._lock:
             self._state = reduce(self._state, event)
-            self._live.update(self._render())
+            self._live.update(self._render(), refresh=True)
 
     def __enter__(self) -> LiveConsoleReporter:
         self._live.__enter__()
@@ -64,7 +67,7 @@ class LiveConsoleReporter:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        self._live.update(self._render())
+        self._live.update(self._render(), refresh=True)
         self._live.__exit__(exc_type, exc, traceback)
 
     def _render(self) -> RenderableType:
