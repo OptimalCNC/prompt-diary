@@ -183,10 +183,14 @@ def test_rejects_evidence_ref_not_in_covered_turns(tmp_path: Path) -> None:
     )
 
 
-def test_rejects_evidence_gap_item_that_cites_its_gap_turn(tmp_path: Path) -> None:
+def test_rejects_citing_a_turn_with_no_committed_chain(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
-    gap = valid_evidence_gap_work_item()
-    gap["terminal_states"] = [
+    # A non-gap kind that covers the gap turn (itself rejected) and also cites it; the
+    # evidence-ref check reports the chain-less turn as un-citable. (An evidence_gap_item
+    # cannot reach this path because its narrative fields must be empty.)
+    item = valid_no_material_work_item()
+    item["covered_turns"] = [turn_ref("S0001", "T0003")]
+    item["terminal_states"] = [
         {
             "type": "evidence_gap",
             "summary": "No content was extractable.",
@@ -194,7 +198,7 @@ def test_rejects_evidence_gap_item_that_cites_its_gap_turn(tmp_path: Path) -> No
         }
     ]
 
-    result = call_write_work_item_api(workspace_path=workspace, work_item=gap)
+    result = call_write_work_item_api(workspace_path=workspace, work_item=item)
 
     assert_invalid_result(
         result,
@@ -225,3 +229,24 @@ def test_rejects_structurally_invalid_without_workspace_checks(tmp_path: Path) -
     )
 
     assert_invalid_result(result, path="work_item.kind")
+
+
+def test_first_write_regenerates_a_nondict_envelope(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    path = workspace / "projects" / PROJECT_KEY / "project-synthesis.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[]\n", encoding="utf-8")  # corrupt, non-object envelope
+
+    result = call_write_work_item_api(
+        workspace_path=workspace, work_item=valid_material_work_item()
+    )
+
+    assert_appended_result(
+        result, work_item_ref="W0001", uncovered=[("S0001", "T0003"), ("S0002", "T0001")]
+    )
+    envelope = load_project_synthesis(workspace)
+    assert envelope["schema_version"] == 1
+    assert envelope["project_key"] == PROJECT_KEY
+    assert envelope["project_label"] == "ReportGenerator"
+    assert [item["work_item_ref"] for item in envelope["work_items"]] == ["W0001"]
+    assert len(envelope["source_user_messages"]) == 3

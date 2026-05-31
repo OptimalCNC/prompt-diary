@@ -117,7 +117,9 @@ committed.
   `projects/<project_key>` contains `project.json` (whose `project_key` matches) and
   `sessions.index.jsonl`.
 - `kind` is one of the controlled work-item kinds, and the
-  [required fields per kind](../project-synthesis.md#required-fields-per-kind) hold.
+  [required fields per kind](../project-synthesis.md#required-fields-per-kind) hold. An
+  `evidence_gap_item` or `excluded_with_reason` carries no narrative — `trigger`, `agent_reaction`,
+  `outcomes`, and `terminal_states` must be empty or absent.
 - `work_item_ref` matches `W%04d` and is unique within the envelope.
 - Every `covered_turns[*]` resolves to a real indexed turn in `sessions.index.jsonl`. An
   `evidence_gap_item` covers only turns that have no committed evidence chain; every other kind

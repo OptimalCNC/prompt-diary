@@ -27,7 +27,9 @@ _OUTCOME_CATEGORIES = frozenset(item.value for item in EVIDENCE_OUTCOME_CATEGORI
 _TERMINAL_STATES = frozenset(item.value for item in EVIDENCE_TERMINAL_STATES)
 
 _MATERIAL = "material_work_item"
+_EVIDENCE_GAP = "evidence_gap_item"
 _EXCLUDED = "excluded_with_reason"
+_NARRATIVE_EMPTY_KINDS = frozenset({_EVIDENCE_GAP, _EXCLUDED})
 
 
 @dataclass(frozen=True)
@@ -354,24 +356,35 @@ def _check_required_by_kind(
     *,
     prefix: str,
 ) -> None:
-    if kind != _MATERIAL:
+    if kind == _MATERIAL:
+        if trigger is None:
+            errors.append(
+                WorkItemWriteError(
+                    f"{prefix}.trigger", _required_message("trigger"), _MATERIAL_HINT
+                )
+            )
+        if agent_reaction is None:
+            errors.append(
+                WorkItemWriteError(
+                    f"{prefix}.agent_reaction", _required_message("agent_reaction"), _MATERIAL_HINT
+                )
+            )
+        if not outcomes and not terminal_states:
+            errors.append(
+                WorkItemWriteError(
+                    f"{prefix}.outcomes", _MATERIAL_RESULT_MESSAGE, _MATERIAL_RESULT_HINT
+                )
+            )
         return
-    if trigger is None:
-        errors.append(
-            WorkItemWriteError(f"{prefix}.trigger", _required_message("trigger"), _MATERIAL_HINT)
-        )
-    if agent_reaction is None:
-        errors.append(
-            WorkItemWriteError(
-                f"{prefix}.agent_reaction", _required_message("agent_reaction"), _MATERIAL_HINT
-            )
-        )
-    if not outcomes and not terminal_states:
-        errors.append(
-            WorkItemWriteError(
-                f"{prefix}.outcomes", _MATERIAL_RESULT_MESSAGE, _MATERIAL_RESULT_HINT
-            )
-        )
+    if kind in _NARRATIVE_EMPTY_KINDS:
+        if trigger is not None:
+            errors.append(_narrative_error(kind, f"{prefix}.trigger", "trigger"))
+        if agent_reaction is not None:
+            errors.append(_narrative_error(kind, f"{prefix}.agent_reaction", "agent_reaction"))
+        if outcomes:
+            errors.append(_narrative_error(kind, f"{prefix}.outcomes", "outcomes"))
+        if terminal_states:
+            errors.append(_narrative_error(kind, f"{prefix}.terminal_states", "terminal_states"))
 
 
 def _parse_work_item_ref(value: object, errors: list[WorkItemWriteError], *, path: str) -> str:
@@ -457,6 +470,10 @@ def _required_message(field: str) -> str:
     return f"material_work_item requires {field}"
 
 
+def _narrative_error(kind: str, path: str, field: str) -> WorkItemWriteError:
+    return WorkItemWriteError(path, f"{kind} must leave {field} empty", _NARRATIVE_EMPTY_HINT)
+
+
 _SUMMARY_HINT = "provide a concise non-empty string"
 _REF_HINT = 'reference a turn as {"session_ref": "S0001", "turn_ref": "T0001"}'
 _COVERED_TURNS_HINT = "every work item must account for at least one indexed turn"
@@ -464,3 +481,7 @@ _WORK_ITEM_REF_HINT = "assign refs as W0001, W0002, and so on"
 _MATERIAL_HINT = "material_work_item requires trigger and agent_reaction"
 _MATERIAL_RESULT_MESSAGE = "material_work_item requires at least one outcome or terminal_state"
 _MATERIAL_RESULT_HINT = "add a consolidated outcome or a terminal_state describing the result"
+_NARRATIVE_EMPTY_HINT = (
+    "evidence_gap_item and excluded_with_reason carry no trigger, agent_reaction, outcomes, or "
+    "terminal_states"
+)

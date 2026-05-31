@@ -254,7 +254,9 @@ def _read_envelope(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     raw: object = json.loads(path.read_text(encoding="utf-8"))
-    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+    # A non-object envelope (corrupted/hand-edited) is treated as absent so the next write
+    # regenerates a well-formed envelope rather than committing a malformed one.
+    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else None
 
 
 def _write_envelope(path: Path, envelope: dict[str, Any]) -> None:

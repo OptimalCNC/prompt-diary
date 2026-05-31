@@ -126,3 +126,19 @@ def test_new_envelope_skeleton() -> None:
         "work_items": [],
         "source_user_messages": [],
     }
+
+
+@pytest.mark.parametrize("kind", ["evidence_gap_item", "excluded_with_reason"])
+def test_gap_and_excluded_forbid_narrative_fields(kind: str) -> None:
+    item = valid_material_work_item()
+    item["work_item_ref"] = "W0007"
+    item["kind"] = kind
+    if kind == "excluded_with_reason":
+        item["reason"] = "Duplicate of W0001."
+
+    paths = _errors(parse_work_item(item))
+
+    assert "work_item.trigger" in paths
+    assert "work_item.agent_reaction" in paths
+    assert "work_item.outcomes" in paths
+    assert "work_item.terminal_states" in paths
