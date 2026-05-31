@@ -30,6 +30,14 @@ remain the citation boundary. The extractor reads the session file at `session_p
 orchestrator resolves from `projects/<project_key>/<index_row.session_path>` so the extractor can
 read it directly from the workspace current working directory.
 
+The extractor's read is scoped to the assigned turn. It reads the
+`turn_start_line`..`turn_end_line` range of `session_path` as the extraction target and may read
+neighboring lines only as non-citable local context, such as the session header or the preceding
+turn behind a continue or resume trigger. A scoped read must preserve the file's absolute 1-based
+line numbers so citations resolve, and every citation stays within the assigned turn's line bounds.
+The line model that defines `turn_start_line` and `turn_end_line` is the
+[Workspace Layout](../workspace-layout.md).
+
 The extractor writes one draft chain at a time through `write_evidence`, passing the project
 key, `session_ref`, and the draft evidence chain. The MCP server owns canonical card creation,
 structural checks, and atomic writes.
@@ -174,6 +182,12 @@ Required write-time checks are listed in
 [Evidence Extraction Tools: Structural Rules](./mcp-tools/evidence-extraction.md#structural-rules).
 
 ## Evidence Extractor Prompt
+
+This contract is developer-facing: it documents the design for repository developers and
+readers. The evidence extractor agent never reads it. At runtime the agent sees only the rendered
+prompt below and the workspace files it opens. Any decision in this contract that the agent must
+act on has to be restated as explicit instructions in that prompt source; a cross-reference to
+this contract does not reach the agent.
 
 Prompt source: `src/prompt_diary/generate/prompts/evidence-extractor.md` — loaded at runtime by the
 orchestrator.

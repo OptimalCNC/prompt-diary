@@ -182,6 +182,12 @@ claim-bearing prose that is absent from `daily-report.json`.
 
 ## Daily Synthesizer Prompt
 
+This contract is developer-facing: it documents the design for repository developers and
+readers. The daily synthesizer agent never reads it. At runtime the agent sees only the rendered
+prompt below and the workspace files it opens. Any decision in this contract that the agent must
+act on has to be restated as explicit instructions in that prompt source; a cross-reference to
+this contract does not reach the agent.
+
 Prompt source: `src/prompt_diary/generate/prompts/daily-synthesizer.md` — loaded at runtime by the
 orchestrator.
 

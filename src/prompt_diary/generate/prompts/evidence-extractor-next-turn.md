@@ -6,8 +6,11 @@ Committed result:
 {{ write_evidence_result }}
 ```
 
-Continue with the next assigned turn from the same session. Use the same session context, evidence
-chain shape, and extraction rules from the initial prompt. Do not modify or duplicate the previous
+Continue with the next assigned turn from the same session. Reuse the transcript model, evidence
+chain shape, and extraction rules from the initial prompt. The full transcript was not loaded into
+context: read this turn's own line range `turn_start_line`..`turn_end_line` (shown below) from the
+same session file as the initial prompt, using a reader that shows absolute file line numbers.
+Neighboring lines may be read only as non-citable context. Do not modify or duplicate the previous
 turn's evidence chain.
 
 Assigned turn to extract now:

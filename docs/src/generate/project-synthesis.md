@@ -144,6 +144,12 @@ Daily report synthesis needs a compact project summary:
 
 ## Project Synthesizer Prompt
 
+This contract is developer-facing: it documents the design for repository developers and
+readers. The project synthesizer agent never reads it. At runtime the agent sees only the rendered
+prompt below and the workspace files it opens. Any decision in this contract that the agent must
+act on has to be restated as explicit instructions in that prompt source; a cross-reference to
+this contract does not reach the agent.
+
 Prompt source: `src/prompt_diary/generate/prompts/project-synthesizer.md` — loaded at runtime by the
 orchestrator.
 
