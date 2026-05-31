@@ -3,8 +3,18 @@ from __future__ import annotations
 import copy
 import json
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
+
+import pytest
+
+from prompt_diary.generate.project_synthesis.mcp import (
+    WriteWorkItemAppendedResult,
+    WriteWorkItemInvalidResult,
+    WriteWorkItemResult,
+    write_work_item,
+)
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 PROJECT_LABEL = "ReportGenerator"
@@ -138,3 +148,81 @@ def project_synthesis_text(workspace_path: Path) -> str:
 
 def deep_copy_json(value: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(value)
+
+
+def call_write_work_item_api(
+    *,
+    workspace_path: Path,
+    project_key: str = PROJECT_KEY,
+    work_item: dict[str, Any] | None = None,
+) -> WriteWorkItemResult:
+    return write_work_item(
+        workspace_path=workspace_path,
+        project_key=project_key,
+        work_item=valid_material_work_item() if work_item is None else work_item,
+    )
+
+
+def result_to_dict(result: object) -> dict[str, Any]:
+    if isinstance(result, WriteWorkItemAppendedResult):
+        return {
+            "status": result.status,
+            "project_key": result.project_key,
+            "work_item_ref": result.work_item_ref,
+            "uncovered_turns": [
+                {"session_ref": ref.session_ref, "turn_ref": ref.turn_ref}
+                for ref in result.uncovered_turns
+            ],
+        }
+    if isinstance(result, WriteWorkItemInvalidResult):
+        return {
+            "status": result.status,
+            "errors": [
+                {"path": error.path, "message": error.message, "hint": error.hint}
+                for error in result.errors
+            ],
+        }
+    if isinstance(result, Mapping):
+        return dict(cast("Mapping[str, Any]", result))
+    pytest.fail(f"result must be a write work item result or mapping, got {type(result)!r}")
+
+
+def assert_appended_result(
+    result: object, *, work_item_ref: str, uncovered: list[tuple[str, str]]
+) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "appended"
+    assert payload["project_key"] == PROJECT_KEY
+    assert payload["work_item_ref"] == work_item_ref
+    assert payload["uncovered_turns"] == [
+        {"session_ref": session_ref, "turn_ref": turn} for session_ref, turn in uncovered
+    ]
+
+
+def assert_invalid_result(
+    result: object,
+    *,
+    path: str,
+    message_contains: str | None = None,
+    hint_contains: str | None = None,
+) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "invalid"
+    errors_obj = payload["errors"]
+    assert isinstance(errors_obj, list)
+    matching: list[Mapping[str, Any]] = []
+    for error_obj in cast("list[object]", errors_obj):
+        if isinstance(error_obj, Mapping):
+            error = cast("Mapping[str, Any]", error_obj)
+            if error.get("path") == path:
+                matching.append(error)
+    assert matching, f"expected an invalid error at path {path!r}: {errors_obj!r}"
+    error = matching[0]
+    message = error.get("message")
+    hint = error.get("hint")
+    assert isinstance(message, str) and message  # noqa: PT018
+    assert isinstance(hint, str) and hint  # noqa: PT018
+    if message_contains is not None:
+        assert message_contains in message
+    if hint_contains is not None:
+        assert hint_contains in hint
