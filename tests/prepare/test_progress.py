@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from prompt_diary.models import SourceSpec
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.progress.events import PrepareStep
 from prompt_diary.targeting.resolve import resolve_report_target
@@ -29,3 +30,25 @@ def test_prepare_emits_full_event_sequence_with_zero_sessions(tmp_path: Path) ->
         ("discovering", 0, None),
         ("assigning_projects", 0, None),
     ]
+
+
+def test_prepare_emits_scanning_progress_during_the_scan(tmp_path: Path) -> None:
+    source_root = tmp_path / "codex"
+    source_root.mkdir()
+    for index in range(3):
+        (source_root / f"s{index}.jsonl").write_text("{}\n", encoding="utf-8")
+    target = resolve_report_target(date="2026-05-30", today=False, timezone_name="UTC")
+    reporter = RecordingReporter()
+    prepare_workspace(
+        target,
+        reports_root=tmp_path / ".reports",
+        source_specs=(SourceSpec(source="codex", root=source_root),),
+        reporter=reporter,
+    )
+    scanning = [
+        event
+        for event in reporter.events
+        if isinstance(event, PrepareStep) and event.name == "scanning_sessions"
+    ]
+    assert scanning, "expected per-file scanning progress during the session scan"
+    assert (scanning[-1].done, scanning[-1].total) == (3, 3)
