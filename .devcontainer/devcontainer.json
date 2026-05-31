@@ -1,0 +1,64 @@
+{
+  "name": "prompt-diary-dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "ubuntu",
+  "updateRemoteUserUID": true,
+  "init": true,
+  "workspaceFolder": "/ws/src/${localWorkspaceFolderBasename}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/ws/src/${localWorkspaceFolderBasename},type=bind,consistency=cached",
+  "containerEnv": {
+    "WORKSPACE_ROOT": "/ws",
+    "PROJECT_ROOT": "/ws/src/${localWorkspaceFolderBasename}",
+    "UV_CACHE_DIR": "/opt/cache/uv",
+    "UV_TOOL_BIN_DIR": "/opt/uv/bin",
+    "UV_TOOL_DIR": "/opt/uv/venv",
+    "UV_COMPILE_BYTECODE": "1",
+    "UV_LINK_MODE": "copy",
+    "UV_PYTHON_DOWNLOADS": "automatic",
+    "UV_PYTHON_INSTALL_DIR": "/opt/uv/python",
+    "CLAUDE_CONFIG_DIR": "/home/ubuntu/.claude",
+    "CODEX_HOME": "/home/ubuntu/.codex",
+    "GH_CONFIG_DIR": "/home/ubuntu/.config/gh",
+    "TZ": "Asia/Shanghai"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-workspace,target=/ws,type=volume",
+    "source=${localWorkspaceFolderBasename}-venv,target=/ws/src/${localWorkspaceFolderBasename}/.venv,type=volume",
+    "source=${localWorkspaceFolderBasename}-cache,target=/opt/cache,type=volume",
+    "source=${localWorkspaceFolderBasename}-uv-tools,target=/opt/uv,type=volume",
+    "source=${localWorkspaceFolderBasename}-gh-settings,target=/home/ubuntu/.config/gh,type=volume",
+    "source=${localWorkspaceFolderBasename}-claude-settings,target=/home/ubuntu/.claude,type=volume",
+    "source=${localWorkspaceFolderBasename}-codex-settings,target=/home/ubuntu/.codex,type=volume"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy",
+        "charliermarsh.ruff",
+        "detachhead.basedpyright",
+        "github.vscode-github-actions",
+        "eamodio.gitlens",
+        "ms-azuretools.vscode-docker",
+        "tamasfe.even-better-toml",
+        "bierner.markdown-mermaid",
+        "openai.chatgpt",
+        "Anthropic.claude-code"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/ws/src/${localWorkspaceFolderBasename}/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": [
+          "tests"
+        ],
+        "ruff.nativeServer": "on",
+        "terminal.integrated.cwd": "/ws/src/${localWorkspaceFolderBasename}"
+      }
+    }
+  }
+}

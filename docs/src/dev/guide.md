@@ -15,6 +15,11 @@ Set up the development environment:
 uv sync
 ```
 
+The repository also includes an optional Ubuntu 24.04 devcontainer. It builds from
+`.devcontainer/Dockerfile`, installs the project with `uv sync --locked --python 3.10`, and includes
+the Codex and Claude Code CLIs. See [the devcontainer notes](../../../.devcontainer/README.md) for
+container layout, persistent volumes, and authentication notes.
+
 Run the CLI from the project environment:
 
 ```bash

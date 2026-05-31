@@ -58,5 +58,6 @@ content, or modifying the generation pipeline. It defines the tool's purposes an
 downstream design must satisfy.
 
 For environment setup, build commands, type checking, testing, coverage, linting, and pre-submit
-checks, see the [Development Guide](docs/src/dev/guide.md). For codebase architecture and API
-design, see [Architecture](docs/src/dev/architecture.md).
+checks, including the optional Ubuntu 24.04 devcontainer, see the
+[Development Guide](docs/src/dev/guide.md). For codebase architecture and API design, see
+[Architecture](docs/src/dev/architecture.md).
