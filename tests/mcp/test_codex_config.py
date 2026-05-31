@@ -16,3 +16,9 @@ def test_overrides_register_server_command_args_and_workspace(tmp_path: Path) ->
     assert any('"mcp"' in item and '"serve"' in item for item in overrides)
     assert str(tmp_path.resolve()) in joined
     assert "PROMPT_DIARY_WORKSPACE" in joined
+
+
+def test_overrides_approve_prompt_diary_mcp_tools_by_default(tmp_path: Path) -> None:
+    overrides = prompt_diary_mcp_overrides(tmp_path)
+
+    assert 'mcp_servers.prompt_diary.default_tools_approval_mode="approve"' in overrides

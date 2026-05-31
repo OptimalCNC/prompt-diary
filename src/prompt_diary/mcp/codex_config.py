@@ -22,5 +22,6 @@ def prompt_diary_mcp_overrides(workspace_path: Path) -> tuple[str, ...]:
     return (
         f'{prefix}.command="report"',
         f'{prefix}.args=["mcp","serve"]',
+        f'{prefix}.default_tools_approval_mode="approve"',
         f'{prefix}.env.PROMPT_DIARY_WORKSPACE="{workspace}"',
     )
