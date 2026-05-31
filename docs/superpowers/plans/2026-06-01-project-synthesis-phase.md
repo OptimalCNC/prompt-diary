@@ -92,7 +92,7 @@ def valid_material_work_item() -> dict[str, Any]:
         "title": "Finalize the evidence-extraction contract",
         "covered_turns": [turn_ref("S0001", "T0001"), turn_ref("S0001", "T0002")],
         "trigger": {
-            "summary": "User drove the evidence surface to top-level turn_ref and finalized choices.",
+            "summary": "User drove the evidence surface to turn_ref and finalized the choices.",
             "evidence_refs": [turn_ref("S0001", "T0001")],
         },
         "agent_reaction": {
