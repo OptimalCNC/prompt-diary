@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0001",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User asked to simplify the MCP evidence tools and remove chain_ref.",
+        "quoted_messages": [
+          {"text": "Please simplify the MCP evidence tools and drop chain_ref.", "citations": [{"lines": "2-2"}]}
+        ],
+        "citations": [{"lines": "2-2"}]
+      },
+      "agent_reactions": [
+        {"summary": "Updated the MCP tools page, evidence contract, and extractor prompt.", "citations": [{"lines": "3-5"}]}
+      ],
+      "outcomes": [
+        {"category": "document_outcome", "summary": "Top-level turn_ref adopted; chain_ref removed.", "citations": [{"lines": "5-5"}]}
+      ],
+      "observed_checks": [],
+      "terminal_state": {"type": "material_result", "summary": "Extraction surface updated to turn_ref identity.", "citations": [{"lines": "8-8"}]},
+      "materiality": "material"
+    },
+    {
+      "turn_ref": "T0002",
+      "trigger": {
+        "type": "user_correction",
+        "summary": "User asked whether the placeholder wording was misleading.",
+        "quoted_messages": [
+          {"text": "Is that placeholder misleading?", "citations": [{"lines": "9-9"}]}
+        ],
+        "citations": [{"lines": "9-9"}]
+      },
+      "agent_reactions": [
+        {"summary": "Discussed the wording and chose a direction.", "citations": [{"lines": "10-10"}]}
+      ],
+      "outcomes": [],
+      "observed_checks": [],
+      "terminal_state": {"type": "clarification_only", "summary": "Wording direction chosen; no artifact produced.", "citations": [{"lines": "12-12"}]},
+      "materiality": "minor"
+    }
+  ]
+}

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+import copy
+import json
+import shutil
+from pathlib import Path
+from typing import Any, cast
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 PROJECT_LABEL = "ReportGenerator"
@@ -91,3 +95,46 @@ def work_item_with_value(path: tuple[str | int, ...], value: Any) -> dict[str, A
         target = target[segment]
     target[path[-1]] = value
     return item
+
+
+FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "project-synthesis" / "basic"
+
+# Indexed-turn universe of the basic fixture, in (session, turn) order. S0001/T0003 is the gap turn.
+ALL_TURNS: tuple[tuple[str, str], ...] = (
+    ("S0001", "T0001"),
+    ("S0001", "T0002"),
+    ("S0001", "T0003"),
+    ("S0002", "T0001"),
+)
+GAP_TURNS: tuple[tuple[str, str], ...] = (("S0001", "T0003"),)
+COMMITTED_TURNS: tuple[tuple[str, str], ...] = (
+    ("S0001", "T0001"),
+    ("S0001", "T0002"),
+    ("S0002", "T0001"),
+)
+
+
+def copy_basic_project_workspace(tmp_path: Path) -> Path:
+    """Copy the post-extraction project-synthesis fixture into a writable test directory."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    workspace = tmp_path / "workspace"
+    shutil.copytree(FIXTURE_ROOT / "workspace", workspace)
+    return workspace
+
+
+def synthesis_path(workspace_path: Path) -> Path:
+    return workspace_path / "projects" / PROJECT_KEY / "project-synthesis.json"
+
+
+def load_project_synthesis(workspace_path: Path) -> dict[str, Any]:
+    return cast(
+        "dict[str, Any]", json.loads(synthesis_path(workspace_path).read_text(encoding="utf-8"))
+    )
+
+
+def project_synthesis_text(workspace_path: Path) -> str:
+    return synthesis_path(workspace_path).read_text(encoding="utf-8")
+
+
+def deep_copy_json(value: dict[str, Any]) -> dict[str, Any]:
+    return copy.deepcopy(value)
