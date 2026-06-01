@@ -146,7 +146,6 @@ def evidence_extractor_prompt(
     project_key: str,
     project_json: str,
     session_ref: str,
-    session_path: str,
     session_index_record: str,
     target_turn: str,
 ) -> str:
@@ -156,7 +155,6 @@ def evidence_extractor_prompt(
         project_key=project_key,
         project_json=project_json,
         session_ref=session_ref,
-        session_path=session_path,
         session_index_record=session_index_record,
         target_turn=target_turn,
         check_type_descriptions=_format_enum_values(EVIDENCE_CHECK_TYPES),

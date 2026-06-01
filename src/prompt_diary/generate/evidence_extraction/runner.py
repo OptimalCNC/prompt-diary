@@ -106,7 +106,6 @@ def _prompt_for_turn(
             project_key=inputs.project_key,
             project_json=inputs.project_json,
             session_ref=inputs.session_ref,
-            session_path=inputs.session_path,
             session_index_record=inputs.session_index_record,
             target_turn=turn.target_turn_json,
         )

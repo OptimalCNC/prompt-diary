@@ -36,7 +36,6 @@ class SessionExtractionInputs:
     project_key: str
     session_ref: str
     project_json: str
-    session_path: str
     session_index_record: str
     turns: tuple[ExtractionTurn, ...]
 
@@ -69,7 +68,6 @@ def build_session_extraction_inputs(
         project_key=project_key,
         session_ref=session_ref,
         project_json=_normalized_json(project_dir / "project.json"),
-        session_path=f"projects/{project_key}/{session.session_path.as_posix()}",
         session_index_record=json.dumps(record_without_turns, indent=2, ensure_ascii=False),
         turns=turns,
     )

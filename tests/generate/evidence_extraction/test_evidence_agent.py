@@ -26,7 +26,6 @@ def _first_turn_prompt(workspace: Path) -> str:
         project_key=inputs.project_key,
         project_json=inputs.project_json,
         session_ref=inputs.session_ref,
-        session_path=inputs.session_path,
         session_index_record=inputs.session_index_record,
         target_turn=inputs.turns[0].target_turn_json,
     )

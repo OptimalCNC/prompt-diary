@@ -17,13 +17,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_inputs_resolve_session_path_and_strip_turns(tmp_path: Path) -> None:
+def test_inputs_strip_turns_from_index_record(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     inputs = build_session_extraction_inputs(
         workspace_path=workspace, project_key=PROJECT_KEY, session_ref=SESSION_REF
     )
 
-    assert inputs.session_path == f"projects/{PROJECT_KEY}/sessions/codex/session-001.jsonl"
     record = json.loads(inputs.session_index_record)
     assert "turns" not in record
     assert record["session_ref"] == SESSION_REF

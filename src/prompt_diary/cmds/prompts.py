@@ -19,9 +19,6 @@ ProjectJsonOption = Annotated[
     str, typer.Option(help="project.json content for template substitution.")
 ]
 SessionRefOption = Annotated[str, typer.Option(help="Session reference for template substitution.")]
-SessionPathOption = Annotated[
-    str, typer.Option(help="Workspace-root-relative session path for template substitution.")
-]
 SessionIndexRecordOption = Annotated[
     str, typer.Option(help="Session index record without turns for template substitution.")
 ]
@@ -53,7 +50,6 @@ def prompts_evidence_extractor(
     project_key: ProjectKeyOption = "<PROJECT_KEY>",
     project_json: ProjectJsonOption = "<PROJECT_JSON>",
     session_ref: SessionRefOption = "<SESSION_REF>",
-    session_path: SessionPathOption = "<SESSION_PATH>",
     session_index_record: SessionIndexRecordOption = "<SESSION_INDEX_RECORD>",
     target_turn: TargetTurnOption = "<TARGET_TURN>",
 ) -> None:
@@ -63,7 +59,6 @@ def prompts_evidence_extractor(
             project_key=project_key,
             project_json=project_json,
             session_ref=session_ref,
-            session_path=session_path,
             session_index_record=session_index_record,
             target_turn=target_turn,
         )

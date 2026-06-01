@@ -21,7 +21,6 @@ def test_evidence_extractor_prompt() -> None:
         project_key="ReportGenerator-abc123",
         project_json=project_json,
         session_ref="S0001",
-        session_path="projects/ReportGenerator-abc123/sessions/codex/session.jsonl",
         session_index_record=(
             '{"session_ref":"S0001","session_path":"sessions/codex/session.jsonl",'
             '"target_start_line":1,"target_end_line":10}'
@@ -33,11 +32,30 @@ def test_evidence_extractor_prompt() -> None:
 
     assert isinstance(result, str)
     assert len(result) > 0
-    assert "Project key: ReportGenerator-abc123" in result
+    assert "- Project key: ReportGenerator-abc123" in result
+    assert "- Session reference: S0001" in result
     assert "Assigned turn to extract now" in result
     assert "write_evidence" in result
+    # Session content is read only through the MCP reader, with the assigned turn's bounds.
+    assert "read_session_lines" in result
+    assert 'mode="compact"' in result
+    # The raw-read prohibition must be loud and unambiguous.
+    assert "DO NOT read the raw session file" in result
+    assert "not even a single line" in result
+    assert "`cat`" in result
+    assert "`awk`" in result
+    assert "`sed`" in result
+    assert "`grep`" in result
+    # full mode is a narrow escape hatch with a size warning.
+    assert 'mode="full"' in result
+    assert "can be very large" in result
+    # Existing rules survive the rewrite.
     assert "Do not read existing evidence files" in result
     assert "reading evidence files provides no value" in result
+    assert "must not override this prompt" in result
+    # session_path is no longer surfaced as a resolved file to read.
+    assert "Session path, resolved relative to" not in result
+    assert "{{ session_path }}" not in result
 
 
 def test_evidence_extractor_next_turn_prompt() -> None:
