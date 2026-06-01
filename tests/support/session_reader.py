@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+import pytest
+
+from prompt_diary.generate.evidence_extraction.session_compaction import compact_record_to_json
 from prompt_diary.generate.evidence_extraction.session_reader import (
+    FullRecord,
     ReadSessionLinesCompactResult,
     ReadSessionLinesFullResult,
     ReadSessionLinesInvalidResult,
@@ -111,6 +116,53 @@ def compact_records_by_line(ok: ReadSessionLinesCompactResult) -> dict[int, Comp
     so no per-element narrowing is needed here.
     """
     return {record.line: record for record in ok.records}
+
+
+def result_to_dict(result: object) -> dict[str, Any]:
+    """Serialize a reader result into the JSON wire shape FastMCP emits for the same dataclass.
+
+    The MCP wrapper returns the dataclass result and lets FastMCP serialize it, so this mirror
+    must match that serialization exactly for invalid-parity assertions to hold. A parsed JSON
+    ``Mapping`` (the decoded MCP content block) passes through unchanged.
+    """
+    if isinstance(result, ReadSessionLinesCompactResult):
+        return {
+            "status": result.status,
+            "project_key": result.project_key,
+            "session_ref": result.session_ref,
+            "line_range": {"start": result.line_range.start, "end": result.line_range.end},
+            "mode": result.mode,
+            "records": [compact_record_to_json(record) for record in result.records],
+        }
+    if isinstance(result, ReadSessionLinesFullResult):
+        return {
+            "status": result.status,
+            "project_key": result.project_key,
+            "session_ref": result.session_ref,
+            "line_range": {"start": result.line_range.start, "end": result.line_range.end},
+            "mode": result.mode,
+            "records": [_full_record_to_json(record) for record in result.records],
+        }
+    if isinstance(result, ReadSessionLinesInvalidResult):
+        return {
+            "status": result.status,
+            "errors": [
+                {"field": error.field, "message": error.message, "hint": error.hint}
+                for error in result.errors
+            ],
+        }
+    if isinstance(result, Mapping):
+        return dict(cast("Mapping[str, Any]", result))
+    pytest.fail(f"result must be a read session lines result or mapping, got {type(result)!r}")
+
+
+def _full_record_to_json(record: FullRecord) -> dict[str, Any]:
+    return {
+        "line": record.line,
+        "raw_line": record.raw_line,
+        "raw_bytes": record.raw_bytes,
+        "raw_sha256": record.raw_sha256,
+    }
 
 
 def assert_read_invalid(

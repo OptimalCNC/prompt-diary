@@ -13,6 +13,13 @@ from prompt_diary.integrations.codex_runner import (
     CodexBackendConfig,
 )
 from prompt_diary.mcp.codex_config import prompt_diary_mcp_overrides
+from tests.support.session_reader import (
+    PROJECT_KEY as READER_PROJECT_KEY,
+)
+from tests.support.session_reader import (
+    SESSION_REF as READER_SESSION_REF,
+)
+from tests.support.session_reader import copy_session_reader_workspace
 
 pytestmark = pytest.mark.codex_mcp
 
@@ -66,5 +73,39 @@ def test_codex_runner_live_approved_prompt_diary_mcp_tool_under_auto_review(
                 timeout_seconds=90.0,
             )
             assert result.assistant_text.strip() == "MCP_OK"
+
+    asyncio.run(exercise())
+
+
+def test_codex_runner_live_approved_read_session_lines_under_auto_review(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("openai_codex")
+    codex_path = shutil.which("codex")
+    workspace = copy_session_reader_workspace(tmp_path)
+
+    async def exercise() -> None:
+        async with CodexBackend(
+            CodexBackendConfig(
+                codex_bin=Path(codex_path) if codex_path is not None else None,
+                mcp_config_overrides=prompt_diary_mcp_overrides(workspace),
+            )
+        ) as backend:
+            runner = CodexAgentRunner(
+                backend,
+                AgentConfig(
+                    working_directory=tmp_path,
+                    approval_mode="auto_review",
+                    sandbox="workspace-write",
+                ),
+            )
+            result = await runner.turn(
+                "Call the read_session_lines MCP tool exactly once with "
+                f'project_key="{READER_PROJECT_KEY}", session_ref="{READER_SESSION_REF}", '
+                "start_line=4, end_line=6, mode=compact. "
+                "If the result status is ok, reply exactly READ_OK.",
+                timeout_seconds=90.0,
+            )
+            assert result.assistant_text.strip() == "READ_OK"
 
     asyncio.run(exercise())

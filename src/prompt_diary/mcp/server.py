@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Annotated, Literal
 
+import pydantic
 from mcp.server.fastmcp import FastMCP
 
 from prompt_diary.generate.evidence_extraction.mcp import write_evidence as write_evidence_api
+from prompt_diary.generate.evidence_extraction.session_reader import (
+    read_session_lines as read_session_lines_api,
+)
 from prompt_diary.generate.project_synthesis.mcp import write_work_item as write_work_item_api
+
+_MODE_WARNING = (
+    "Output verbosity. 'compact' (default) returns bounded structured records. "
+    "'full' returns raw JSONL lines and can be very large, so use it only for a narrow "
+    "line range where exact raw content is necessary."
+)
 
 _WORKSPACE_ENV = "PROMPT_DIARY_WORKSPACE"
 
@@ -50,12 +61,33 @@ def write_work_item(
     )
 
 
+def read_session_lines(
+    project_key: str,
+    session_ref: str,
+    start_line: int,
+    end_line: int,
+    mode: Annotated[Literal["compact", "full"], pydantic.Field(description=_MODE_WARNING)] = (
+        "compact"
+    ),
+) -> object:
+    """Read a physical line range from one indexed session in the resolved prepared workspace."""
+    return read_session_lines_api(
+        workspace_path=_resolve_workspace(),
+        project_key=project_key,
+        session_ref=session_ref,
+        start_line=start_line,
+        end_line=end_line,
+        mode=mode,
+    )
+
+
 def build_mcp_server() -> FastMCP[None]:
     """Build the Prompt Diary MCP server without starting a transport."""
     server: FastMCP[None] = FastMCP("Prompt Diary")
     server.tool()(prompt_diary_ping)
     server.tool()(write_evidence)
     server.tool()(write_work_item)
+    server.tool()(read_session_lines)
     return server
 
 

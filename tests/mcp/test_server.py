@@ -37,6 +37,19 @@ from tests.support.project_synthesis import (
 from tests.support.project_synthesis import (
     result_to_dict as work_item_result_to_dict,
 )
+from tests.support.session_reader import (
+    PROJECT_KEY as READER_PROJECT_KEY,
+)
+from tests.support.session_reader import (
+    SESSION_REF as READER_SESSION_REF,
+)
+from tests.support.session_reader import (
+    call_read_session_lines,
+    copy_session_reader_workspace,
+)
+from tests.support.session_reader import (
+    result_to_dict as read_result_to_dict,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -236,6 +249,143 @@ def test_write_work_item_uses_workspace_env_var(
     result = mcp_server.write_work_item(PS_PROJECT_KEY, valid_material_work_item())
 
     assert work_item_result_to_dict(result)["status"] == "appended"
+
+
+def test_read_session_lines_is_registered_by_mcp_server() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert "read_session_lines" in [tool.name for tool in tools]
+
+
+def test_read_session_lines_mcp_input_shape_contains_contract_fields() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    read_tool = next(tool for tool in tools if tool.name == "read_session_lines")
+
+    properties = read_tool.inputSchema["properties"]
+    assert {"project_key", "session_ref", "start_line", "end_line", "mode"} <= set(properties)
+    assert {"project_key", "session_ref", "start_line", "end_line"} <= set(
+        read_tool.inputSchema["required"]
+    )
+    assert "mode" not in read_tool.inputSchema["required"]
+
+
+def test_read_session_lines_mode_description_warns_about_large_raw_output() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    read_tool = next(tool for tool in tools if tool.name == "read_session_lines")
+
+    description = read_tool.inputSchema["properties"]["mode"]["description"]
+    assert "large" in description
+    assert "raw" in description
+
+
+def test_read_session_lines_mcp_compact_success_returns_compact_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+
+    result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "read_session_lines",
+            {
+                "project_key": READER_PROJECT_KEY,
+                "session_ref": READER_SESSION_REF,
+                "start_line": 4,
+                "end_line": 6,
+            },
+        )
+    )
+
+    assert result == read_result_to_dict(
+        call_read_session_lines(workspace_path=workspace, start_line=4, end_line=6)
+    )
+    assert result["status"] == "ok"
+    assert result["mode"] == "compact"
+    records = result["records"]
+    assert [record["line"] for record in records] == [4, 5, 6]
+    assert records[0]["record_type"] == "response_item:function_call"
+    assert all("raw_sha256" in record for record in records)
+
+
+def test_read_session_lines_mcp_full_success_returns_raw_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+
+    result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "read_session_lines",
+            {
+                "project_key": READER_PROJECT_KEY,
+                "session_ref": READER_SESSION_REF,
+                "start_line": 6,
+                "end_line": 6,
+                "mode": "full",
+            },
+        )
+    )
+
+    assert result == read_result_to_dict(
+        call_read_session_lines(workspace_path=workspace, start_line=6, end_line=6, mode="full")
+    )
+    assert result["mode"] == "full"
+    assert result["records"][0]["raw_line"].startswith('{"payload"')
+
+
+def test_read_session_lines_mcp_invalid_result_matches_api_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_workspace = copy_session_reader_workspace(tmp_path / "api")
+    mcp_workspace = copy_session_reader_workspace(tmp_path / "mcp")
+    api_result = call_read_session_lines(
+        workspace_path=api_workspace,
+        session_ref="S9999",
+        start_line=1,
+        end_line=1,
+    )
+    monkeypatch.chdir(mcp_workspace)
+    server = mcp_server.build_mcp_server()
+
+    mcp_result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "read_session_lines",
+            {
+                "project_key": READER_PROJECT_KEY,
+                "session_ref": "S9999",
+                "start_line": 1,
+                "end_line": 1,
+            },
+        )
+    )
+
+    assert mcp_result == read_result_to_dict(api_result)
+    assert mcp_result["status"] == "invalid"
+    assert mcp_result["errors"][0]["field"] == "session_ref"
+
+
+def test_read_session_lines_uses_workspace_env_var(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = copy_session_reader_workspace(tmp_path / "ws")
+    monkeypatch.chdir(tmp_path)  # cwd is deliberately NOT the workspace
+    monkeypatch.setenv("PROMPT_DIARY_WORKSPACE", str(workspace))
+
+    result = mcp_server.read_session_lines(READER_PROJECT_KEY, READER_SESSION_REF, 6, 6)
+
+    assert read_result_to_dict(result)["status"] == "ok"
 
 
 async def _call_mcp_tool(
