@@ -9,7 +9,7 @@ runner, the prompt contract, the reader, and the writer integrate end-to-end.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import TaskSpec, evidence_card_artifact, evidence_task_id
@@ -28,6 +28,13 @@ if TYPE_CHECKING:
 
 # Physical line bounds of each assigned turn in the basic-two-turns fixture's session index.
 _TURN_BOUNDS: dict[str, tuple[int, int]] = {"T0001": (2, 8), "T0002": (9, 10)}
+
+
+def _citation_lines(node: dict[str, Any]) -> str:
+    """Return the single ``lines`` citation string of a chain node (trigger/terminal_state)."""
+    citations = cast("list[dict[str, Any]]", node["citations"])
+    assert len(citations) == 1, f"expected exactly one citation, got {citations!r}"
+    return cast("str", citations[0]["lines"])
 
 
 def _evidence_task() -> TaskSpec:
@@ -69,6 +76,16 @@ def test_runner_mock_agent_reads_via_read_session_lines_then_writes(tmp_path: Pa
         assert read.result.records, "compact read returned no records for the assigned turn"
         # Every record the agent read is an absolute physical line inside the assigned turn.
         assert all(start <= record.line <= end for record in read.result.records)
+        # The compact read returns the COMPLETE requested range, in order: exactly one record per
+        # physical line from start to end, no gaps, no subset, no reordered or wrong line numbers.
+        assert [record.line for record in read.result.records] == list(range(start, end + 1))
     # The write the agent committed is tied to what it read: the card has both chains in order.
     card = load_evidence_card(workspace)
     assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001", "T0002"]
+    # Each committed chain's citation span is the read-derived span (min/max of the lines read),
+    # which by the exact-coverage assertion above equals the turn's (start, end). This locks that
+    # the write span came from the read results, not from some unrelated source.
+    for chain in card["evidence_chains"]:
+        start, end = _TURN_BOUNDS[chain["turn_ref"]]
+        assert _citation_lines(chain["trigger"]) == f"{start}-{start}"
+        assert _citation_lines(chain["terminal_state"]) == f"{end}-{end}"
