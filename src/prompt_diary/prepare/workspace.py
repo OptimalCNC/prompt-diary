@@ -182,6 +182,7 @@ class _ScanProgress:
     total: int
     stride: int
     reporter: ProgressReporter
+    scope: str
     scanned: int = 0
 
     def advance(self) -> None:
@@ -193,6 +194,7 @@ class _ScanProgress:
                     name="scanning_sessions",
                     done=self.scanned,
                     total=self.total,
+                    scope=self.scope,
                 )
             )
 
@@ -464,13 +466,15 @@ def _selected_sessions(
     *,
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> Iterable[ParsedSession]:
-    per_source = [
-        (spec, _jsonl_source_files(spec.root))
-        for spec in sorted(source_specs, key=lambda item: (item.source, item.root.as_posix()))
-    ]
-    total = sum(len(paths) for _, paths in per_source)
-    progress = _ScanProgress(total=total, stride=max(1, total // 100), reporter=reporter)
+    per_source = [(spec, _jsonl_source_files(spec.root)) for spec in source_specs]
     for spec, source_paths in per_source:
+        scope = _source_scope(spec)
+        progress = _ScanProgress(
+            total=len(source_paths),
+            stride=max(1, len(source_paths) // 100),
+            reporter=reporter,
+            scope=scope,
+        )
         probe = _probe_source_files(
             source_paths=source_paths,
             source=spec.source,
@@ -478,12 +482,23 @@ def _selected_sessions(
             target=target,
             progress=progress,
         )
+        selected_count = 0
         for source_path in source_paths:
             if source_path not in probe.candidate_root_paths:
                 continue
             parsed = _parse_session_file(source_path=source_path, spec=spec, target=target)
             if parsed is not None:
+                selected_count += 1
                 yield _with_target_subagents(parsed, probe.subagent_index)
+        reporter.emit(
+            PrepareStep(
+                at=time.monotonic(),
+                name="discovering",
+                done=selected_count,
+                total=None,
+                scope=scope,
+            )
+        )
 
 
 def _jsonl_source_files(root: Path) -> tuple[Path, ...]:
@@ -492,6 +507,19 @@ def _jsonl_source_files(root: Path) -> tuple[Path, ...]:
     if not root.exists():
         return ()
     return tuple(sorted(root.rglob("*.jsonl"), key=lambda path: path.as_posix()))
+
+
+def _source_scope(spec: SourceSpec) -> str:
+    return f"{spec.source} {_display_path(spec.root)}"
+
+
+def _display_path(path: Path) -> str:
+    expanded = path.expanduser()
+    try:
+        relative = expanded.relative_to(Path.home())
+    except ValueError:
+        return str(path)
+    return f"~/{relative.as_posix()}"
 
 
 def _probe_source_files(

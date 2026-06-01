@@ -21,6 +21,7 @@ class PrepareStep:
     name: str
     done: int
     total: int | None
+    scope: str | None = None
 
 
 @dataclass(frozen=True)

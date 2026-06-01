@@ -34,9 +34,10 @@ def format_event(event: ProgressEvent) -> str | None:
     if isinstance(event, PrepareStarted):
         return f"prepare: starting (sources: {', '.join(event.sources)})"
     if isinstance(event, PrepareStep):
+        label = f"{event.name} {event.scope}" if event.scope is not None else event.name
         if event.total is None:
-            return f"prepare: {event.name} {event.done}"
-        return f"prepare: {event.name} {event.done}/{event.total}"
+            return f"prepare: {label} {event.done}"
+        return f"prepare: {label} {event.done}/{event.total}"
     if isinstance(event, PrepareFinished):
         return f"prepare: ready ({event.projects} projects, {event.sessions} sessions)"
     if isinstance(event, RunStarted):

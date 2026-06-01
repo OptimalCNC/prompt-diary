@@ -27,9 +27,17 @@ def test_prepare_steps_track_counts() -> None:
         PrepareStarted(at=0.0, sources=("codex", "claude-code")),
         PrepareStep(at=0.1, name="copying_transcripts", done=2, total=9),
         PrepareStep(at=0.2, name="copying_transcripts", done=5, total=9),
+        PrepareStep(
+            at=0.3,
+            name="scanning_sessions",
+            done=7,
+            total=12,
+            scope="codex ~/.codex/sessions",
+        ),
     )
     assert state.prepare_sources == ("codex", "claude-code")
     assert state.prepare_steps["copying_transcripts"] == (5, 9)
+    assert state.prepare_step_scopes["scanning_sessions"]["codex ~/.codex/sessions"] == (7, 12)
     assert state.prepare_done is False
 
 

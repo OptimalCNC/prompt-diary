@@ -24,6 +24,15 @@ def test_format_event_lines() -> None:
     assert format_event(PrepareStep(at=0.0, name="copying_transcripts", done=4, total=9)) == (
         "prepare: copying_transcripts 4/9"
     )
+    assert format_event(
+        PrepareStep(
+            at=0.0,
+            name="scanning_sessions",
+            done=2,
+            total=7,
+            scope="codex ~/.codex/sessions",
+        )
+    ) == ("prepare: scanning_sessions codex ~/.codex/sessions 2/7")
     assert format_event(PrepareStep(at=0.0, name="discovering", done=3, total=None)) == (
         "prepare: discovering 3"
     )

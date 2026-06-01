@@ -82,9 +82,20 @@ class LiveConsoleReporter:
     def _render_prepare(self, state: ProgressState) -> RenderableType:
         table = Table.grid(padding=(0, 1))
         table.add_row(Text("prepare", style="bold"))
-        for name, (done, total) in state.prepare_steps.items():
-            counter = f"{done}/{total}" if total is not None else str(done)
-            table.add_row(Text(f"  {name}"), Text(counter))
+        step_names = [
+            *state.prepare_steps.keys(),
+            *(name for name in state.prepare_step_scopes if name not in state.prepare_steps),
+        ]
+        for name in step_names:
+            if name in state.prepare_steps:
+                done, total = state.prepare_steps[name]
+                counter = f"{done}/{total}" if total is not None else str(done)
+                table.add_row(Text(f"  {name}"), Text(counter))
+            else:
+                table.add_row(Text(f"  {name}"), Text(""))
+            for scope, (done, total) in state.prepare_step_scopes.get(name, {}).items():
+                counter = f"{done}/{total}" if total is not None else str(done)
+                table.add_row(Text(f"    {scope}"), Text(counter, style="cyan"))
         if state.prepare_done:
             table.add_row(
                 Text(
