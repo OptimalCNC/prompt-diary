@@ -31,11 +31,22 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
+DEFAULT_EVIDENCE_REASONING_EFFORT = "medium"
+"""Per-thread Codex reasoning effort for evidence extraction.
+
+Extraction is reconstruct-the-turn-and-cite-exact-lines work, not deep problem solving, so the
+extraction thread pins a mid-level effort instead of inheriting the user's global Codex setting
+(which is often much higher). It is a per-thread (``AgentConfig``) value, so other generation
+phases keep their own effort; override it by constructing the runner with ``reasoning_effort``.
+"""
+
+
 @dataclass(frozen=True)
 class EvidenceExtractionRunner:
     """Drive an agent to extract one evidence chain per indexed turn of a session."""
 
     agent_factory: AgentSessionFactory
+    reasoning_effort: str | None = DEFAULT_EVIDENCE_REASONING_EFFORT
 
     async def run(
         self,
@@ -64,6 +75,7 @@ class EvidenceExtractionRunner:
                 working_directory=workspace_path,
                 approval_mode="auto_review",
                 sandbox="workspace-write",
+                reasoning_effort=self.reasoning_effort,
             )
         )
         total_turns = len(inputs.turns)

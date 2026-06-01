@@ -165,6 +165,29 @@ def test_runner_emits_turn_advanced_per_committed_turn(tmp_path: Path) -> None:
     assert [event.turn_ref for event in turns] == ["T0001", "T0002"]
 
 
+def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    factory = EvidenceWritingAgentSessionFactory()
+
+    _run(factory, workspace)
+
+    assert factory.runners[0].config.reasoning_effort == "medium"
+
+
+def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    factory = EvidenceWritingAgentSessionFactory()
+    runner = EvidenceExtractionRunner(agent_factory=factory, reasoning_effort="low")
+
+    async def run() -> None:
+        async with factory:
+            await runner.run(workspace_path=workspace, task=_evidence_task())
+
+    asyncio.run(run())
+
+    assert factory.runners[0].config.reasoning_effort == "low"
+
+
 def _strip_turns_from_index(workspace: Path) -> None:
     index_path = workspace / "projects" / PROJECT_KEY / "sessions.index.jsonl"
     rows = [
