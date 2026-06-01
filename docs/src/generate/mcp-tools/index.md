@@ -9,6 +9,15 @@ Implementation must follow the two-layer structure defined in
 owns data models, validation, and canonical read/write logic, while the MCP SDK handler is only
 the current MCP adapter.
 
+## Registered Tools
+
+| Tool | Phase | Purpose |
+| --- | --- | --- |
+| `prompt_diary_ping` | — | Connectivity check; returns stable boilerplate. |
+| `read_session_lines` | Evidence Extraction | Read a physical line range from one indexed session; compact by default, full raw on request. Read-only. |
+| `write_evidence` | Evidence Extraction | Validate and append one evidence chain to the canonical session evidence card. |
+| `write_work_item` | Project Synthesis | Validate and append one work item to the project synthesis output. |
+
 ## Phase Tool Contracts
 
 - [Evidence Extraction Tools](./evidence-extraction.md)

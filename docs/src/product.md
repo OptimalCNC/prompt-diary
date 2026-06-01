@@ -120,6 +120,5 @@ success. If the workspace is missing, generation internally runs preparation fir
 workspace already exists, generation should print an informational message that the existing
 workspace is being reused and that `prepare --force` can refresh it after session updates.
 
-`mcp serve` starts the package MCP server over stdio for integration work. The initial server is
-boilerplate-only and exposes `prompt_diary_ping`; report-writing tools are not part of this command
-yet.
+`mcp serve` starts the package MCP server over stdio for integration work. The server exposes
+`prompt_diary_ping`, `read_session_lines`, `write_evidence`, and `write_work_item`.

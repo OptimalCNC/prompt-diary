@@ -32,8 +32,24 @@ logic, or authoritative data models.
 - Do not branch core behavior by adapter. An MCP call and a future CLI command that submit the same
   API request must receive the same validation and write behavior.
 
+## Read-Only Tools
+
+The two-layer pattern applies to read tools as well as write tools.
+
+`read_session_lines` follows the same structure: the transport-independent API in
+`src/prompt_diary/generate/evidence_extraction/session_reader.py` owns session resolution by
+`(project_key, session_ref)` via `sessions.index.jsonl`, line-range validation, compaction logic,
+and all result and error models. The thin MCP adapter in `src/prompt_diary/mcp/server.py`
+resolves the workspace root, passes it into the API, and returns the result. The API layer accepts
+no arbitrary filesystem paths.
+
+Because `read_session_lines` performs no writes, no command execution, and no network access, and
+because its default output is compact and bounded, it is safe under the server's
+`default_tools_approval_mode="approve"`. `write_evidence` remains the only write tool for evidence
+extraction.
+
 ## Relationship To Tool Contracts
 
 [`MCP Tools`](../generate/mcp-tools/index.md) links to the phase-specific agent-facing schemas,
-write behavior, and structural rules. The API layer is the implementation authority for those
+read/write behavior, and structural rules. The API layer is the implementation authority for those
 rules. The MCP SDK handler is only the MCP adapter for that API.
