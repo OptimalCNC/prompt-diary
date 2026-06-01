@@ -57,6 +57,26 @@ def codex_global_mcp_disable_overrides(codex_home: Path) -> tuple[str, ...]:
     return tuple(overrides)
 
 
+# Disable the Codex "plugins" feature for our wrapped agent. Evidence extraction needs no plugins,
+# and the feature injects every enabled plugin's skill catalog into the developer message and makes
+# the agent auto-load skills (e.g. `using-superpowers`). Verified against codex 0.135.0: setting
+# this shrinks the developer message from ~22.6 KB to ~13.9 KB and removes the skill-load entirely.
+# `features.plugins` is a bare key, so the `-c` override is honored — unlike the per-plugin
+# `plugins."<name>".enabled=false`, whose quoted key Codex's override parser silently ignores.
+_DISABLE_PLUGINS_FEATURE_OVERRIDE = "features.plugins=false"
+
+
+def codex_clean_startup_overrides(codex_home: Path) -> tuple[str, ...]:
+    """Return ``-c`` overrides that start our wrapped agent clean.
+
+    Disables the global plugins feature (dropping the plugin skills catalog and skill auto-loading)
+    and every global MCP server from ``<codex_home>/config.toml``, so the agent loads only the
+    prompt_diary MCP with no global plugins, skills, or MCP servers. The user's other settings
+    (model, provider, auth, response storage, etc.) are left intact.
+    """
+    return (_DISABLE_PLUGINS_FEATURE_OVERRIDE, *codex_global_mcp_disable_overrides(codex_home))
+
+
 def prompt_diary_mcp_overrides(workspace_path: Path) -> tuple[str, ...]:
     """Return Codex config-override strings registering the package MCP server.
 

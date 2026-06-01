@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from prompt_diary.mcp.codex_config import (
+    codex_clean_startup_overrides,
     codex_global_mcp_disable_overrides,
     default_codex_home,
     prompt_diary_mcp_overrides,
@@ -63,6 +64,22 @@ def test_disable_overrides_cover_global_mcp_servers_only(tmp_path: Path) -> None
 
 def test_disable_overrides_without_config_file_returns_empty(tmp_path: Path) -> None:
     assert codex_global_mcp_disable_overrides(tmp_path) == ()
+
+
+def test_clean_startup_overrides_disable_plugins_feature_and_global_mcp(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('[mcp_servers.playwright]\ncommand = "npx"\n', encoding="utf-8")
+
+    overrides = codex_clean_startup_overrides(tmp_path)
+
+    # Disabling the plugins feature drops the global skills catalog + skill auto-loading; it works
+    # via a bare key, unlike the per-plugin enabled override Codex silently ignores.
+    assert "features.plugins=false" in overrides
+    assert "mcp_servers.playwright.enabled=false" in overrides
+
+
+def test_clean_startup_overrides_without_config_still_disable_plugins(tmp_path: Path) -> None:
+    assert codex_clean_startup_overrides(tmp_path) == ("features.plugins=false",)
 
 
 def test_default_codex_home_uses_codex_home_env(

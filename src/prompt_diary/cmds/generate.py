@@ -24,7 +24,7 @@ from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
 from prompt_diary.mcp.codex_config import (
-    codex_global_mcp_disable_overrides,
+    codex_clean_startup_overrides,
     default_codex_home,
     prompt_diary_mcp_overrides,
 )
@@ -64,7 +64,7 @@ def build_generation_workflow() -> GenerateWorkspaceWorkflow:
                 codex_bin=Path(codex_path) if codex_path is not None else None,
                 mcp_config_overrides=(
                     *prompt_diary_mcp_overrides(workspace_path),
-                    *codex_global_mcp_disable_overrides(default_codex_home()),
+                    *codex_clean_startup_overrides(default_codex_home()),
                 ),
             )
         )
