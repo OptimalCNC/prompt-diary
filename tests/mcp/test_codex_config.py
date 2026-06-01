@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from prompt_diary.mcp.codex_config import (
+    codex_global_extras_disable_overrides,
+    default_codex_home,
+    prompt_diary_mcp_overrides,
+)
 
-from prompt_diary.mcp.codex_config import prompt_diary_mcp_overrides
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_overrides_register_server_command_args_and_workspace(tmp_path: Path) -> None:
@@ -22,3 +27,56 @@ def test_overrides_approve_prompt_diary_mcp_tools_by_default(tmp_path: Path) -> 
     overrides = prompt_diary_mcp_overrides(tmp_path)
 
     assert 'mcp_servers.prompt_diary.default_tools_approval_mode="approve"' in overrides
+
+
+def test_disable_overrides_cover_global_servers_and_plugins(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(
+        "\n".join(
+            (
+                "[mcp_servers.playwright]",
+                'command = "npx"',
+                "[mcp_servers.playwright.env]",
+                'KEY = "value"',
+                "[mcp_servers.agents-runner-workflow]",
+                "enabled = false",
+                '[plugins."github@openai-curated"]',
+                "enabled = true",
+                "[mcp_servers.prompt_diary]",
+                'command = "report"',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    overrides = codex_global_extras_disable_overrides(tmp_path)
+
+    assert "mcp_servers.playwright.enabled=false" in overrides
+    assert "mcp_servers.agents-runner-workflow.enabled=false" in overrides
+    assert 'plugins."github@openai-curated".enabled=false' in overrides
+    assert overrides.count("mcp_servers.playwright.enabled=false") == 1
+    assert not any("prompt_diary" in item for item in overrides)
+
+
+def test_disable_overrides_without_config_file_returns_empty(tmp_path: Path) -> None:
+    assert codex_global_extras_disable_overrides(tmp_path) == ()
+
+
+def test_default_codex_home_uses_codex_home_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+
+    assert default_codex_home() == tmp_path
+
+
+def test_default_codex_home_falls_back_to_home_codex(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    assert default_codex_home() == Path.home() / ".codex"
+
+
+def test_default_codex_home_treats_empty_env_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", "")
+
+    assert default_codex_home() == Path.home() / ".codex"
