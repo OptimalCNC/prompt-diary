@@ -18,7 +18,6 @@ An evidence extractor receives prepared context for exactly one indexed turn:
 - `session_ref`
 - the session index path, `projects/<project_key>/sessions.index.jsonl`, relative to the prepared
   workspace root that is the extractor's current working directory
-- `session_path`, resolved by the orchestrator relative to the prepared workspace root
 - the exact `projects/<project_key>/sessions.index.jsonl` row for that session, with `turns`
   removed
 - one target turn copied from that row's `turns[]`
@@ -26,16 +25,17 @@ An evidence extractor receives prepared context for exactly one indexed turn:
 The supplied index row is the authoritative session metadata. The target turn is the only turn the
 extractor may write in that invocation. The target turn supplies `turn_ref`, `turn_start_line`,
 and `turn_end_line`; extraction writes `turn_ref` into the evidence chain, and the line bounds
-remain the citation boundary. The extractor reads the session file at `session_path`, which the
-orchestrator resolves from `projects/<project_key>/<index_row.session_path>` so the extractor can
-read it directly from the workspace current working directory.
+remain the citation boundary. The extractor reads the assigned turn's line range via the
+`read_session_lines` MCP tool, resolved by `(project_key, session_ref)`. The extractor must NOT
+read the raw session file directly.
 
 The extractor's read is scoped to the assigned turn. It reads the
-`turn_start_line`..`turn_end_line` range of `session_path` as the extraction target and may read
-neighboring lines only as non-citable local context, such as the session header or the preceding
-turn behind a continue or resume trigger. A scoped read must preserve the file's absolute 1-based
-line numbers so citations resolve, and every citation stays within the assigned turn's line bounds.
-The line model that defines `turn_start_line` and `turn_end_line` is the
+`turn_start_line`..`turn_end_line` range via `read_session_lines` (compact by default; `full` only
+for a narrow range with a good reason) as the extraction target and may read neighboring lines only
+as non-citable local context, such as the session header or the preceding turn behind a continue or
+resume trigger. A scoped read must preserve the file's absolute 1-based line numbers so citations
+resolve, and every citation stays within the assigned turn's line bounds. The line model that
+defines `turn_start_line` and `turn_end_line` is the
 [Workspace Layout](../workspace-layout.md).
 
 The extractor writes one draft chain at a time through `write_evidence`, passing the project
@@ -47,7 +47,7 @@ waits for its evidence chain to be written, then invokes extraction for the next
 
 ```mermaid
 flowchart TD
-    inputs["Session inputs<br/>project_key, project.json,<br/>session_ref, session_path,<br/>index path + row without turns"]
+    inputs["Session inputs<br/>project_key, project.json,<br/>session_ref,<br/>index path + row without turns"]
     turns["Indexed turns[]"]
     more{"More turns?"}
     prompt["Turn inputs<br/>session inputs + target turn"]

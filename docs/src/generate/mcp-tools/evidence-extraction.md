@@ -102,12 +102,12 @@ Compact record fields:
 | Field | Type | Description |
 | --- | --- | --- |
 | `line` | int | Absolute 1-based physical line number. |
-| `record_type` | str | Source record type (`user`, `assistant`, `system`, `system:init`, source-specific equivalents, or `unknown`). |
+| `record_type` | str | Source record type (`user`, `assistant`, `system`, `system:summary`, source-specific equivalents, or `unknown`). |
 | `role` | str \| null | Message role when present. |
 | `content_kinds` | list[str] | High-level content kinds present: `text`, `tool_use`, `tool_result`, `thinking`. |
 | `summary` | str | Deterministic short description of the record. |
 | `text_preview` | str \| null | Full text for user/assistant text messages; null when absent or suppressed. |
-| `tool_uses` | list | Tool invocations, each with `name` (str) and `input_summary` (str). |
+| `tool_uses` | list | Tool invocations, each with `name` (str), `input_summary` (str), and `truncated` (bool, `true` when the tool's input was trimmed). |
 | `tool_results` | list | Tool results, each with `kind`, `status`, `file_path`, `command`, `preview`, `raw_bytes`, `truncated`. |
 | `raw_bytes` | int | UTF-8 byte length of the original physical line. |
 | `raw_sha256` | str | SHA-256 hex digest of the original physical line. |
@@ -128,6 +128,10 @@ Compact mode never trims:
 - Normal user messages.
 - Normal assistant text messages.
 - Tool result payloads at or below 1 KiB.
+
+Compact mode does not extract the content of Claude `attachment` records (e.g. task-notification
+subagent results); they appear as an `attachment` record with a generic summary. Use
+`mode="full"` on that specific line if the exact attachment content is needed.
 
 ### Full return shape
 
