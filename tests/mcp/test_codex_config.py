@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from prompt_diary.mcp.codex_config import (
-    codex_global_extras_disable_overrides,
+    codex_global_mcp_disable_overrides,
     default_codex_home,
     prompt_diary_mcp_overrides,
 )
@@ -29,7 +29,7 @@ def test_overrides_approve_prompt_diary_mcp_tools_by_default(tmp_path: Path) -> 
     assert 'mcp_servers.prompt_diary.default_tools_approval_mode="approve"' in overrides
 
 
-def test_disable_overrides_cover_global_servers_and_plugins(tmp_path: Path) -> None:
+def test_disable_overrides_cover_global_mcp_servers_only(tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
     config.write_text(
         "\n".join(
@@ -49,17 +49,20 @@ def test_disable_overrides_cover_global_servers_and_plugins(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    overrides = codex_global_extras_disable_overrides(tmp_path)
+    overrides = codex_global_mcp_disable_overrides(tmp_path)
 
     assert "mcp_servers.playwright.enabled=false" in overrides
     assert "mcp_servers.agents-runner-workflow.enabled=false" in overrides
-    assert 'plugins."github@openai-curated".enabled=false' in overrides
     assert overrides.count("mcp_servers.playwright.enabled=false") == 1
+    # prompt_diary (our own server) is never disabled.
     assert not any("prompt_diary" in item for item in overrides)
+    # Codex does not honor plugins.*.enabled=false overrides, so plugins are intentionally NOT
+    # emitted (emitting them would be a misleading no-op).
+    assert not any("plugins" in item for item in overrides)
 
 
 def test_disable_overrides_without_config_file_returns_empty(tmp_path: Path) -> None:
-    assert codex_global_extras_disable_overrides(tmp_path) == ()
+    assert codex_global_mcp_disable_overrides(tmp_path) == ()
 
 
 def test_default_codex_home_uses_codex_home_env(
