@@ -1,9 +1,9 @@
 # Daily Report Synthesis
 
 Daily report synthesis is the final report-producing generation phase. It turns project work items
-into a semantic daily report model, `daily-report.json`, where the four
+into a semantic daily report model, `daily-report.json`, where the three
 [product purposes](../product.md#purposes) must converge from one evidence base: work
-communication, evidence trust, engagement review, and team learning. Reader-facing views —
+communication, engagement review, and team learning — each honest about its evidence. Reader-facing views —
 `report.md` and any future view — are rendered from that model by a deterministic step; the
 synthesizer that builds the model is view-agnostic.
 
@@ -136,110 +136,222 @@ Model rules:
 - Evidence gaps may refer to `metadata.json` or session indexes, but session content claims still
   require normal session-line citations.
 - No-material, interrupted, failed, paused, resumed, and clarification-only interactions stay
-  represented when they affect evidence trust, engagement review, or team learning.
+  represented when they bear on the report's evidence honesty, engagement review, or team learning.
+
+### Field Provenance
+
+Every model field is produced one of four ways. Only `synthesize` fields require the daily
+synthesizer agent; `lift` / `derive` / `resolve` are deterministic and should be built by code, which
+also guarantees they cannot drift from the evidence they came from.
+
+- **lift** — copied verbatim from an upstream artifact (a work item, `source_user_messages`); no transformation.
+- **derive** — computed deterministically from upstream fields.
+- **resolve** — looked up deterministically, such as a turn reference to its line range via the evidence card.
+- **synthesize** — newly written by the agent; the only AI-produced fields.
+
+This table is filled in section by section as the abstract layout settles, and mirrors each block's
+`needs`. (The [Daily Report Model](#daily-report-model) JSON above predates the layout redesign and
+will be reconciled with the layout when the contract is settled — after the layout.)
+
+**Work by Project**
+
+| Field | Source | Provenance |
+| --- | --- | --- |
+| `project_label` | `project.json` | lift |
+| work item `title` | `work_items[].title` | lift |
+| `Why` (trigger / agent reaction) | `trigger.summary`, `agent_reaction.summary` | lift |
+| outcome `what changed` | `outcomes[].summary` | lift |
+| `confidence` | `work_items[].confidence`, `outcomes[].confidence` | lift |
+| `User messages` | `source_user_messages` (tool-populated) | lift |
+| `disposition` | `terminal_states` + `outcomes` | derive |
+| ordering · material/Minor split | `kind` + sort rule | derive |
+| `Citation` | `evidence_refs` → lines via the evidence card | resolve |
+| project `summary` | the project's work items | **synthesize** |
+
+Pending sections (Executive Summary, and the evidence-trust / engagement / team-learning lenses) get
+their rows as each is designed.
 
 ## Rendering
 
-Rendering projects `daily-report.json` into reader-facing views. It is deterministic and adds no
-judgment: every claim, citation, confidence value, and evidence-quality signal in a view comes from
-the model. A view never reads sessions, evidence cards, or work items, and never introduces content
-absent from the model — doing so is a rendering bug. Because rendering is deterministic, the "no new
-claims" guarantee is structural, not a rule the synthesizer must remember.
+Rendering turns `daily-report.json` into reader-facing views through an intermediate,
+engine-independent **abstract layout**:
 
-Each view is one renderer over the same model, so adding a view never changes the model or the
-synthesizer. `report.md` is the required view; further views (for example, Notion) are optional and
-may be added without touching synthesis.
+```text
+daily-report.json   →   abstract layout   →   { report.md, Notion, … }
+ (semantic model)        (presentation tree)     (engine adapters)
+```
+
+The abstract layout is the single source of truth for the report's *structure* — its sections,
+their order, and the blocks inside them — written without any engine's syntax. Each engine renderer
+walks the layout and serializes its blocks into that engine's constructs, degrading gracefully where
+an engine lacks one. Rendering stays deterministic and adds no judgment: every claim, citation,
+confidence value, and evidence-quality signal in a view comes from the model through the layout. A
+view that reads sessions, evidence cards, or work items, or introduces content absent from the
+model, is a rendering bug. Because rendering is deterministic, the "no new claims" guarantee is
+structural, not a rule the synthesizer must remember.
+
+Each block also declares the model data it consumes (`needs:`). Those needs are the layout's claim
+on the contract — the union of every `needs` is what `daily-report.json` must carry — so settling
+the layout settles the model. The layout is refined section by section as each report lens is
+designed; sections not yet designed appear as placeholders. It is the living structure this page
+tracks. Each field's provenance — `lift` / `derive` / `resolve` / `synthesize` — is recorded in
+[Field Provenance](#field-provenance); only `synthesize` fields need the agent.
+
+### Abstract Layout
+
+Blocks (engine-independent presentation primitives):
+
+- `Document(title, properties)` — the report root; `properties` are key/value metadata.
+- `Section(title)` — a titled, ordered region with a stated purpose; may nest.
+- `Group(label)` — a labeled cluster of blocks repeated over a collection, such as one per project.
+- `Prose(text, citation?)` — a run of rich text, optionally carrying an inline citation.
+- `List(bullet|number)` — a sequence of items, each prose or nested blocks.
+- `Table(columns, rows, affordances)` — tabular data; `affordances` declare the default sort,
+  group-by, and filter-by keys. Rows bind to a model collection.
+- `Tag(value, scale)` — one controlled value from a named scale (materiality, disposition,
+  confidence, type); the key that filtering and sorting use.
+- `Citation(refs)` — one or more evidence references resolving to `{session, lines}`.
+- `Callout(tone)` — set-apart emphasis for limits, warnings, or gaps.
+- `Toggle(label)` — a collapsible region, collapsed by default; reveals its children on demand.
+- `Empty(fallback)` — explicit empty-state when a section's data is absent.
+
+Layout (the purpose-1 region — work communication — is detailed; later lenses are placeholders
+filled as they are designed):
+
+```text
+Document  "Prompt Diary Report — {report_date}"
+  properties: status{final|partial} · window{start–end, tz} · overall_confidence{high|medium|low}
+  needs: report_date, status, window, overall_confidence
+
+Section "Executive Summary" — the 30-second cross-project digest
+  List(bullet)  top material outcomes (curated) — Prose · Citation
+  List(bullet)  headline unfinished / blocked   — Prose · Citation
+      needs: executive_summary → {top_outcomes[], unfinished[]} → {text, citations}
+
+Section "Work by Project" — the day's outcomes, grouped by project then work item
+  Group per project (ordered by significance)
+    Prose   project summary — produced / finished / in-progress (qualitative) · Citation(work items)
+    List of work items (material first):
+      Prose    {work item title}              · Tag(disposition) · Tag(confidence)
+      Toggle "Why" (folded)                   — trigger.summary (+ agent_reaction) · Citation
+      Toggle "User messages" (folded)         — verbatim source_user_messages for the work item's turns · Citation
+      List of outcomes — what changed · Tag(confidence) · Citation
+      (a work item with no material outcome shows its terminal disposition in place of the outcomes)
+    Toggle "Minor activity" (folded)          — the project's no-material / trivial work items
+    needs: projects[] → { project_label, summary, work_items[] → { title, kind, disposition,
+           confidence, trigger.summary, agent_reaction.summary,
+           outcomes[] → {what_changed, confidence, citations}, terminal_states[].summary } }
+           + source_user_messages by covered_turn → verbatim {messages} per (session_ref, turn_ref)
+
+Section "Verification / Evidence Quality" — observed contradictions or failures, missing checks, and confidence limits; verified/unverified verdicts deferred (MVP)
+    blocks: to design (Evidence-Trust lens)
+
+Section "Engagement Assessment" — observable evidence of how the user directed, reviewed, corrected, or resumed agent work
+    blocks: to design (Engagement lens)
+
+Section "AI-Agent Driving Quality" — reusable working mechanisms, good practices, risks, anti-patterns, and skills worth sharing
+    blocks: to design (Team-Learning lens)
+
+Section "Problems / Risks / Help Needed" — unresolved risks, unsupported claims, missing verification, or areas needing human input
+    blocks: to design
+
+Section "Blockers and Next Actions" — blockers or open issues paired with supported next actions
+    blocks: to design
+
+Section "No-Material / Interrupted Examples" — low-value, interrupted, paused, resumed, failed, or clarification-only interactions that are useful workflow signals
+    blocks: to design (Team-Learning lens)
+
+Section "Follow-ups" — specific future work grounded in the day's evidence
+    blocks: to design
+
+Section "Evidence Gaps" — missing or weak evidence that affects confidence
+    blocks: to design
+
+rule: any Section whose data is empty renders as Empty(fallback)
+```
+
+Notes on the purpose-1 region:
+
+- Executive Summary and the per-project outcomes render the same set at two altitudes: the digest is
+  the curated cross-project headline; Work by Project is the complete, grouped detail. They must stay
+  consistent.
+- `what changed` is lifted from a work item's consolidated `outcomes[].summary` — one list item per
+  outcome — or, for a work item that ended without material output, its `terminal_states[].summary`.
+  The work item `title` is the group label, and its text only as a fallback for a trivial work item
+  with neither. Rendering selects and orders; it never re-writes a claim.
+- `disposition` (completed / blocked / interrupted / failed / clarification) is derived from the work
+  item's `terminal_states` and outcomes — the at-a-glance "finished or not" signal.
+- Non-material and trivial work items are kept (the coverage invariant holds) but folded into a
+  per-project "Minor activity" toggle so they do not drown the material work.
+- There is no standalone cross-project outcome table: the cross-project headline is the Executive
+  Summary, and cross-project slicing is a Notion affordance over the flat outcome records.
+- `Toggle "User messages"` reveals the verbatim `source_user_messages` (tool-populated raw user text
+  per turn, already secret-redacted) for the work item's covered turns, so a reader can see exactly
+  what was asked. It is untrusted display content — the renderer shows it quoted/escaped and never
+  interprets it — and the same substrate feeds the engagement and evidence-trust readings.
 
 ### Markdown Rendering
 
-`report.md` is the required Markdown view of `daily-report.json`. Markdown is a presentation format,
-not the source of truth for the report's evidence model.
+Markdown rendering serializes the abstract layout to `report.md`. Markdown is a presentation format,
+not the source of truth for the report's structure or evidence model.
 
-The rendered report must use this structure:
+Block → Markdown:
 
-```markdown
-# Prompt Diary Report - <report_date>
+- `Document` → `# {title}` followed by a status / window / overall-confidence line.
+- `Section` → a `##` heading; nested sections deepen to `###`.
+- `Group` → a `###` subheading carrying the label.
+- `Prose` → a paragraph; an inline `Citation` is appended.
+- `List` → `-` or `1.` items.
+- `Table` → a GitHub pipe table. Interactive affordances are approximated: rows are pre-sorted by
+  the layout's default sort (material first), group-by renders as a leading column or repeated
+  sub-tables, and filtering is left to the reader's text search.
+- `Tag` → plain text, optionally a marker such as ● material / ○ non-material.
+- `Citation` → `S0001:45-52`, the project-scoped session ref and line range.
+- `Callout` → a blockquote.
+- `Toggle` → a `<details><summary>` block (HTML-in-Markdown), collapsed by default.
+- `Empty` → the section's fallback bullet:
+  - Executive Summary: `- No supported work claims found for this report window.`
+  - Work by Project: `- No supported project-level work items found for this report window.`
+  - Verification / Evidence Quality: `- No verification or evidence-quality issues found.`
+  - Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
+  - AI-Agent Driving Quality: `- No supported reusable agent-driving pattern found.`
+  - Problems / Risks / Help Needed: `- No supported problems, risks, or help requests found in target spans.`
+  - Blockers and Next Actions: `- No supported blockers or next actions found.`
+  - No-Material / Interrupted Examples: `- No supported no-material or interrupted interactions found.`
+  - Follow-ups: `- No supported follow-ups found.`
+  - Evidence Gaps: `- No evidence gaps found.`
 
-Status: <final|partial>
-Window: <local start> to <local end> <timezone>
-Overall Confidence: <high|medium|low>
-
-## Executive Summary
-## Outcome Overview
-## Project Details
-## Verification / Evidence Quality
-## Engagement Assessment
-## AI-Agent Driving Quality
-## Problems / Risks / Help Needed
-## Blockers and Next Actions
-## No-Material / Interrupted Examples
-## Follow-ups
-## Evidence Gaps
-```
-
-Section intent:
-
-- `Executive Summary`: highest-priority supported outcomes, risks, and confidence limits.
-- `Outcome Overview`: cross-project scan of major outcomes with trigger, reaction, result,
-  terminal state, confidence, and citations.
-- `Project Details`: grouped project-level work items with enough context for teammates.
-- `Verification / Evidence Quality`: observed contradictions or failures, missing checks, and
-  confidence limits. Verified/unverified verdicts are deferred (MVP).
-- `Engagement Assessment`: observable evidence of how the user directed, reviewed, corrected, or
-  resumed agent work.
-- `AI-Agent Driving Quality`: reusable working mechanisms, good practices, risks, anti-patterns,
-  and skills worth sharing.
-- `Problems / Risks / Help Needed`: unresolved risks, unsupported claims, missing verification, or
-  areas needing human input.
-- `Blockers and Next Actions`: blockers or open issues paired with supported next actions.
-- `No-Material / Interrupted Examples`: low-value, interrupted, paused, resumed, failed, or
-  clarification-only interactions that are useful workflow signals.
-- `Follow-ups`: specific future work grounded in the day's evidence.
-- `Evidence Gaps`: missing or weak evidence that affects confidence.
-
-When a section's backing model field is empty, the renderer emits the section's fallback bullet so
-every required section is still present:
-
-- Executive Summary: `- No supported work claims found for this report window.`
-- Outcome Overview: `- No supported outcomes found for this report window.`
-- Project Details: `- No supported project-level work items found for this report window.`
-- Verification / Evidence Quality: `- No verification or evidence-quality issues found.`
-- Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
-- AI-Agent Driving Quality: `- No supported reusable agent-driving pattern found.`
-- Problems / Risks / Help Needed: `- No supported problems, risks, or help requests found in target spans.`
-- Blockers and Next Actions: `- No supported blockers or next actions found.`
-- No-Material / Interrupted Examples: `- No supported no-material or interrupted interactions found.`
-- Follow-ups: `- No supported follow-ups found.`
-- Evidence Gaps: `- No evidence gaps found.`
-
-Every concrete work claim in claim-bearing Markdown sections must cite lines inside exactly one
-indexed turn using the report citation format from the
+Every concrete work claim in a claim-bearing section cites lines inside exactly one indexed turn
+using the report citation format from the
 [Evidence Contract](./evidence-contract.md#session-evidence-cards). The renderer must not add
-claim-bearing prose that is absent from `daily-report.json`.
+claim-bearing prose absent from `daily-report.json`.
 
 ### Notion Rendering
 
-> Draft — a planned view, not part of the MVP output. It is specified here so the model stays
-> view-agnostic and the renderer boundary stays clear; no Notion renderer ships yet.
+> Draft — a planned view, not part of the MVP output. It is specified here so the layout stays
+> engine-independent and the renderer boundary stays clear; no Notion renderer ships yet.
 
-Notion rendering projects the same `daily-report.json` into a Notion page so a report can be read
-and shared in a workspace. Like Markdown rendering, it is deterministic, read-only over the model,
-and adds no claim-bearing content.
+Notion rendering serializes the same abstract layout into a Notion page. Like Markdown rendering it
+is deterministic, read-only over the model, and adds no claim-bearing content.
 
-Planned shape:
+Block → Notion:
 
-- One Notion page per report date, titled `Prompt Diary Report - <report_date>`, with `status`,
-  `window`, and `overall_confidence` as page properties so reports are filterable and sortable.
-- The same section order as the Markdown view, one Notion heading block per section, so the two
-  views stay legible against each other.
-- Each `ReportClaim` becomes a block carrying its `summary`, with `confidence` and citations shown
-  inline; a citation links back to its cited session and line range rather than restating evidence.
-- Empty sections use the same fallback bullets as the Markdown view.
+- `Document` → a page titled `Prompt Diary Report — <report_date>`; `properties` become page
+  properties (status, window, overall confidence) so reports are filterable and sortable across days.
+- `Section` and `Group` → heading or toggle blocks.
+- `Prose` → a text block; `Citation` → a link or mention.
+- `List` → bulleted or numbered list blocks; a `List` of uniform tagged records (the per-project
+  outcomes) can instead be a filterable, sortable database view — the cross-project slice the linear
+  Markdown view does not provide.
+- `Toggle` → a native toggle block.
+- `Table` → a Notion database or linked view whose filters and sorts realize the layout's
+  affordances directly; `Tag` columns become select or status properties.
+- `Callout` → a callout block.
+- `Empty` → the same fallback text as the Markdown view.
 
-Open questions to settle before a Notion renderer is built: how citations link out (workspace
-session references have no Notion URL yet), whether a run updates a report in place or appends a new
-page, and how `partial` versus `final` status is surfaced. These are deferred with the rest of view
-work.
+Open questions before a Notion renderer is built: how citations link out (workspace session
+references have no Notion URL yet), whether a run updates a report in place or appends a new page,
+and how `partial` versus `final` status is surfaced. These are deferred with the rest of view work.
 
 ## Daily Synthesizer Prompt
 

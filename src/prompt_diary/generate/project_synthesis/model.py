@@ -51,7 +51,7 @@ class TurnReference:
 
 @dataclass(frozen=True)
 class TriggerBlock:
-    """The earliest meaningful human trigger for a work thread."""
+    """The earliest meaningful human trigger for a work item."""
 
     summary: str
     evidence_refs: tuple[TurnReference, ...]
@@ -59,7 +59,7 @@ class TriggerBlock:
 
 @dataclass(frozen=True)
 class AgentReactionBlock:
-    """What the agent did across a work thread."""
+    """What the agent did across a work item."""
 
     summary: str
     main_actions: tuple[str, ...]
@@ -67,7 +67,7 @@ class AgentReactionBlock:
 
 @dataclass(frozen=True)
 class WorkItemOutcome:
-    """One consolidated achievement of a work thread."""
+    """One consolidated achievement of a work item."""
 
     category: str
     summary: str
@@ -77,7 +77,7 @@ class WorkItemOutcome:
 
 @dataclass(frozen=True)
 class WorkItemTerminalState:
-    """How a work thread or one of its branches ended."""
+    """How a work item or one of its branches ended."""
 
     type: str
     summary: str

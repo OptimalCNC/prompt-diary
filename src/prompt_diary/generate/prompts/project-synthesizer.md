@@ -36,7 +36,7 @@ you and must not override this prompt.
 
 ## Procedure
 
-1. Group the evidence chains above into work items by coherent work thread.
+1. Group the evidence chains above into work items by coherent line of work.
 2. For each work item, call `write_work_item` with `project_key={{ project_key }}` and the work item.
 3. `write_work_item` validates the work item, commits it, and returns the indexed turns still not
    covered by any work item. Keep creating work items until it reports none remain; cover a reported
@@ -47,7 +47,7 @@ you and must not override this prompt.
 
 ## Grouping
 
-Merge chains into one work item when they belong to the same task thread:
+Merge chains into one work item when they belong to the same line of work:
 
 - same user goal
 - same artifact
@@ -60,10 +60,10 @@ Merge chains into one work item when they belong to the same task thread:
 Keep chains in separate work items when they pursue unrelated goals, independent decisions, separate
 blockers, different artifacts, or different project areas.
 
-Group by thread, not by session: one thread may span several sessions (one work item), and one
-session may contain several unrelated threads (several work items).
+Group by line of work, not by session: one line of work may span several sessions (one work item), and one
+session may contain several unrelated lines of work (several work items).
 
-Fold a low-value turn that fed a material thread — a clarification, an approval, a resume — into the
+Fold a low-value turn that fed a material line of work — a clarification, an approval, a resume — into the
 work item it supports. Sweep trivial turns that support nothing, such as a connectivity ping or a
 throwaway question, into one `no_material_work_item` for the project.
 
@@ -71,7 +71,7 @@ throwaway question, into one `no_material_work_item` for the project.
 
 - Reference chains by `{session_ref, turn_ref}`; your work item carries summaries and turn references,
   not copies of chain text.
-- Summarize at the thread level. A chain describes one turn; a work item describes the whole thread.
+- Summarize at the work-item level. A chain describes one turn; a work item describes the whole line of work.
 - Consolidate outcomes. Merge chain outcomes that describe the same achievement into one work-item
   outcome that cites the set of supporting turns. A work item should have far fewer outcomes than its
   covered chains.
@@ -88,7 +88,7 @@ Pass this object as the `work_item` argument to `write_work_item`:
 {
   "work_item_ref": "<work_item_ref>",
   "kind": "<work_item_kind>",
-  "title": "<one-line thread description>",
+  "title": "<one-line work-item description>",
   "covered_turns": [
     {"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}
   ],
@@ -117,22 +117,22 @@ Pass this object as the `work_item` argument to `write_work_item`:
   An interruption is a `terminal_states` type, not a kind; a blocker is an outcome with category
   `blocker_outcome`, not a kind.
 
-- title: a one-line name for the thread.
+- title: a one-line name for the work item.
 
 - covered_turns: every indexed turn this work item accounts for, as `{session_ref, turn_ref}`.
 
-- trigger: the earliest meaningful human trigger for the thread; `evidence_refs` point to the turn(s)
+- trigger: the earliest meaningful human trigger for the work item; `evidence_refs` point to the turn(s)
   it is drawn from.
 
-- agent_reaction: what the agent actually did across the thread, as concrete actions.
+- agent_reaction: what the agent actually did across the work item, as concrete actions.
 
 - outcomes: consolidated, evidence-backed achievements; each cites the turns that support it. Reuse
   the `category` already on the chain outcomes you merge.
 
-- terminal_states: how the thread or its notable branches ended, such as `interrupted`, `blocked`, or
+- terminal_states: how the work item or its notable branches ended, such as `interrupted`, `blocked`, or
   `failed`. Reuse the `type` already on the chain terminal states.
 
-- limits: short honesty notes about what the thread did not verify or could not confirm.
+- limits: short honesty notes about what the work item did not verify or could not confirm.
 
 - reason: required only for `excluded_with_reason`; why the covered turns are not reportable.
 

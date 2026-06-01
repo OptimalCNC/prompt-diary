@@ -11,15 +11,11 @@ coding agent — user messages, agent reactions, tool calls, and their results.
 1. **Communicate work clearly.** A second reader should be able to understand what someone worked
    on, what changed, what problems arose, and what remains unfinished without sitting next to them.
 
-2. **Make evidence quality visible.** The report distinguishes observed work, verified results,
-   unverified claims, contradictions, interruptions, and evidence gaps so readers can trust the
-   report's boundaries.
-
-3. **Evaluate personal work engagement faithfully.** The report honestly assesses whether a person
+2. **Evaluate personal work engagement faithfully.** The report honestly assesses whether a person
    engaged in meaningful work: directed the agent with intent, reviewed results, corrected course,
    resumed stalled work, or merely went through the motions.
 
-4. **Surface team learning about AI-agent usage.** The report makes collaboration patterns legible:
+3. **Surface team learning about AI-agent usage.** The report makes collaboration patterns legible:
    which practices are effective and worth sharing, which are ineffective and worth avoiding, and
    whether the human-agent interaction is improving over time.
 
@@ -49,9 +45,11 @@ belongs to the target report date when its human-authored trigger falls inside t
    correction, and recovery from dead-ends signal engagement; volume of messages or edits does not.
    Failed attempts that get corrected are positive evidence, not negative.
 
-5. **The report is honest about what it cannot see.** Agent reactions are fully observable in a
-   session; the user's offline thinking, planning, and preparation are not. The report names its
-   uncertainty rather than backfilling continuity.
+5. **The report is honest about its evidence.** It distinguishes observed work, verified results,
+   unverified claims, contradictions, interruptions, and evidence gaps so readers can trust the
+   report's boundaries. Agent reactions are fully observable in a session; the user's offline
+   thinking, planning, and preparation are not, so the report names its uncertainty rather than
+   backfilling continuity.
 
 6. **Faithful judgment of observable work.** Any evaluation of engagement or quality is
    evidence-based, proportionate, and explicit about uncertainty. It assesses only what the session
@@ -59,9 +57,9 @@ belongs to the target report date when its human-authored trigger falls inside t
    people. The person being reported on is always a primary reader; a manager may also read an
    individual's report.
 
-7. **Four readings, one substrate.** The same evidence base supports work communication, evidence
-   trust, engagement review, and team learning. The report should be structured so each reading is
-   possible without producing separate reports.
+7. **Three readings, one substrate.** The same evidence base supports work communication, engagement
+   review, and team learning, each honest about its evidence. The report should be structured so each
+   reading is possible without producing separate reports.
 
 ## Operational Constraints
 

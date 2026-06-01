@@ -12,15 +12,15 @@ a time, identified by `project_key`.
 
 ## Role: Group, Cite, Summarize
 
-A work item is a thread-level summary node over a group of evidence chains. It never copies chain
+A work item is a summary node over a group of evidence chains. It never copies chain
 content.
 
-- **Group.** Collect the evidence chains that belong to the same work thread.
+- **Group.** Collect the evidence chains that belong to the same line of work.
 - **Cite, do not paste.** Reference grouped chains by `(session_ref, turn_ref)`. Never embed quoted
   messages, observed-check text, or line citations. Detail stays in the evidence cards and is reached
   by reference. The citation chain is `report.md -> work item -> evidence card -> turn_ref + lines`.
-- **Summarize.** Describe the thread at a higher altitude than any single chain. A card summarizes
-  one turn; a work item summarizes the whole thread.
+- **Summarize.** Describe the work item at a higher altitude than any single chain. A card summarizes
+  one turn; a work item summarizes the whole line of work.
 
 The work item is therefore a compact index plus narrative. Daily synthesis works from these
 summaries and opens evidence cards only to pull the exact lines for a claim it decides to promote.
@@ -67,7 +67,7 @@ judgments need; it does not make the judgments itself.
 
 ## Grouping
 
-Group by coherent work thread, not by session. Merge evidence chains into one work item when they
+Group by coherent line of work, not by session. Merge evidence chains into one work item when they
 share:
 
 - the same user goal
@@ -83,14 +83,14 @@ blockers, different artifacts, or different project areas.
 
 The session boundary is irrelevant in both directions:
 
-- One thread may span several sessions, so `covered_turns` and `evidence_refs` may list turns from
+- One line of work may span several sessions, so `covered_turns` and `evidence_refs` may list turns from
   different `session_ref`s.
-- One long session may contain several unrelated threads, which become several work items.
+- One long session may contain several unrelated lines of work, which become several work items.
 
-**Supporting turns fold in.** A low-value turn that fed a material thread — a clarification, an
+**Supporting turns fold in.** A low-value turn that fed a material line of work — a clarification, an
 approval, a resume — is covered inside the work item it supports, not split out.
 
-**Trivial turns bucket.** Turns with no material outcome that support no thread — a connectivity
+**Trivial turns bucket.** Turns with no material outcome that support no line of work — a connectivity
 ping, a throwaway question — are grouped into a single `no_material_work_item` for the project rather
 than producing many tiny items.
 
@@ -137,7 +137,7 @@ records the reason. Nothing is dropped silently.
 
 `kind` is deliberately small and mutually exclusive. Finer signals that can co-occur are not kinds:
 an interruption is a `terminal_states[].type`, and a blocker is an `outcomes[].category` of
-`blocker_outcome`. A single thread can be material, interrupted, and contain a blocker at once; daily
+`blocker_outcome`. A single work item can be material, interrupted, and contain a blocker at once; daily
 synthesis routes its sections off these finer fields.
 
 `kind` is maintained as controlled values in the prompt API (`PROJECT_WORK_ITEM_KINDS`) and rendered
@@ -239,22 +239,22 @@ engagement and team-learning readings.
 
 - `work_item_ref` — project-local handle, `W0001`, `W0002`, and so on, assigned in work-item order.
 - `kind` — coverage disposition (see [Work Item Kinds](#work-item-kinds)).
-- `title` — a one-line name for the thread. There is deliberately no fused work-item `summary`: the
+- `title` — a one-line name for the work item. There is deliberately no fused work-item `summary`: the
   `trigger`, `agent_reaction`, `outcomes`, and `terminal_states` summaries are the work item's
   summary, kept separable so each stays independently citable and daily synthesis can recompose them.
 - `covered_turns[]` — every turn this item accounts for, as `{session_ref, turn_ref}`. The union
   across all work items covers the session index exactly once.
-- `trigger` — the earliest meaningful human trigger for the thread, as `{summary, evidence_refs}`.
+- `trigger` — the earliest meaningful human trigger for the work item, as `{summary, evidence_refs}`.
   Later corrections, approvals, and resumes are summarized in `agent_reaction` and remain in
   `covered_turns`.
-- `agent_reaction` — what the agent actually did across the thread, as `{summary, main_actions}`.
+- `agent_reaction` — what the agent actually did across the work item, as `{summary, main_actions}`.
 - `outcomes[]` — consolidated achievements, as `{category, summary, evidence_refs, confidence}`.
   `category` reuses the Evidence Contract outcome categories. A blocker is an outcome with category
   `blocker_outcome`.
-- `terminal_states[]` — how the thread or its notable branches ended, as
+- `terminal_states[]` — how the work item or its notable branches ended, as
   `{type, summary, evidence_refs}`. `type` reuses the Evidence Contract terminal-state types,
   including `interrupted`, `blocked`, and `failed`.
-- `limits[]` — short honesty notes: what the thread did not verify or could not confirm.
+- `limits[]` — short honesty notes: what the work item did not verify or could not confirm.
 - `reason` — required for `excluded_with_reason`; why the covered turns are not reportable, such as
   duplicate evidence already represented in another work item.
 - `confidence` — `high`, `medium`, or `low` for the work item as synthesized evidence.
