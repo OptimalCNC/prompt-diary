@@ -69,6 +69,10 @@ def test_evidence_extractor_next_turn_prompt() -> None:
     assert "The previous turn was written successfully" in result
     assert "T0002" in result
     assert "write_evidence" in result
+    # The next-turn prompt is a fresh agent turn, so it must re-state the MCP-only read rule and
+    # the raw-session-file prohibition rather than relying on the initial prompt's context.
+    assert "read_session_lines" in result
+    assert "not even a single line" in result
 
 
 def test_project_synthesizer_prompt() -> None:
