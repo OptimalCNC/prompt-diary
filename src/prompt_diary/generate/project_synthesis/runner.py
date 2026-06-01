@@ -34,11 +34,22 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
+DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT = "medium"
+"""Per-thread Codex reasoning effort for project synthesis.
+
+Grouping evidence chains into work items needs more judgment than evidence extraction but is not
+deep problem solving, so the synthesis thread pins a mid-level effort instead of inheriting the
+user's global Codex setting. It is a per-thread (``AgentConfig``) value; override it by
+constructing the runner with ``reasoning_effort``.
+"""
+
+
 @dataclass(frozen=True)
 class ProjectSynthesisRunner:
     """Drive an agent to group one project's evidence chains into work items."""
 
     agent_factory: AgentSessionFactory
+    reasoning_effort: str | None = DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT
 
     async def run(
         self,
@@ -69,6 +80,7 @@ class ProjectSynthesisRunner:
                 working_directory=workspace_path,
                 approval_mode="auto_review",
                 sandbox="workspace-write",
+                reasoning_effort=self.reasoning_effort,
             )
         )
         await runner.turn(

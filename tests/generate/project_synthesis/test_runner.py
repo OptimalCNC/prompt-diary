@@ -49,6 +49,29 @@ def _run(factory: GroupingAgentSessionFactory, workspace: Path) -> TaskResult:
     return asyncio.run(run())
 
 
+def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    factory = GroupingAgentSessionFactory()
+
+    _run(factory, workspace)
+
+    assert factory.runners[0].config.reasoning_effort == "medium"
+
+
+def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    factory = GroupingAgentSessionFactory()
+    runner = ProjectSynthesisRunner(agent_factory=factory, reasoning_effort="high")
+
+    async def run() -> None:
+        async with factory:
+            await runner.run(workspace_path=workspace, task=_task())
+
+    asyncio.run(run())
+
+    assert factory.runners[0].config.reasoning_effort == "high"
+
+
 def test_runner_covers_every_turn_and_writes_envelope(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()

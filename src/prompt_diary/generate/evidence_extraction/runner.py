@@ -31,11 +31,11 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
-DEFAULT_EVIDENCE_REASONING_EFFORT = "medium"
+DEFAULT_EVIDENCE_REASONING_EFFORT = "low"
 """Per-thread Codex reasoning effort for evidence extraction.
 
 Extraction is reconstruct-the-turn-and-cite-exact-lines work, not deep problem solving, so the
-extraction thread pins a mid-level effort instead of inheriting the user's global Codex setting
+extraction thread pins a low effort instead of inheriting the user's global Codex setting
 (which is often much higher). It is a per-thread (``AgentConfig``) value, so other generation
 phases keep their own effort; override it by constructing the runner with ``reasoning_effort``.
 """
