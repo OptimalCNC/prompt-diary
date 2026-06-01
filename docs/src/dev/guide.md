@@ -15,6 +15,10 @@ Set up the development environment:
 uv sync
 ```
 
+`uv sync` installs the published `openai-codex` Python SDK used by live generation tests. Prompt
+Diary starts that SDK against the local `codex` CLI found on `PATH`, so live tests reuse the same
+Codex authentication as the CLI.
+
 The repository also includes an optional Ubuntu 24.04 devcontainer. It builds from
 `.devcontainer/Dockerfile`, installs the project with `uv sync --locked --python 3.10`, and includes
 the Codex and Claude Code CLIs. See [the devcontainer notes](../../../.devcontainer/README.md) for
@@ -86,16 +90,9 @@ strict config and marker validation.
 uv run pytest
 ```
 
-Codex/MCP integration tests are opt-in because they may spend model tokens and require local SDK
-setup. Bootstrap the optional SDK into the current development environment before running live
-tests:
-
-```bash
-uv run prompt-diary codex bootstrap
-```
-
-Then run opt-in tests with the `--run-codex-mcp` flag. Pass it to the full suite or to a specific
-file:
+Codex/MCP integration tests are opt-in because they may spend model tokens and require Codex
+authentication. Run opt-in tests with the `--run-codex-mcp` flag. Pass it to the full suite or to a
+specific file:
 
 ```bash
 uv run pytest --run-codex-mcp

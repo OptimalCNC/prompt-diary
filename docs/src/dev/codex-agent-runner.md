@@ -169,8 +169,8 @@ Artifact paths should usually be checked by the caller rather than trusted from 
 `CodexAgentRunner.turn(...)` starts one SDK thread on first use and reuses it for later turns.
 `CodexAgentSessionFactory` wraps a `CodexBackend` in an `AsyncExitStack` and mints a fresh
 `CodexAgentRunner` per `runner()` call — each runner is lifecycle-free; only the factory is a
-managed context. The package intentionally has no package-metadata Codex SDK dependency, and the
-module is not exported from `prompt_diary.__init__`.
+managed context. The package depends on the published `openai-codex` SDK, and the adapter module is
+not exported from `prompt_diary.__init__`.
 
 ## Codex SDK Usage
 
@@ -194,14 +194,17 @@ come from multiple runner instances, not from overlapping turns on one conversat
 
 Because Prompt Diary does not need streaming, steering, or interrupt control, the wrapper's
 `turn(...)` method should normally call the SDK convenience `AsyncThread.run(...)` internally.
+The published SDK can use a bundled runtime dependency, but Prompt Diary passes the local `codex`
+binary path explicitly when it is available. This keeps live tests aligned with the user's
+authenticated Codex CLI environment.
 
 For raw SDK usage, the shape is:
 
 ```python
-from openai_codex import AppServerConfig, AsyncCodex
+from openai_codex import AsyncCodex, CodexConfig, Sandbox
 
 async with AsyncCodex(
-    config=AppServerConfig(
+    config=CodexConfig(
         config_overrides=mcp_config_overrides,
     )
 ) as codex:
@@ -209,7 +212,7 @@ async with AsyncCodex(
         cwd=str(workspace_path),
         model=model,
         approval_mode=approval_mode,
-        sandbox=sandbox,
+        sandbox=Sandbox.workspace_write,
         config={"model_reasoning_effort": reasoning_effort},
     )
     result = await thread.run(prompt, output_schema=output_schema)
@@ -219,7 +222,8 @@ async with AsyncCodex(
 For our wrapper, treat these as backend-level configuration:
 
 - MCP server setup and MCP tool policy strings, passed through
-  `AppServerConfig.config_overrides` when the SDK needs Codex config entries.
+  `CodexConfig.config_overrides` when the SDK needs Codex config entries.
+- Optional `codex_bin`, only when callers intentionally want to override the bundled SDK runtime.
 
 Treat these as runner/thread-level configuration:
 
@@ -277,9 +281,8 @@ tests (`tests/integrations/test_codex_runner.py`) mock the `openai_codex` SDK im
 Real integration tests for this module may spend model tokens, so they remain opt-in rather than
 part of the normal unit-test run.
 
-Run the live wrapper test from a development checkout by bootstrapping the optional SDK first:
+Run the live wrapper tests from a development checkout after `uv sync` and Codex authentication:
 
 ```bash
-uv run prompt-diary codex bootstrap
 uv run pytest -m codex_mcp --run-codex-mcp tests/integrations/test_codex_mcp_integration.py
 ```

@@ -2,6 +2,14 @@ version = 1
 revision = 3
 requires-python = ">=3.10"
 
+[manifest]
+
+[[manifest.dependency-metadata]]
+name = "openai-codex"
+version = "0.1.0b2"
+requires-dist = ["pydantic>=2.12"]
+requires-python = ">=3.10"
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -664,6 +672,18 @@ wheels = [
 ]
 
 [[package]]
+name = "openai-codex"
+version = "0.1.0b2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6f/b7/216fa0e7725c33791fe97621c663a9ec0e6e98c2240bffae89661de55602/openai_codex-0.1.0b2.tar.gz", hash = "sha256:44dd51f004ce2ed51cf7b9f34e8b2e6a207ab06e8739b45d5a0cfe338e460587", size = 57665, upload-time = "2026-05-28T06:28:00.461Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/38/59e86bc20bdd4390faa979d2a0235d7be60ae895cd3ac6a92a49bfe080a7/openai_codex-0.1.0b2-py3-none-any.whl", hash = "sha256:9edf0871e9e0d6e3951cd6c3b9b187641e6247d9413402dfc66ac3a5f6ba66ff", size = 64285, upload-time = "2026-05-28T06:27:58.949Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -689,6 +709,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "mcp" },
     { name = "msgspec" },
+    { name = "openai-codex" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -706,6 +727,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.2" },
     { name = "msgspec", specifier = ">=0.21.1" },
+    { name = "openai-codex", specifier = ">=0.1.0b2" },
     { name = "rich", specifier = ">=13" },
     { name = "typer", specifier = ">=0.25.1" },
 ]

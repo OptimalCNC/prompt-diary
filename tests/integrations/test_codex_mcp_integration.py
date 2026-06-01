@@ -161,16 +161,14 @@ def _session_file_was_shell_read(result: AgentTurnResult) -> bool:
     ``payload.arguments.cmd``; a violation is one surface that holds the session filename, a
     raw-read tool (``cat``/``awk``/``sed``/...), and a shell-command marker all together.
     ``mode="full"`` reads through ``read_session_lines`` are NOT violations and are not detected
-    here, because they never put the session filename into a shell command.
+    here, because they are MCP tool calls rather than shell command executions. Prompt/user-message
+    events are also ignored because they may contain the compliance rules themselves.
     """
-    shell_markers = ("exec_command", "cmd", "command")
     for event in result.events:
+        if event.kind.lower() != "commandexecution":
+            continue
         for surface in _event_haystacks(event):
-            if (
-                _SESSION_FILENAME in surface
-                and any(marker in surface for marker in shell_markers)
-                and any(tool in surface for tool in _RAW_READ_TOOLS)
-            ):
+            if _SESSION_FILENAME in surface and any(tool in surface for tool in _RAW_READ_TOOLS):
                 return True
     return False
 

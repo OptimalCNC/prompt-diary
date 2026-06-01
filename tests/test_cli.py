@@ -7,14 +7,12 @@ import pytest
 from typer.testing import CliRunner
 
 import prompt_diary.cli as cli_module
-import prompt_diary.cmds.codex as codex_cmd
 import prompt_diary.cmds.generate as generate_cmd
 import prompt_diary.cmds.mcp as mcp_cmd
 import prompt_diary.cmds.prepare as prepare_cmd
 from prompt_diary import __version__
 from prompt_diary.cli import app, main
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.integrations.codex_bootstrap import CodexBootstrapResult, CodexBootstrapTarget
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.targeting.resolve import resolve_report_target
 
@@ -23,7 +21,6 @@ if TYPE_CHECKING:
 
 PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
-BOOTSTRAP_FAILED = "bootstrap failed"
 PHASE_FAILED = "phase failed"
 
 
@@ -70,7 +67,6 @@ def test_report_help_lists_commands() -> None:
     assert result.exit_code == 0
     assert "prepare" in result.stdout
     assert "generate" in result.stdout
-    assert "codex" in result.stdout
     assert "mcp" in result.stdout
 
 
@@ -403,45 +399,13 @@ def test_mcp_serve_delegates_to_server(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called
 
 
-def test_codex_bootstrap_prints_bootstrap_messages(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    def fake_bootstrap_codex_sdk() -> CodexBootstrapResult:
-        target = CodexBootstrapTarget(
-            python_executable=str(tmp_path / "bin" / "python"),
-            environment_root=tmp_path,
-            site_packages=tmp_path / "site-packages",
-            uv_marker=None,
-            is_system_python=False,
-        )
-        return CodexBootstrapResult(
-            target=target,
-            package_spec="openai-codex",
-            import_path="openai_codex",
-            messages=("installed", "verified"),
-        )
-
-    monkeypatch.setattr(codex_cmd, "bootstrap_codex_sdk", fake_bootstrap_codex_sdk)
+def test_codex_command_is_not_registered() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["codex", "bootstrap"])
-
-    assert result.exit_code == 0
-    assert result.stdout == "installed\nverified\n"
-
-
-def test_codex_bootstrap_error_exits_with_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
-    def raise_error() -> None:
-        raise PromptDiaryError(BOOTSTRAP_FAILED)
-
-    monkeypatch.setattr(codex_cmd, "bootstrap_codex_sdk", raise_error)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["codex", "bootstrap"])
+    result = runner.invoke(app, ["codex", "--help"])
 
     assert result.exit_code == 2
-    assert result.stderr == f"Error: {BOOTSTRAP_FAILED}\n"
+    assert "No such command" in result.stderr
 
 
 def test_main_invokes_app(monkeypatch: pytest.MonkeyPatch) -> None:

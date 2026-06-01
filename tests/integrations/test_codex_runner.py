@@ -40,7 +40,7 @@ class FakeModelItem:
         return {"type": self.type, "text": self.text, "mode": mode, "exclude_none": exclude_none}
 
 
-class FakeAppServerConfig:
+class FakeCodexConfig:
     def __init__(
         self,
         *,
@@ -51,6 +51,10 @@ class FakeAppServerConfig:
         self.codex_bin = codex_bin
         self.config_overrides = config_overrides
         self.env = env
+
+
+class FakeSandbox:
+    workspace_write = "sandbox:workspace-write"
 
 
 class FakeThread:
@@ -139,8 +143,9 @@ class FakeAsyncCodex:
 
 
 class FakeSdkModule:
-    AppServerConfig = FakeAppServerConfig
+    CodexConfig = FakeCodexConfig
     AsyncCodex = FakeAsyncCodex
+    Sandbox = FakeSandbox
 
 
 def test_turn_result_contracts_accept_structured_events(tmp_path: Path) -> None:
@@ -195,7 +200,7 @@ def test_backend_enter_exit_and_runner_config_pass_through(
 
     fake_codex = FakeAsyncCodex.instances[0]
     app_config = fake_codex.config
-    assert isinstance(app_config, FakeAppServerConfig)
+    assert isinstance(app_config, FakeCodexConfig)
     assert app_config.codex_bin == str(codex_bin)
     assert app_config.config_overrides == ("mcp.prompt_diary={}",)
     assert app_config.env == {"PROMPT_DIARY": "1"}
@@ -205,7 +210,7 @@ def test_backend_enter_exit_and_runner_config_pass_through(
             "model": "codex-test",
             "model_provider": "openai",
             "approval_mode": "deny_all",
-            "sandbox": "workspace-write",
+            "sandbox": "sandbox:workspace-write",
             "base_instructions": "base",
             "developer_instructions": "developer",
             "personality": "concise",

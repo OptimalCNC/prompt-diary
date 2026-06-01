@@ -8,6 +8,7 @@ dependencies = [
     "jinja2>=3.1",
     "mcp>=1.2",
     "msgspec>=0.21.1",
+    "openai-codex>=0.1.0b2",
     "rich>=13",
     "typer>=0.25.1",
 ]
@@ -53,6 +54,14 @@ exclude_also = [
     # Unreachable defensive fallback: the loop always finds the trigger's own
     # non-scaffolding record before exhausting all lines.
     "return next_trigger_line - 1",
+]
+
+[tool.uv]
+dependency-metadata = [
+    # openai-codex 0.1.0b2 pins openai-codex-cli-bin==0.132.0, but that runtime
+    # release has no manylinux wheel. Prompt Diary passes an explicit local codex
+    # binary to CodexConfig, so the SDK package itself is the needed dependency.
+    { name = "openai-codex", version = "0.1.0b2", requires-dist = ["pydantic>=2.12"], requires-python = ">=3.10" },
 ]
 
 [tool.ruff]

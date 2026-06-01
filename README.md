@@ -18,12 +18,6 @@ Install Prompt Diary from PyPI as an isolated uv tool:
 uv tool install prompt-diary
 ```
 
-To enable the optional Codex SDK runner in that tool environment, run:
-
-```bash
-prompt-diary codex bootstrap
-```
-
 Then run:
 
 ```bash

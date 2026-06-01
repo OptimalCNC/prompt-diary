@@ -38,7 +38,7 @@ class CodexBackendConfig:
     env_overrides: Mapping[str, str] = field(default_factory=_empty_env_overrides)
 
 
-class _AppServerConfigFactory(Protocol):
+class _CodexConfigFactory(Protocol):
     def __call__(
         self,
         *,
@@ -53,7 +53,7 @@ class _AsyncCodexFactory(Protocol):
 
 
 class _CodexSdkModule(Protocol):
-    AppServerConfig: _AppServerConfigFactory
+    CodexConfig: _CodexConfigFactory
     AsyncCodex: _AsyncCodexFactory
 
 
@@ -113,12 +113,12 @@ class CodexBackend:
     async def __aenter__(self) -> CodexBackend:
         """Start and return the SDK backend."""
         sdk_module = _load_openai_codex()
-        app_server_config = sdk_module.AppServerConfig(
+        codex_config = sdk_module.CodexConfig(
             codex_bin=str(self.config.codex_bin) if self.config.codex_bin is not None else None,
             config_overrides=self.config.mcp_config_overrides,
             env=dict(self.config.env_overrides) or None,
         )
-        context = sdk_module.AsyncCodex(config=app_server_config)
+        context = sdk_module.AsyncCodex(config=codex_config)
         self._sdk_module = sdk_module
         self._context = context
         self._codex = await context.__aenter__()
@@ -207,7 +207,7 @@ class CodexAgentRunner:
                 model_provider=self.config.model_provider,
                 sandbox=_coerce_sdk_enum(
                     sdk_module,
-                    enum_name="SandboxMode",
+                    enum_name="Sandbox",
                     value=self.config.sandbox,
                 ),
                 base_instructions=self.config.base_instructions,
@@ -228,7 +228,7 @@ class CodexAgentRunner:
             approval_mode=approval_mode,
             sandbox=_coerce_sdk_enum(
                 sdk_module,
-                enum_name="SandboxMode",
+                enum_name="Sandbox",
                 value=self.config.sandbox,
             ),
             base_instructions=self.config.base_instructions,
@@ -303,12 +303,17 @@ def _coerce_sdk_enum(
     if value is None:
         return None
     enum_type = getattr(sdk_module, enum_name, None)
-    if enum_type is None or not callable(enum_type):
+    if enum_type is None:
         return value
-    try:
-        return cast("_StringEnumFactory", enum_type)(value)
-    except (TypeError, ValueError):
-        return value
+    if callable(enum_type):
+        try:
+            return cast("_StringEnumFactory", enum_type)(value)
+        except (TypeError, ValueError):
+            pass
+    enum_value = getattr(enum_type, value.replace("-", "_"), None)
+    if enum_value is not None:
+        return enum_value
+    return value
 
 
 def _agent_turn_result(result: object) -> AgentTurnResult:
@@ -385,8 +390,8 @@ def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
 
 def _codex_sdk_missing_message() -> str:
     return (
-        "The optional Codex SDK is not importable. Run `prompt-diary codex bootstrap` "
-        "inside this runtime environment before using CodexAgentRunner."
+        "The Codex SDK is not importable. Run `uv sync` inside this project or install the "
+        "`openai-codex` package before using CodexAgentRunner."
     )
 
 
