@@ -1,0 +1,2 @@
+{"message": {"content": [{"text": "Summarize today's changes.", "type": "text"}], "role": "user"}, "type": "user"}
+{"message": {"content": [{"text": "Here is the summary of changes.", "type": "text"}], "role": "assistant"}, "type": "assistant"}

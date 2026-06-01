@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 SESSION_REF = "S0001"
+SESSION_REF_CLAUDE = "S0002"
 FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "session-reader"
 
 
@@ -45,6 +47,30 @@ def overwrite_session_line(workspace_path: Path, *, line: int, raw_line: str) ->
     lines = session_physical_lines(workspace_path)
     lines[line - 1] = raw_line
     session_file_path(workspace_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def grow_session_to(workspace_path: Path, *, total_lines: int) -> None:
+    """Rewrite the copied session file so it holds exactly ``total_lines`` valid codex records.
+
+    Used to test mode caps against an in-bounds range, where the requested range is contained by
+    the session yet still wider than the mode's cap.
+    """
+    records = [
+        json.dumps(
+            {
+                "payload": {
+                    "content": [{"text": f"synthetic line {number}", "type": "input_text"}],
+                    "role": "user",
+                    "type": "message",
+                },
+                "type": "response_item",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        for number in range(1, total_lines + 1)
+    ]
+    session_file_path(workspace_path).write_text("\n".join(records) + "\n", encoding="utf-8")
 
 
 def call_read_session_lines(

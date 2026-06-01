@@ -14,11 +14,13 @@ from prompt_diary.generate.evidence_extraction.session_reader import (
 from tests.support.session_reader import (
     PROJECT_KEY,
     SESSION_REF,
+    SESSION_REF_CLAUDE,
     assert_read_invalid,
     call_read_session_lines,
     compact_records_by_line,
     copy_session_reader_workspace,
     expect_ok,
+    grow_session_to,
     overwrite_session_line,
     session_file_path,
     session_physical_lines,
@@ -94,6 +96,29 @@ def test_default_mode_is_compact(tmp_path: Path) -> None:
 
     assert ok.mode == "compact"
     assert all(isinstance(record, CompactRecord) for record in ok.records)
+
+
+def test_compact_read_uses_the_resolved_session_source(tmp_path: Path) -> None:
+    """The reader must compact with the session's real source, not a hardcoded one.
+
+    The same claude-shaped line yields ``content_kinds=("text",)`` plus a preview under the
+    claude-code source, but ``()`` and no preview under codex, so a hardcoded source would change
+    the parsed record.
+    """
+    workspace = copy_session_reader_workspace(tmp_path)
+
+    ok = expect_ok(
+        call_read_session_lines(
+            workspace_path=workspace, session_ref=SESSION_REF_CLAUDE, start_line=1, end_line=2
+        )
+    )
+    by_line = compact_records_by_line(ok)
+
+    assert by_line[1].record_type == "user"
+    assert by_line[1].content_kinds == ("text",)
+    assert by_line[1].text_preview == "Summarize today's changes."
+    assert by_line[2].record_type == "assistant"
+    assert by_line[2].text_preview == "Here is the summary of changes."
 
 
 def test_line_numbers_match_true_physical_lines(tmp_path: Path) -> None:
@@ -189,6 +214,7 @@ def test_end_line_past_end_of_session_is_invalid(tmp_path: Path) -> None:
 
 def test_compact_range_wider_than_cap_is_invalid(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
+    grow_session_to(workspace, total_lines=MAX_COMPACT_LINES + 1)
 
     result = call_read_session_lines(
         workspace_path=workspace, start_line=1, end_line=MAX_COMPACT_LINES + 1
@@ -199,6 +225,7 @@ def test_compact_range_wider_than_cap_is_invalid(tmp_path: Path) -> None:
 
 def test_full_range_wider_than_cap_is_invalid(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
+    grow_session_to(workspace, total_lines=MAX_FULL_LINES + 1)
 
     result = call_read_session_lines(
         workspace_path=workspace, start_line=1, end_line=MAX_FULL_LINES + 1, mode="full"

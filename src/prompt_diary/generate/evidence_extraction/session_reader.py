@@ -188,13 +188,13 @@ def _validate_range(
         return _invalid("start_line", _below_one_message(start_line), _RANGE_HINT)
     if end_line < start_line:
         return _invalid("end_line", _reversed_message(start_line, end_line), _RANGE_HINT)
-    cap = _MODE_CAPS[mode]
-    if end_line - start_line + 1 > cap:
-        return _invalid("end_line", _too_broad_message(mode, cap), _too_broad_hint(cap))
     if start_line > total_lines:
         return _invalid("start_line", _start_past_end_message(start_line, total_lines), _RANGE_HINT)
     if end_line > total_lines:
         return _invalid("end_line", _end_past_end_message(end_line, total_lines), _RANGE_HINT)
+    cap = _MODE_CAPS[mode]
+    if end_line - start_line + 1 > cap:
+        return _invalid("end_line", _too_broad_message(mode, cap), _too_broad_hint(cap))
     return None
 
 
