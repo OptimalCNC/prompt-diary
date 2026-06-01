@@ -66,6 +66,9 @@ def read_session_lines(
     session_ref: str,
     start_line: int,
     end_line: int,
+    # mode's Field description is load-bearing: it carries the full-mode size warning into the
+    # tool input schema (FastMCP has no other per-parameter description hook). Do not simplify
+    # it to a bare Literal param.
     mode: Annotated[Literal["compact", "full"], pydantic.Field(description=_MODE_WARNING)] = (
         "compact"
     ),
