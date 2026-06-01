@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from prompt_diary.generate.evidence_extraction.session_compaction import (
-    CompactRecord,
+    compact_record_to_json,
     line_provenance,
 )
 from prompt_diary.generate.evidence_extraction.session_reader import (
     MAX_COMPACT_LINES,
     MAX_FULL_LINES,
-    FullRecord,
+    ReadSessionLinesCompactResult,
 )
 from tests.support.session_reader import (
     PROJECT_KEY,
@@ -19,7 +19,8 @@ from tests.support.session_reader import (
     call_read_session_lines,
     compact_records_by_line,
     copy_session_reader_workspace,
-    expect_ok,
+    expect_compact,
+    expect_full,
     grow_session_to,
     overwrite_session_line,
     session_file_path,
@@ -33,21 +34,37 @@ if TYPE_CHECKING:
 def test_compact_read_returns_compact_records_with_absolute_line_numbers(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
-    ok = expect_ok(call_read_session_lines(workspace_path=workspace, start_line=2, end_line=8))
+    ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=2, end_line=8))
 
     assert ok.status == "ok"
     assert ok.project_key == PROJECT_KEY
     assert ok.session_ref == SESSION_REF
     assert ok.mode == "compact"
     assert (ok.line_range.start, ok.line_range.end) == (2, 8)
-    assert all(isinstance(record, CompactRecord) for record in ok.records)
     assert [record.line for record in ok.records] == [2, 3, 4, 5, 6, 7, 8]
+
+
+def test_compact_result_type_narrows_records_for_serialization(tmp_path: Path) -> None:
+    """A single isinstance on the result narrows ``records`` to compact for the Task-3 serializer.
+
+    The MCP serializer dispatches on the result subtype, then maps ``compact_record_to_json`` over
+    ``result.records`` with no per-element ``isinstance`` narrowing. This test exercises exactly
+    that path, so it fails type checking if the ok-result stops discriminating ``records`` by mode.
+    """
+    workspace = copy_session_reader_workspace(tmp_path)
+
+    result = call_read_session_lines(workspace_path=workspace, start_line=2, end_line=8)
+    assert isinstance(result, ReadSessionLinesCompactResult), result
+
+    payload = [compact_record_to_json(record) for record in result.records]
+
+    assert [entry["line"] for entry in payload] == [2, 3, 4, 5, 6, 7, 8]
 
 
 def test_compact_read_trims_large_tool_result_and_passes_small_through(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
-    ok = expect_ok(call_read_session_lines(workspace_path=workspace, start_line=5, end_line=6))
+    ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=5, end_line=6))
     by_line = compact_records_by_line(ok)
 
     large = by_line[5].tool_results[0]
@@ -61,10 +78,9 @@ def test_compact_read_trims_large_tool_result_and_passes_small_through(tmp_path:
 def test_compact_read_omits_assistant_reasoning(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
-    ok = expect_ok(call_read_session_lines(workspace_path=workspace, start_line=7, end_line=7))
+    ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=7, end_line=7))
     reasoning = ok.records[0]
 
-    assert isinstance(reasoning, CompactRecord)
     assert reasoning.content_kinds == ("thinking",)
     assert reasoning.text_preview is None
     assert reasoning.summary == "Assistant reasoning omitted."
@@ -74,14 +90,13 @@ def test_full_read_returns_raw_lines_verbatim_with_matching_provenance(tmp_path:
     workspace = copy_session_reader_workspace(tmp_path)
     physical = session_physical_lines(workspace)
 
-    ok = expect_ok(
+    ok = expect_full(
         call_read_session_lines(workspace_path=workspace, start_line=2, end_line=4, mode="full")
     )
 
     assert ok.mode == "full"
     assert [record.line for record in ok.records] == [2, 3, 4]
     for record in ok.records:
-        assert isinstance(record, FullRecord)
         raw_line = physical[record.line - 1]
         raw_bytes, raw_sha256 = line_provenance(raw_line)
         assert record.raw_line == raw_line
@@ -92,10 +107,9 @@ def test_full_read_returns_raw_lines_verbatim_with_matching_provenance(tmp_path:
 def test_default_mode_is_compact(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
-    ok = expect_ok(call_read_session_lines(workspace_path=workspace, start_line=2, end_line=2))
+    ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=2, end_line=2))
 
     assert ok.mode == "compact"
-    assert all(isinstance(record, CompactRecord) for record in ok.records)
 
 
 def test_compact_read_uses_the_resolved_session_source(tmp_path: Path) -> None:
@@ -107,7 +121,7 @@ def test_compact_read_uses_the_resolved_session_source(tmp_path: Path) -> None:
     """
     workspace = copy_session_reader_workspace(tmp_path)
 
-    ok = expect_ok(
+    ok = expect_compact(
         call_read_session_lines(
             workspace_path=workspace, session_ref=SESSION_REF_CLAUDE, start_line=1, end_line=2
         )
@@ -125,23 +139,22 @@ def test_line_numbers_match_true_physical_lines(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
     physical = session_physical_lines(workspace)
 
-    ok = expect_ok(
+    ok = expect_full(
         call_read_session_lines(workspace_path=workspace, start_line=3, end_line=5, mode="full")
     )
 
     assert [record.line for record in ok.records] == [3, 4, 5]
     for record in ok.records:
-        assert isinstance(record, FullRecord)
         assert record.raw_line == physical[record.line - 1]
 
 
 def test_provenance_parity_between_compact_and_full_for_same_line(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
-    compact = expect_ok(
+    compact = expect_compact(
         call_read_session_lines(workspace_path=workspace, start_line=5, end_line=5)
     ).records[0]
-    full = expect_ok(
+    full = expect_full(
         call_read_session_lines(workspace_path=workspace, start_line=5, end_line=5, mode="full")
     ).records[0]
 
@@ -239,7 +252,7 @@ def test_malformed_line_in_range_is_handled_gracefully_in_compact_mode(tmp_path:
     malformed = "this is not json {"
     overwrite_session_line(workspace, line=4, raw_line=malformed)
 
-    ok = expect_ok(call_read_session_lines(workspace_path=workspace, start_line=3, end_line=5))
+    ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=3, end_line=5))
     by_line = compact_records_by_line(ok)
 
     fallback = by_line[4]
@@ -257,12 +270,11 @@ def test_malformed_line_in_range_is_returned_verbatim_in_full_mode(tmp_path: Pat
     malformed = "}{ broken json"
     overwrite_session_line(workspace, line=4, raw_line=malformed)
 
-    ok = expect_ok(
+    ok = expect_full(
         call_read_session_lines(workspace_path=workspace, start_line=4, end_line=4, mode="full")
     )
     record = ok.records[0]
 
-    assert isinstance(record, FullRecord)
     raw_bytes, raw_sha256 = line_provenance(malformed)
     assert record.raw_line == malformed
     assert record.raw_bytes == raw_bytes

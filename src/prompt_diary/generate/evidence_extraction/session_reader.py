@@ -30,8 +30,9 @@ __all__ = [
     "MAX_FULL_LINES",
     "FullRecord",
     "LineRange",
+    "ReadSessionLinesCompactResult",
+    "ReadSessionLinesFullResult",
     "ReadSessionLinesInvalidResult",
-    "ReadSessionLinesOkResult",
     "ReadSessionLinesResult",
     "SessionReadError",
     "read_session_lines",
@@ -82,15 +83,27 @@ class FullRecord:
 
 
 @dataclass(frozen=True)
-class ReadSessionLinesOkResult:
-    """Successful session read holding compact or full records."""
+class ReadSessionLinesCompactResult:
+    """Successful compact session read holding bounded compact records."""
 
     status: Literal["ok"]
     project_key: str
     session_ref: str
     line_range: LineRange
-    mode: Literal["compact", "full"]
-    records: tuple[CompactRecord, ...] | tuple[FullRecord, ...]
+    mode: Literal["compact"]
+    records: tuple[CompactRecord, ...]
+
+
+@dataclass(frozen=True)
+class ReadSessionLinesFullResult:
+    """Successful full session read holding verbatim raw JSONL records."""
+
+    status: Literal["ok"]
+    project_key: str
+    session_ref: str
+    line_range: LineRange
+    mode: Literal["full"]
+    records: tuple[FullRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -101,7 +114,9 @@ class ReadSessionLinesInvalidResult:
     errors: tuple[SessionReadError, ...]
 
 
-ReadSessionLinesResult: TypeAlias = ReadSessionLinesOkResult | ReadSessionLinesInvalidResult
+ReadSessionLinesResult: TypeAlias = (
+    ReadSessionLinesCompactResult | ReadSessionLinesFullResult | ReadSessionLinesInvalidResult
+)
 
 
 @dataclass(frozen=True)
@@ -141,33 +156,38 @@ def read_session_lines(
         return range_error
 
     raw_range = list(physical_lines[start_line - 1 : end_line])
-    records = _read_records(
-        raw_range, start_line=start_line, source=resolved.session.source, mode=mode
-    )
-    return ReadSessionLinesOkResult(
+    line_range = LineRange(start=start_line, end=end_line)
+    if mode == "full":
+        return ReadSessionLinesFullResult(
+            status="ok",
+            project_key=project_key,
+            session_ref=session_ref,
+            line_range=line_range,
+            mode="full",
+            records=_full_records(raw_range, start_line=start_line),
+        )
+    return ReadSessionLinesCompactResult(
         status="ok",
         project_key=project_key,
         session_ref=session_ref,
-        line_range=LineRange(start=start_line, end=end_line),
-        mode=mode,
-        records=records,
+        line_range=line_range,
+        mode="compact",
+        records=_compact_records(raw_range, start_line=start_line, source=resolved.session.source),
     )
 
 
-def _read_records(
-    raw_range: list[str],
-    *,
-    start_line: int,
-    source: str,
-    mode: Literal["compact", "full"],
-) -> tuple[CompactRecord, ...] | tuple[FullRecord, ...]:
-    if mode == "full":
-        return tuple(
-            _full_record(raw_line, line=start_line + offset)
-            for offset, raw_line in enumerate(raw_range)
-        )
+def _compact_records(
+    raw_range: list[str], *, start_line: int, source: str
+) -> tuple[CompactRecord, ...]:
     return tuple(
         compact_record(raw_line, line=start_line + offset, source=source)
+        for offset, raw_line in enumerate(raw_range)
+    )
+
+
+def _full_records(raw_range: list[str], *, start_line: int) -> tuple[FullRecord, ...]:
+    return tuple(
+        _full_record(raw_line, line=start_line + offset)
         for offset, raw_line in enumerate(raw_range)
     )
 

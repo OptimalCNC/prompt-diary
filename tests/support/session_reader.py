@@ -5,16 +5,16 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from prompt_diary.generate.evidence_extraction.session_compaction import CompactRecord
 from prompt_diary.generate.evidence_extraction.session_reader import (
-    FullRecord,
+    ReadSessionLinesCompactResult,
+    ReadSessionLinesFullResult,
     ReadSessionLinesInvalidResult,
-    ReadSessionLinesOkResult,
     ReadSessionLinesResult,
     read_session_lines,
 )
 
 if TYPE_CHECKING:
+    from prompt_diary.generate.evidence_extraction.session_compaction import CompactRecord
     from prompt_diary.generate.evidence_extraction.session_reader import SessionReadError
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
@@ -92,28 +92,25 @@ def call_read_session_lines(
     )
 
 
-def expect_ok(result: ReadSessionLinesResult) -> ReadSessionLinesOkResult:
-    """Assert a successful read and return the narrowed ok result."""
-    assert isinstance(result, ReadSessionLinesOkResult), result
+def expect_compact(result: ReadSessionLinesResult) -> ReadSessionLinesCompactResult:
+    """Assert a successful compact read; a single isinstance narrows ``records`` to compact."""
+    assert isinstance(result, ReadSessionLinesCompactResult), result
     return result
 
 
-def compact_records_by_line(ok: ReadSessionLinesOkResult) -> dict[int, CompactRecord]:
-    """Assert every record is a compact record and index them by physical line number."""
-    by_line: dict[int, CompactRecord] = {}
-    for record in ok.records:
-        assert isinstance(record, CompactRecord), record
-        by_line[record.line] = record
-    return by_line
+def expect_full(result: ReadSessionLinesResult) -> ReadSessionLinesFullResult:
+    """Assert a successful full read; a single isinstance narrows ``records`` to full."""
+    assert isinstance(result, ReadSessionLinesFullResult), result
+    return result
 
 
-def full_records_by_line(ok: ReadSessionLinesOkResult) -> dict[int, FullRecord]:
-    """Assert every record is a full record and index them by physical line number."""
-    by_line: dict[int, FullRecord] = {}
-    for record in ok.records:
-        assert isinstance(record, FullRecord), record
-        by_line[record.line] = record
-    return by_line
+def compact_records_by_line(ok: ReadSessionLinesCompactResult) -> dict[int, CompactRecord]:
+    """Index a compact read's records by physical line number.
+
+    ``ok.records`` is already ``tuple[CompactRecord, ...]`` thanks to the discriminated result type,
+    so no per-element narrowing is needed here.
+    """
+    return {record.line: record for record in ok.records}
 
 
 def assert_read_invalid(
