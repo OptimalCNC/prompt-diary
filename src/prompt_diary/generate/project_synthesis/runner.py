@@ -146,11 +146,10 @@ def _covered_keys(output_path: Path) -> frozenset[tuple[str, str]]:
     envelope = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
     items = envelope.get("work_items")
     rows = cast("list[Any]", items) if isinstance(items, list) else []
+    dict_rows = [cast("dict[str, Any]", row) for row in rows if isinstance(row, dict)]
     keys: set[tuple[str, str]] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        covered = cast("dict[str, Any]", row).get("covered_turns")
+    for row in dict_rows:
+        covered = row.get("covered_turns")
         for ref in cast("list[Any]", covered) if isinstance(covered, list) else []:
             if isinstance(ref, dict):
                 mapping = cast("dict[str, Any]", ref)

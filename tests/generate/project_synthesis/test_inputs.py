@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
+from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.project_synthesis.cards import load_committed_chains
 from prompt_diary.generate.project_synthesis.inputs import (
     build_project_synthesis_inputs,
@@ -67,3 +70,10 @@ def test_paste_omits_empty_reaction_and_outcomes(tmp_path: Path) -> None:
 
 def test_render_empty_when_no_committed_chains() -> None:
     assert render_evidence_chains(()) == "(No extracted evidence chains for this project.)"
+
+
+def test_build_inputs_rejects_unknown_project(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+
+    with pytest.raises(PromptDiaryError, match="unknown project_key"):
+        build_project_synthesis_inputs(workspace_path=workspace, project_key="Missing-000000000000")

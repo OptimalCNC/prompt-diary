@@ -248,6 +248,20 @@ def test_runner_requires_project_scope(tmp_path: Path) -> None:
         asyncio.run(run())
 
 
+def test_runner_rejects_unknown_project(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    runner = ProjectSynthesisRunner(agent_factory=GroupingAgentSessionFactory())
+    task = TaskSpec(
+        task_id="project:x", kind="project_synthesis", project_key="Missing-000000000000"
+    )
+
+    async def run() -> None:
+        await runner.run(workspace_path=workspace, task=task)
+
+    with pytest.raises(PromptDiaryError, match="unknown project_key"):
+        asyncio.run(run())
+
+
 def _strip_turns_from_index(workspace: Path) -> None:
     index_path = workspace / "projects" / PROJECT_KEY / "sessions.index.jsonl"
     rows = [

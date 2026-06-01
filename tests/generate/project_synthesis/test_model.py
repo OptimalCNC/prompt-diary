@@ -91,6 +91,7 @@ def test_excluded_to_json_includes_reason() -> None:
         (("covered_turns", 0, "turn_ref"), "  ", "work_item.covered_turns[0].turn_ref"),
         (("covered_turns", 0, "session_ref"), "  ", "work_item.covered_turns[0].session_ref"),
         (("covered_turns",), [], "work_item.covered_turns"),
+        (("agent_reaction", "main_actions"), ["  "], "work_item.agent_reaction.main_actions[0]"),
     ],
 )
 def test_parse_rejects_structural_violations(
