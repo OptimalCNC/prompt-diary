@@ -50,12 +50,7 @@ def test_committed_chain_carries_trimmed_fields_and_verbatim_quotes(tmp_path: Pa
     )
     assert first.outcomes[0].category == "document_outcome"
     assert first.terminal_type == "material_result"
-    assert first.quoted_messages == (
-        {
-            "text": "Please simplify the MCP evidence tools and drop chain_ref.",
-            "citations": [{"lines": "2-2"}],
-        },
-    )
+    assert first.messages == ("Please simplify the MCP evidence tools and drop chain_ref.",)
 
 
 def test_load_tolerates_a_missing_card(tmp_path: Path) -> None:

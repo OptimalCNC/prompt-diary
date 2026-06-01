@@ -165,29 +165,28 @@ evidence card carries `session_ref` once on the envelope and a bare `turn_ref` o
 `work_items` are agent-authored. `source_user_messages` is **tool-populated**: `write_work_item`
 fills it once, on the first write, and the synthesizer agent neither reads nor writes it — so the
 [Project Synthesizer Prompt](./project-synthesizer-prompt.md) needs no change. It carries the
-original user-message content per indexed turn, copied verbatim from each extracted chain's
-`trigger.quoted_messages` in `evidence/<session_ref>.json`:
+original user-message content per indexed turn, copied verbatim from the `text` of each extracted
+chain's `trigger.quoted_messages` in `evidence/<session_ref>.json`:
 
 ```json
 "source_user_messages": [
   {
     "session_ref": "S0001",
     "turn_ref": "T0001",
-    "quoted_messages": [
-      {"text": "<redacted user-authored text>", "citations": [{"lines": "45-46"}]}
-    ]
+    "messages": ["<redacted user-authored text>"]
   }
 ]
 ```
 
-It is messages-only — content, not structure: no `trigger_type`, `terminal_state`, or check
-information, because daily synthesis reopens the card for committed structure when it needs it. The
-text is already secret-redacted by the extractor; the tool copies it verbatim and does not re-redact
-or recompute citations. There is one entry per indexed turn whose chain has at least one quoted
-message; turns with no extractable user text are simply absent, still accounted for through
-`covered_turns` and the coverage invariant. Entries are ordered by `(session_ref, turn_ref)`. This
-block is the user-message content substrate for daily synthesis's engagement and team-learning
-readings.
+Each turn's `messages` is a plain list of the verbatim user-message strings. It is messages-only —
+content, not structure: just the text, with no line citations, `trigger_type`, `terminal_state`, or
+check information, because daily synthesis reopens the card (which keeps the full `quoted_messages`
+with citations) for committed structure when it needs it. The text is already secret-redacted by the
+extractor; the tool copies it verbatim and does not re-redact. There is one entry per indexed turn
+whose chain has at least one user message; turns with no extractable user text are simply absent,
+still accounted for through `covered_turns` and the coverage invariant. Entries are ordered by
+`(session_ref, turn_ref)`. This block is the user-message content substrate for daily synthesis's
+engagement and team-learning readings.
 
 ### Work Item
 

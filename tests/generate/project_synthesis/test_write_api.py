@@ -43,8 +43,7 @@ def test_first_write_creates_envelope_and_populates_source_user_messages(tmp_pat
         ("S0001", "T0002"),
         ("S0002", "T0001"),
     ]
-    assert messages[0]["quoted_messages"][0]["text"].startswith("Please simplify")
-    assert messages[0]["quoted_messages"][0]["citations"] == [{"lines": "2-2"}]
+    assert messages[0]["messages"] == ["Please simplify the MCP evidence tools and drop chain_ref."]
 
 
 def test_appends_second_work_item_without_modifying_first(tmp_path: Path) -> None:

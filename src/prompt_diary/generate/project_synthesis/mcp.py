@@ -200,12 +200,12 @@ def _commit(
 def _source_user_messages(chains: tuple[CommittedChain, ...]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for chain in sorted(chains, key=lambda item: (item.session_ref, item.turn_ref)):
-        if chain.quoted_messages:
+        if chain.messages:
             entries.append(  # noqa: PERF401 — guarded append keeps the plan's branch explicit
                 {
                     "session_ref": chain.session_ref,
                     "turn_ref": chain.turn_ref,
-                    "quoted_messages": [dict(message) for message in chain.quoted_messages],
+                    "messages": list(chain.messages),
                 }
             )
     return entries

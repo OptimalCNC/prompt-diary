@@ -41,7 +41,7 @@ class CommittedChain:
     outcomes: tuple[CommittedOutcome, ...]
     terminal_type: str
     terminal_summary: str
-    quoted_messages: tuple[dict[str, Any], ...]
+    messages: tuple[str, ...]
 
 
 def load_committed_chains(workspace_path: Path, project_key: str) -> tuple[CommittedChain, ...]:
@@ -100,10 +100,10 @@ def _committed_chain(session_ref: str, raw: dict[str, Any]) -> CommittedChain:
         ),
         terminal_type=_as_str(terminal.get("type")),
         terminal_summary=_as_str(terminal.get("summary")),
-        quoted_messages=tuple(
-            cast("dict[str, Any]", item)
+        messages=tuple(
+            text
             for item in _as_list(trigger.get("quoted_messages"))
-            if isinstance(item, dict)
+            if (text := _as_str(_as_mapping(item).get("text")))
         ),
     )
 

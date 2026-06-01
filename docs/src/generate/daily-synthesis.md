@@ -17,8 +17,8 @@ Inputs:
 - `projects/*/sessions.index.jsonl`
 - per-session evidence cards under `projects/*/evidence/`
 - project synthesis outputs in `projects/*/project-synthesis.json`: the agent-authored work items
-  and the tool-populated `source_user_messages` block (original user-message text and citations,
-  per indexed turn)
+  and the tool-populated `source_user_messages` block (verbatim user-message text per indexed turn;
+  reopen the evidence card for line citations)
 
 Outputs:
 

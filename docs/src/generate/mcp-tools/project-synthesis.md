@@ -76,15 +76,15 @@ Write behavior:
 - **First write.** If `project-synthesis.json` does not exist, the tool creates the envelope from
   `projects/<project_key>/project.json` (`schema_version`, `project_key`, `project_label`, empty
   `work_items`) and populates `source_user_messages` once: it reads every
-  `projects/<project_key>/evidence/<session_ref>.json` card and copies each chain's
-  `trigger.quoted_messages` (text and citations) verbatim, one entry per indexed turn that has at
-  least one quoted message, ordered by `(session_ref, turn_ref)`. Extraction is complete by this
+  `projects/<project_key>/evidence/<session_ref>.json` card and copies the `text` of each chain's
+  `trigger.quoted_messages` verbatim into a `messages` string list, one entry per indexed turn that
+  has at least one user message, ordered by `(session_ref, turn_ref)`. Extraction is complete by this
   phase, so all cards exist and this is a single deterministic population. The tool then appends the
   submitted work item.
 - **Subsequent writes.** The tool validates the existing envelope and appends the work item; it does
   not re-populate `source_user_messages`.
-- `source_user_messages` is messages-only and copied verbatim — the tool does not re-redact text or
-  recompute citations (the extractor already redacted secrets). Its shape and rules are in
+- `source_user_messages` is messages-only (verbatim user-message text, no line citations) — the tool
+  does not re-redact (the extractor already redacted secrets). Its shape and rules are in
   [Project Synthesis](../project-synthesis.md#envelope).
 - Writes are serialized per `project_key` and committed with atomic file replacement so parallel
   calls cannot corrupt the envelope.
