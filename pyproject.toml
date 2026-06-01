@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "jinja2>=3.1",
     "mcp>=1.2",
+    "msgspec>=0.21.1",
     "rich>=13",
     "typer>=0.25.1",
 ]

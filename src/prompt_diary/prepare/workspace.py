@@ -13,6 +13,8 @@ from datetime import datetime, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
 
+import msgspec
+
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.models import (
     JsonObject,
@@ -167,6 +169,76 @@ class _SourceSubagentIndex:
         if len(candidates) == 1:
             return candidates[0]
         return None
+
+
+@dataclass(frozen=True)
+class _SourceProbe:
+    candidate_root_paths: frozenset[Path]
+    subagent_index: _SourceSubagentIndex
+
+
+@dataclass
+class _ScanProgress:
+    total: int
+    stride: int
+    reporter: ProgressReporter
+    scanned: int = 0
+
+    def advance(self) -> None:
+        self.scanned += 1
+        if self.scanned % self.stride == 0 or self.scanned == self.total:
+            self.reporter.emit(
+                PrepareStep(
+                    at=time.monotonic(),
+                    name="scanning_sessions",
+                    done=self.scanned,
+                    total=self.total,
+                )
+            )
+
+
+class _ProbePayload(msgspec.Struct):
+    type: str | None = None
+    role: str | None = None
+    id: str | None = None
+    thread_source: str | None = None
+    agent_role: str | None = None
+    source: object | None = None
+
+
+class _ProbeMessage(msgspec.Struct):
+    role: str | None = None
+
+
+class _ProbeRecord(msgspec.Struct):
+    timestamp: str | None = None
+    type: str | None = None
+    payload: _ProbePayload | None = None
+    message: _ProbeMessage | None = None
+    source_tool_assistant_uuid: str | None = msgspec.field(
+        default=None,
+        name="sourceToolAssistantUUID",
+    )
+    is_sidechain: bool | None = msgspec.field(default=None, name="isSidechain")
+    agent_id: str | None = msgspec.field(default=None, name="agentId")
+    session_id: str | None = msgspec.field(default=None, name="sessionId")
+    attribution_agent: str | None = msgspec.field(default=None, name="attributionAgent")
+
+
+class _ProbeContentItem(msgspec.Struct):
+    text: str | None = None
+
+
+class _ProbeContentPayload(msgspec.Struct):
+    content: list[_ProbeContentItem] | None = None
+
+
+class _ProbeContentRecord(msgspec.Struct):
+    payload: _ProbeContentPayload | None = None
+
+
+_PROBE_RECORD_DECODER = msgspec.json.Decoder(_ProbeRecord)
+_PROBE_CONTENT_DECODER = msgspec.json.Decoder(_ProbeContentRecord)
 
 
 def default_source_specs(
@@ -397,24 +469,21 @@ def _selected_sessions(
         for spec in sorted(source_specs, key=lambda item: (item.source, item.root.as_posix()))
     ]
     total = sum(len(paths) for _, paths in per_source)
-    stride = max(1, total // 100)
-    scanned = 0
+    progress = _ScanProgress(total=total, stride=max(1, total // 100), reporter=reporter)
     for spec, source_paths in per_source:
-        subagent_index = _source_subagent_index(source_paths, source=spec.source, root=spec.root)
+        probe = _probe_source_files(
+            source_paths=source_paths,
+            source=spec.source,
+            root=spec.root,
+            target=target,
+            progress=progress,
+        )
         for source_path in source_paths:
+            if source_path not in probe.candidate_root_paths:
+                continue
             parsed = _parse_session_file(source_path=source_path, spec=spec, target=target)
-            scanned += 1
-            if scanned % stride == 0 or scanned == total:
-                reporter.emit(
-                    PrepareStep(
-                        at=time.monotonic(),
-                        name="scanning_sessions",
-                        done=scanned,
-                        total=total,
-                    )
-                )
             if parsed is not None:
-                yield _with_target_subagents(parsed, subagent_index)
+                yield _with_target_subagents(parsed, probe.subagent_index)
 
 
 def _jsonl_source_files(root: Path) -> tuple[Path, ...]:
@@ -423,6 +492,226 @@ def _jsonl_source_files(root: Path) -> tuple[Path, ...]:
     if not root.exists():
         return ()
     return tuple(sorted(root.rglob("*.jsonl"), key=lambda path: path.as_posix()))
+
+
+def _probe_source_files(
+    *,
+    source_paths: tuple[Path, ...],
+    source: SourceName,
+    root: Path,
+    target: ReportTarget,
+    progress: _ScanProgress,
+) -> _SourceProbe:
+    candidate_root_paths: set[Path] = set()
+    subagents: list[_SourceSubagent] = []
+    for source_path in source_paths:
+        is_candidate, subagent = _probe_source_file(
+            source_path=source_path,
+            source=source,
+            root=root,
+            target=target,
+        )
+        progress.advance()
+        if is_candidate:
+            candidate_root_paths.add(source_path)
+        if subagent is not None:
+            subagents.append(subagent)
+    return _SourceProbe(
+        candidate_root_paths=frozenset(candidate_root_paths),
+        subagent_index=_source_subagent_index_from_items(subagents),
+    )
+
+
+def _probe_source_file(
+    *,
+    source_path: Path,
+    source: SourceName,
+    root: Path,
+    target: ReportTarget,
+) -> tuple[bool, _SourceSubagent | None]:
+    subagent_state = _SubagentMetadata(
+        is_subagent=_path_identifies_subagent_session(
+            source_path=source_path,
+            source=source,
+            root=root,
+        ),
+        parent_source_session_id=_path_parent_session_id(source_path=source_path, root=root)
+        if source == "claude-code"
+        else None,
+    )
+    candidate_root = False
+    with source_path.open("rb") as handle:
+        for line in handle:
+            record = _probe_record_from_line(line)
+            if record is None:
+                candidate_root = True
+                continue
+            _record_probe_subagent_metadata(subagent_state, record, source)
+            if _probe_is_target_trigger(record, line, source, target):
+                candidate_root = True
+
+    subagent = (
+        _source_subagent_from_probe(source_path, subagent_state)
+        if subagent_state.is_subagent
+        else None
+    )
+    return candidate_root and not subagent_state.is_subagent, subagent
+
+
+def _source_subagent_index_from_items(subagents: Iterable[_SourceSubagent]) -> _SourceSubagentIndex:
+    by_parent_and_id: dict[tuple[str, str], _SourceSubagent] = {}
+    by_id_builder: dict[str, list[_SourceSubagent]] = {}
+    for subagent in subagents:
+        by_id_builder.setdefault(subagent.source_session_id, []).append(subagent)
+        if subagent.parent_source_session_id is not None:
+            by_parent_and_id[(subagent.parent_source_session_id, subagent.source_session_id)] = (
+                subagent
+            )
+    by_id = {key: tuple(value) for key, value in by_id_builder.items()}
+    return _SourceSubagentIndex(by_parent_and_id=by_parent_and_id, by_id=by_id)
+
+
+def _probe_record_from_line(line: bytes) -> _ProbeRecord | None:
+    try:
+        return _PROBE_RECORD_DECODER.decode(line)
+    except msgspec.DecodeError:
+        return None
+
+
+def _probe_is_target_trigger(
+    record: _ProbeRecord,
+    line: bytes,
+    source: SourceName,
+    target: ReportTarget,
+) -> bool:
+    timestamp = _parse_timestamp(record.timestamp)
+    if timestamp is None:
+        return False
+    if not target.report_window_utc.start <= timestamp < target.report_window_utc.end:
+        return False
+    return _probe_is_human_trigger(record, line, source)
+
+
+def _probe_is_human_trigger(record: _ProbeRecord, line: bytes, source: SourceName) -> bool:
+    if source == "codex":
+        return _probe_is_codex_human_trigger(record, line)
+    return _probe_is_claude_human_trigger(record)
+
+
+def _probe_is_codex_human_trigger(record: _ProbeRecord, line: bytes) -> bool:
+    payload = record.payload
+    if payload is None:
+        return False
+    if record.type == "event_msg" and payload.type == "user_message":
+        return True
+    if record.type == "response_item":
+        if payload.role != "user" or payload.type != "message":
+            return False
+        text = _probe_codex_message_text(line)
+        return text is None or not text.startswith(_CODEX_SOURCE_CONTEXT_PREFIXES)
+    return False
+
+
+def _probe_codex_message_text(line: bytes) -> str | None:
+    try:
+        record = _PROBE_CONTENT_DECODER.decode(line)
+    except msgspec.DecodeError:
+        return None
+    payload = record.payload
+    if payload is None or payload.content is None:
+        return ""
+    for item in payload.content:
+        if item.text is not None and item.text.strip():
+            return item.text.strip()
+    return ""
+
+
+def _probe_is_claude_human_trigger(record: _ProbeRecord) -> bool:
+    message = record.message
+    if record.type != "user" or message is None or message.role != "user":
+        return False
+    if record.source_tool_assistant_uuid is not None:
+        return False
+    return record.is_sidechain is not True
+
+
+def _record_probe_subagent_metadata(
+    state: _SubagentMetadata,
+    record: _ProbeRecord,
+    source: SourceName,
+) -> None:
+    if source == "codex":
+        _record_probe_codex_subagent_metadata(state, record)
+    else:
+        _record_probe_claude_subagent_metadata(state, record)
+
+
+def _record_probe_codex_subagent_metadata(
+    state: _SubagentMetadata,
+    record: _ProbeRecord,
+) -> None:
+    if record.type != "session_meta":
+        return
+    payload = record.payload
+    if payload is None:
+        return
+    if payload.id is not None:
+        state.source_session_id = payload.id
+    if payload.agent_role is not None:
+        state.agent_role = payload.agent_role
+    if payload.thread_source == "subagent":
+        state.is_subagent = True
+    subagent = _probe_object_value(payload.source, "subagent")
+    if subagent is None:
+        return
+    thread_spawn = _probe_object_value(subagent, "thread_spawn")
+    if thread_spawn is None:
+        return
+    parent_thread_id = _probe_string_value(_probe_object_value(thread_spawn, "parent_thread_id"))
+    if parent_thread_id is not None:
+        state.is_subagent = True
+        state.parent_source_session_id = parent_thread_id
+    agent_role = _probe_string_value(_probe_object_value(thread_spawn, "agent_role"))
+    if agent_role is not None and state.agent_role is None:
+        state.agent_role = agent_role
+
+
+def _record_probe_claude_subagent_metadata(
+    state: _SubagentMetadata,
+    record: _ProbeRecord,
+) -> None:
+    if record.is_sidechain:
+        state.is_subagent = True
+    if record.agent_id is not None:
+        state.source_session_id = record.agent_id
+    if record.session_id is not None:
+        state.parent_source_session_id = record.session_id
+    if record.attribution_agent is not None:
+        state.agent_role = record.attribution_agent
+
+
+def _source_subagent_from_probe(
+    source_path: Path,
+    state: _SubagentMetadata,
+) -> _SourceSubagent:
+    return _SourceSubagent(
+        source_path=source_path,
+        source_session_id=state.source_session_id or source_path.stem,
+        parent_source_session_id=state.parent_source_session_id,
+        agent_role=state.agent_role,
+    )
+
+
+def _probe_object_value(value: object | None, key: str) -> object | None:
+    if not isinstance(value, dict):
+        return None
+    return cast("dict[object, object]", value).get(key)
+
+
+def _probe_string_value(value: object | None) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _parse_session_file(
@@ -716,123 +1005,12 @@ def _path_identifies_subagent_session(*, source_path: Path, source: SourceName, 
     return "subagents" in _relative_parts(source_path, root)
 
 
-def _source_subagent_index(
-    source_paths: tuple[Path, ...],
-    *,
-    source: SourceName,
-    root: Path,
-) -> _SourceSubagentIndex:
-    by_parent_and_id: dict[tuple[str, str], _SourceSubagent] = {}
-    by_id_builder: dict[str, list[_SourceSubagent]] = {}
-    for source_path in source_paths:
-        subagent = _source_subagent_from_file(source_path=source_path, source=source, root=root)
-        if subagent is None:
-            continue
-        by_id_builder.setdefault(subagent.source_session_id, []).append(subagent)
-        if subagent.parent_source_session_id is not None:
-            by_parent_and_id[(subagent.parent_source_session_id, subagent.source_session_id)] = (
-                subagent
-            )
-    by_id = {key: tuple(value) for key, value in by_id_builder.items()}
-    return _SourceSubagentIndex(by_parent_and_id=by_parent_and_id, by_id=by_id)
-
-
-def _source_subagent_from_file(
-    *,
-    source_path: Path,
-    source: SourceName,
-    root: Path,
-) -> _SourceSubagent | None:
-    """Parse enough metadata to resolve a subagent transcript for a parent reference.
-
-    Codex marks subagents in `session_meta.payload.thread_source == "subagent"` and in
-    `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`; the subagent id comes
-    from `session_meta.payload.id`, and `agent_role` may be on the payload or nested spawn metadata.
-    Claude Code subagents are files under `<parent-session-id>/subagents/agent-<agent-id>.jsonl`
-    and/or JSONL records with `isSidechain: true`; `agentId` is the bare child id without the
-    filename's `agent-` prefix, `sessionId` is the parent id, and `attributionAgent` is the role
-    metadata.
-    """
-    state = _SubagentMetadata(
-        is_subagent=_path_identifies_subagent_session(
-            source_path=source_path,
-            source=source,
-            root=root,
-        ),
-        parent_source_session_id=_path_parent_session_id(source_path=source_path, root=root)
-        if source == "claude-code"
-        else None,
-    )
-    for line in source_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        record = _json_object_from_line(line)
-        if record is None:
-            continue
-        if source == "codex":
-            _record_codex_subagent_metadata(state, record)
-        else:
-            _record_claude_subagent_metadata(state, record)
-
-    if not state.is_subagent:
-        return None
-    return _SourceSubagent(
-        source_path=source_path,
-        source_session_id=state.source_session_id or source_path.stem,
-        parent_source_session_id=state.parent_source_session_id,
-        agent_role=state.agent_role,
-    )
-
-
 @dataclass
 class _SubagentMetadata:
     is_subagent: bool = False
     source_session_id: str | None = None
     parent_source_session_id: str | None = None
     agent_role: str | None = None
-
-
-def _record_codex_subagent_metadata(state: _SubagentMetadata, record: JsonObject) -> None:
-    record_type = _string_value(record, "type")
-    payload = _object_value(record, "payload")
-    if record_type != "session_meta" or payload is None:
-        return
-    source_session_id = _string_value(payload, "id")
-    if source_session_id is not None:
-        state.source_session_id = source_session_id
-    agent_role = _string_value(payload, "agent_role")
-    if agent_role is not None:
-        state.agent_role = agent_role
-    if _string_value(payload, "thread_source") == "subagent":
-        state.is_subagent = True
-    source = _object_value(payload, "source")
-    if source is None:
-        return
-    subagent = _object_value(source, "subagent")
-    if subagent is None:
-        return
-    thread_spawn = _object_value(subagent, "thread_spawn")
-    if thread_spawn is None:
-        return
-    parent_thread_id = _string_value(thread_spawn, "parent_thread_id")
-    if parent_thread_id is not None:
-        state.is_subagent = True
-        state.parent_source_session_id = parent_thread_id
-    nested_agent_role = _string_value(thread_spawn, "agent_role")
-    if nested_agent_role is not None and state.agent_role is None:
-        state.agent_role = nested_agent_role
-
-
-def _record_claude_subagent_metadata(state: _SubagentMetadata, record: JsonObject) -> None:
-    if _bool_value(record, "isSidechain"):
-        state.is_subagent = True
-    agent_id = _string_value(record, "agentId")
-    if agent_id is not None:
-        state.source_session_id = agent_id
-    session_id = _string_value(record, "sessionId")
-    if session_id is not None:
-        state.parent_source_session_id = session_id
-    attribution_agent = _string_value(record, "attributionAgent")
-    if attribution_agent is not None:
-        state.agent_role = attribution_agent
 
 
 def _path_parent_session_id(*, source_path: Path, root: Path) -> str | None:
