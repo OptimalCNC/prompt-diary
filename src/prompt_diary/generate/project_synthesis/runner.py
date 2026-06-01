@@ -9,12 +9,19 @@ from typing import TYPE_CHECKING, Any, cast
 from prompt_diary.agent import AgentConfig
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.pipeline import TaskResult, project_synthesis_artifact
+from prompt_diary.generate.project_synthesis.cards import (
+    committed_turn_keys,
+    load_committed_chains,
+)
 from prompt_diary.generate.project_synthesis.inputs import build_project_synthesis_inputs
 from prompt_diary.generate.project_synthesis.model import (
     TurnReference,
     new_project_synthesis_envelope,
 )
-from prompt_diary.generate.prompts import project_synthesizer_prompt
+from prompt_diary.generate.prompts import (
+    project_synthesizer_next_prompt,
+    project_synthesizer_prompt,
+)
 from prompt_diary.generate.workspace import load_prepared_workspace
 from prompt_diary.progress.reporter import NULL_REPORTER
 
@@ -56,9 +63,7 @@ class ProjectSynthesisRunner:
             _write_empty_envelope(output_path, project_key, project.project_label)
             return TaskResult(task_id=task.task_id, status="success")
 
-        # The synthesizer self-loops on write_work_item's uncovered_turns within one turn. An
-        # all-gap project (zero committed chains) cannot be bootstrapped this way and fails the
-        # coverage check below; that degenerate case is out of MVP scope.
+        committed = committed_turn_keys(load_committed_chains(workspace_path, project_key))
         runner = await self.agent_factory.runner(
             AgentConfig(
                 working_directory=workspace_path,
@@ -74,6 +79,17 @@ class ProjectSynthesisRunner:
             )
         )
         uncovered = _uncovered_turns(output_path, universe)
+        if uncovered:
+            # One bounded continuation: name the still-uncovered turns so the agent can cover them.
+            # These instructions live only in the continuation prompt. This also recovers the
+            # all-gap case (empty paste): the agent learns the turn refs here and buckets them.
+            await runner.turn(
+                project_synthesizer_next_prompt(
+                    project_key=project_key,
+                    uncovered_turns=_render_uncovered(uncovered, committed),
+                )
+            )
+            uncovered = _uncovered_turns(output_path, universe)
         if uncovered:
             return TaskResult(
                 task_id=task.task_id,
@@ -110,6 +126,17 @@ def _uncovered_turns(
 ) -> tuple[TurnReference, ...]:
     covered = _covered_keys(output_path)
     return tuple(ref for ref in universe if (ref.session_ref, ref.turn_ref) not in covered)
+
+
+def _render_uncovered(
+    uncovered: tuple[TurnReference, ...], committed: frozenset[tuple[str, str]]
+) -> str:
+    lines: list[str] = []
+    for ref in uncovered:
+        has_chain = (ref.session_ref, ref.turn_ref) in committed
+        note = "has an evidence chain" if has_chain else "no evidence chain"
+        lines.append(f"- `{ref.session_ref}/{ref.turn_ref}` — {note}")
+    return "\n".join(lines)
 
 
 def _covered_keys(output_path: Path) -> frozenset[tuple[str, str]]:

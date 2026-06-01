@@ -9,6 +9,7 @@ from prompt_diary.generate.prompts import (
     daily_synthesizer_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
+    project_synthesizer_next_prompt,
     project_synthesizer_prompt,
 )
 
@@ -87,6 +88,22 @@ def test_project_synthesizer_prompt() -> None:
     assert "S0001/T0001" in result
 
 
+def test_project_synthesizer_next_prompt() -> None:
+    result = project_synthesizer_next_prompt(
+        project_key="ReportGenerator-abc123",
+        uncovered_turns=(
+            "- `S0001/T0003` — no evidence chain\n- `S0002/T0001` — has an evidence chain"
+        ),
+    )
+
+    assert isinstance(result, str)
+    assert "Project key: ReportGenerator-abc123" in result
+    assert "Continue: cover the remaining turns" in result
+    assert "S0001/T0003" in result
+    assert "evidence_gap_item" in result
+    assert "write_work_item" in result
+
+
 def test_daily_synthesizer_prompt() -> None:
     result = daily_synthesizer_prompt()
 
@@ -114,6 +131,14 @@ def test_cli_prompts_project_synthesizer() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["prompts", "project-synthesizer"])
+
+    assert result.exit_code == 0
+
+
+def test_cli_prompts_project_synthesizer_next() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["prompts", "project-synthesizer-next"])
 
     assert result.exit_code == 0
 

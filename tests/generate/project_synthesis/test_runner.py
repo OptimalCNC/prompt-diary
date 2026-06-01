@@ -127,10 +127,70 @@ def test_runner_resets_a_preexisting_envelope(tmp_path: Path) -> None:
 def test_runner_fails_when_a_turn_is_left_uncovered(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
 
-    result = _run(GroupingAgentSessionFactory(cover_gaps=False), workspace)
+    # The agent skips the gap turn on the first turn AND ignores the continuation, so the turn
+    # is still uncovered after the single bounded continuation.
+    factory = GroupingAgentSessionFactory(cover_gaps=False, fail_continuation=True)
+    result = _run(factory, workspace)
 
     assert result.status == "failed"
     assert any("S0001/T0003" in error for error in result.errors)
+    assert len(factory.runners[0].prompts) == 2  # main turn + one continuation
+
+
+def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+
+    # cover_gaps=False: the first turn covers only the committed turns; the continuation prompt
+    # names the leftover gap turn and the agent buckets it.
+    factory = GroupingAgentSessionFactory(cover_gaps=False)
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners[0].prompts) == 2
+    envelope = load_project_synthesis(workspace)
+    covered = {
+        (ref["session_ref"], ref["turn_ref"])
+        for item in envelope["work_items"]
+        for ref in item["covered_turns"]
+    }
+    assert covered == set(ALL_TURNS)
+    gap_covered = {
+        (ref["session_ref"], ref["turn_ref"])
+        for item in envelope["work_items"]
+        if item["kind"] == "evidence_gap_item"
+        for ref in item["covered_turns"]
+    }
+    assert ("S0001", "T0003") in gap_covered
+
+
+def test_runner_skips_continuation_when_first_turn_covers_everything(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    factory = GroupingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners[0].prompts) == 1  # no continuation needed
+
+
+def test_runner_recovers_all_gap_project_via_continuation(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    # No committed chains at all: the paste is empty, so the first turn covers nothing. The
+    # continuation names every indexed turn so the agent can bucket them as evidence gaps.
+    shutil.rmtree(workspace / "projects" / PROJECT_KEY / "evidence")
+    factory = GroupingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners[0].prompts) == 2
+    envelope = load_project_synthesis(workspace)
+    covered = {
+        (ref["session_ref"], ref["turn_ref"])
+        for item in envelope["work_items"]
+        for ref in item["covered_turns"]
+    }
+    assert covered == set(ALL_TURNS)
 
 
 def test_runner_writes_empty_envelope_for_zero_turn_project(tmp_path: Path) -> None:

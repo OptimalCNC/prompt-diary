@@ -10,6 +10,7 @@ from prompt_diary.generate.prompts import (
     daily_synthesizer_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
+    project_synthesizer_next_prompt,
     project_synthesizer_prompt,
 )
 
@@ -31,6 +32,9 @@ WriteEvidenceResultOption = Annotated[
 EvidenceChainsOption = Annotated[
     str, typer.Option(help="Trimmed evidence chains (summaries) for template substitution.")
 ]
+UncoveredTurnsOption = Annotated[
+    str, typer.Option(help="Rendered uncovered-turns list for template substitution.")
+]
 
 
 def register(app: typer.Typer) -> None:
@@ -39,6 +43,7 @@ def register(app: typer.Typer) -> None:
     prompts_app.command(name="evidence-extractor")(prompts_evidence_extractor)
     prompts_app.command(name="evidence-extractor-next-turn")(prompts_evidence_extractor_next_turn)
     prompts_app.command(name="project-synthesizer")(prompts_project_synthesizer)
+    prompts_app.command(name="project-synthesizer-next")(prompts_project_synthesizer_next)
     prompts_app.command(name="daily-synthesizer")(prompts_daily_synthesizer)
     app.add_typer(prompts_app, name="prompts")
 
@@ -91,6 +96,20 @@ def prompts_project_synthesizer(
             project_key=project_key,
             project_json=project_json,
             evidence_chains=evidence_chains,
+        )
+    )
+
+
+def prompts_project_synthesizer_next(
+    *,
+    project_key: ProjectKeyOption = "<PROJECT_KEY>",
+    uncovered_turns: UncoveredTurnsOption = "<UNCOVERED_TURNS>",
+) -> None:
+    """Print the project synthesizer continuation prompt."""
+    typer.echo(
+        project_synthesizer_next_prompt(
+            project_key=project_key,
+            uncovered_turns=uncovered_turns,
         )
     )
 

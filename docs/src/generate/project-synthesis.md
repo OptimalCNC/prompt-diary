@@ -282,6 +282,15 @@ this contract does not reach the agent.
 Prompt source: `src/prompt_diary/generate/prompts/project-synthesizer.md` — loaded at runtime by the
 orchestrator.
 
+The orchestrator runs the synthesizer in one main pass, then — if `write_work_item` still reports
+uncovered turns — exactly one bounded continuation that names the remaining turns and asks the agent
+to cover them (group a turn that has an evidence chain into a work item; cover one that does not with
+an `evidence_gap_item`). Those continuation-only instructions live in
+`src/prompt_diary/generate/prompts/project-synthesizer-next.md` (`project_synthesizer_next_prompt`);
+the task fails only if turns remain uncovered after that single continuation. Because the
+continuation names the turn references explicitly, it also recovers a project whose paste was empty —
+every indexed turn an evidence gap.
+
 See [Project Synthesizer Prompt](./project-synthesizer-prompt.md).
 
 ## Write Tool

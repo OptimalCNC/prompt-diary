@@ -23,7 +23,9 @@ The `prompt_diary.generate.prompts` module exposes one function per prompt:
   session_path: str, session_index_record: str, target_turn: str) -> str`
 - `evidence_extractor_next_turn_prompt(*, write_evidence_result: str,
   target_turn: str) -> str`
-- `project_synthesizer_prompt() -> str`
+- `project_synthesizer_prompt(*, project_key: str, project_json: str,
+  evidence_chains: str) -> str`
+- `project_synthesizer_next_prompt(*, project_key: str, uncovered_turns: str) -> str`
 - `daily_synthesizer_prompt() -> str`
 
 Each function loads the template from package data and renders it with Jinja2. Variable

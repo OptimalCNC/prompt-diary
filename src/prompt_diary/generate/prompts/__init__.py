@@ -191,6 +191,15 @@ def project_synthesizer_prompt(*, project_key: str, project_json: str, evidence_
     )
 
 
+def project_synthesizer_next_prompt(*, project_key: str, uncovered_turns: str) -> str:
+    """Return the project synthesizer continuation prompt for the still-uncovered turns."""
+    return _render(
+        "project-synthesizer-next.md",
+        project_key=project_key,
+        uncovered_turns=uncovered_turns,
+    )
+
+
 def daily_synthesizer_prompt() -> str:
     """Return the daily synthesizer prompt."""
     return _render("daily-synthesizer.md")

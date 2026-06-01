@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 _PROJECT_KEY_RE = re.compile(r"^- Project key: (.+)$", re.MULTILINE)
 _CHAIN_RE = re.compile(r"^\*\*(S\d{4})/(T\d{4})\*\* \[", re.MULTILINE)
+_UNCOVERED_REF_RE = re.compile(r"`(S\d{4})/(T\d{4})`")
+_CONTINUATION_MARKER = "Continue: cover the remaining turns"
 
 
 @dataclass
@@ -37,8 +39,10 @@ class GroupingAgentRunner:
 
     config: AgentConfig
     cover_gaps: bool
+    fail_continuation: bool
     processed: list[str]
     prompts: list[str] = field(default_factory=list)
+    counter: _RefCounter = field(default_factory=_RefCounter)
 
     async def turn(
         self,
@@ -49,12 +53,23 @@ class GroupingAgentRunner:
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
         self.prompts.append(prompt)
+        if _CONTINUATION_MARKER in prompt:
+            if not self.fail_continuation:
+                self._cover_continuation(prompt)
+            return AgentTurnResult(assistant_text="continued", events=())
         project_key = _require_project_key(prompt)
-        counter = _RefCounter()
-        uncovered = self._cover_committed(project_key, _committed_by_session(prompt), counter)
+        uncovered = self._cover_committed(project_key, _committed_by_session(prompt), self.counter)
         if self.cover_gaps:
-            self._cover_gaps(project_key, uncovered, counter)
+            self._cover_gaps(project_key, uncovered, self.counter)
         return AgentTurnResult(assistant_text="synthesized", events=())
+
+    def _cover_continuation(self, prompt: str) -> None:
+        project_key = _require_project_key(prompt)
+        gaps, chained = _continuation_refs(prompt)
+        if gaps:
+            self._write(project_key, _gap_work_item(self.counter.next(), tuple(gaps)))
+        for session_ref, turn in chained:
+            self._write(project_key, _no_material_work_item(self.counter.next(), session_ref, turn))
 
     def _cover_committed(
         self,
@@ -95,6 +110,7 @@ class GroupingAgentSessionFactory:
     """Mints grouping fake runners off a shared record; never starts Codex."""
 
     cover_gaps: bool = True
+    fail_continuation: bool = False
     entered: int = 0
     exited: int = 0
     processed: list[str] = field(default_factory=list)
@@ -114,7 +130,10 @@ class GroupingAgentSessionFactory:
 
     async def runner(self, config: AgentConfig) -> GroupingAgentRunner:
         new_runner = GroupingAgentRunner(
-            config=config, cover_gaps=self.cover_gaps, processed=self.processed
+            config=config,
+            cover_gaps=self.cover_gaps,
+            fail_continuation=self.fail_continuation,
+            processed=self.processed,
         )
         self.runners.append(new_runner)
         return new_runner
@@ -171,6 +190,34 @@ def _gap_work_item(work_item_ref: str, uncovered: tuple[tuple[str, str], ...]) -
         "limits": [],
         "confidence": "low",
     }
+
+
+def _no_material_work_item(work_item_ref: str, session_ref: str, turn: str) -> dict[str, Any]:
+    return {
+        "work_item_ref": work_item_ref,
+        "kind": "no_material_work_item",
+        "title": f"Recovered turn {session_ref}/{turn}",
+        "covered_turns": [{"session_ref": session_ref, "turn_ref": turn}],
+        "outcomes": [],
+        "terminal_states": [],
+        "limits": [],
+        "confidence": "low",
+    }
+
+
+def _continuation_refs(prompt: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    gaps: list[tuple[str, str]] = []
+    chained: list[tuple[str, str]] = []
+    for line in prompt.splitlines():
+        match = _UNCOVERED_REF_RE.search(line)
+        if match is None:
+            continue
+        ref = (match.group(1), match.group(2))
+        if "no evidence chain" in line:
+            gaps.append(ref)
+        else:
+            chained.append(ref)
+    return gaps, chained
 
 
 def _uncovered_of(result: WriteWorkItemResult) -> tuple[tuple[str, str], ...]:
