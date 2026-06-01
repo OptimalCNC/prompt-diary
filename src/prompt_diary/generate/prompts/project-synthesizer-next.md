@@ -18,5 +18,6 @@ files.
 - For a turn marked **no evidence chain**, cover it with an `evidence_gap_item`. You may create more
   than one `evidence_gap_item`, and an `evidence_gap_item` may cover several such turns at once.
 
-Reference turns as `{session_ref, turn_ref}`. Keep calling `write_work_item` until it reports that no
-turns remain uncovered, then stop.
+Reference turns as `{session_ref, turn_ref}`. If `write_work_item` returns `status: invalid`, correct
+the work item from the returned errors and retry. Keep calling `write_work_item` until it reports that
+no turns remain uncovered, then stop.

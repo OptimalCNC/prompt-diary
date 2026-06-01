@@ -43,6 +43,7 @@ class GroupingAgentRunner:
     processed: list[str]
     prompts: list[str] = field(default_factory=list)
     counter: _RefCounter = field(default_factory=_RefCounter)
+    first_turn_session_limit: int | None = None
 
     async def turn(
         self,
@@ -58,7 +59,10 @@ class GroupingAgentRunner:
                 self._cover_continuation(prompt)
             return AgentTurnResult(assistant_text="continued", events=())
         project_key = _require_project_key(prompt)
-        uncovered = self._cover_committed(project_key, _committed_by_session(prompt), self.counter)
+        grouped = _committed_by_session(prompt)
+        if self.first_turn_session_limit is not None:
+            grouped = grouped[: self.first_turn_session_limit]
+        uncovered = self._cover_committed(project_key, grouped, self.counter)
         if self.cover_gaps:
             self._cover_gaps(project_key, uncovered, self.counter)
         return AgentTurnResult(assistant_text="synthesized", events=())
@@ -67,9 +71,16 @@ class GroupingAgentRunner:
         project_key = _require_project_key(prompt)
         gaps, chained = _continuation_refs(prompt)
         if gaps:
-            self._write(project_key, _gap_work_item(self.counter.next(), tuple(gaps)))
+            # Route through _uncovered_of so a rejected continuation write raises, like turn 1.
+            _uncovered_of(
+                self._write(project_key, _gap_work_item(self.counter.next(), tuple(gaps)))
+            )
         for session_ref, turn in chained:
-            self._write(project_key, _no_material_work_item(self.counter.next(), session_ref, turn))
+            _uncovered_of(
+                self._write(
+                    project_key, _no_material_work_item(self.counter.next(), session_ref, turn)
+                )
+            )
 
     def _cover_committed(
         self,
@@ -111,6 +122,7 @@ class GroupingAgentSessionFactory:
 
     cover_gaps: bool = True
     fail_continuation: bool = False
+    first_turn_session_limit: int | None = None
     entered: int = 0
     exited: int = 0
     processed: list[str] = field(default_factory=list)
@@ -134,6 +146,7 @@ class GroupingAgentSessionFactory:
             cover_gaps=self.cover_gaps,
             fail_continuation=self.fail_continuation,
             processed=self.processed,
+            first_turn_session_limit=self.first_turn_session_limit,
         )
         self.runners.append(new_runner)
         return new_runner
@@ -213,10 +226,13 @@ def _continuation_refs(prompt: str) -> tuple[list[tuple[str, str]], list[tuple[s
         if match is None:
             continue
         ref = (match.group(1), match.group(2))
+        # Classify on the runner's exact annotations; an unknown one means render drift.
         if "no evidence chain" in line:
             gaps.append(ref)
-        else:
+        elif "has an evidence chain" in line:
             chained.append(ref)
+        else:
+            raise AssertionError(_unknown_annotation_message(line))
     return gaps, chained
 
 
@@ -239,3 +255,7 @@ def _rejected_message(result: WriteWorkItemResult) -> str:
 
 def _missing_project_key_message() -> str:
     return "fake agent could not find the project key in the prompt"
+
+
+def _unknown_annotation_message(line: str) -> str:
+    return f"unknown uncovered-turn annotation (render drift): {line!r}"

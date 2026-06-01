@@ -193,6 +193,35 @@ def test_runner_recovers_all_gap_project_via_continuation(tmp_path: Path) -> Non
     assert covered == set(ALL_TURNS)
 
 
+def test_runner_recovers_dropped_committed_turn_via_continuation(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    # Turn 1 covers only the first committed session (S0001) and drops S0002, so the continuation
+    # must recover a turn that HAS an evidence chain (S0002/T0001), not only the gap turn.
+    factory = GroupingAgentSessionFactory(cover_gaps=False, first_turn_session_limit=1)
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners[0].prompts) == 2
+    envelope = load_project_synthesis(workspace)
+    covered = {
+        (ref["session_ref"], ref["turn_ref"])
+        for item in envelope["work_items"]
+        for ref in item["covered_turns"]
+    }
+    assert covered == set(ALL_TURNS)
+    # The dropped chained turn was recovered into a non-gap work item, not an evidence gap.
+    recovered = [
+        item
+        for item in envelope["work_items"]
+        if item["kind"] != "evidence_gap_item"
+        and any(
+            ref["session_ref"] == "S0002" and ref["turn_ref"] == "T0001"
+            for ref in item["covered_turns"]
+        )
+    ]
+    assert recovered
+
+
 def test_runner_writes_empty_envelope_for_zero_turn_project(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
     _strip_turns_from_index(workspace)
