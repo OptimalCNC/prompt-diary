@@ -10,6 +10,7 @@ from prompt_diary.generate.evidence_extraction.session_compaction import (
     SHORT_TOOL_RESULT_BYTES,
     compact_record,
     compact_record_to_json,
+    line_provenance,
 )
 
 
@@ -846,6 +847,17 @@ def test_large_text_message_is_never_trimmed(raw_line: str, source: str) -> None
     assert "text" in record.content_kinds
     assert record.text_preview is not None
     assert len(record.text_preview) == len(_LARGE_TEXT)
+
+
+def test_line_provenance_matches_compact_record_provenance() -> None:
+    raw = '{"role":"user","content":"hi"}'
+
+    raw_bytes, raw_sha256 = line_provenance(raw)
+    record = compact_record(raw, line=1, source="codex")
+
+    assert raw_bytes == len(raw.encode("utf-8"))
+    assert raw_sha256 == hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    assert (raw_bytes, raw_sha256) == (record.raw_bytes, record.raw_sha256)
 
 
 # ---------------------------------------------------------------------------

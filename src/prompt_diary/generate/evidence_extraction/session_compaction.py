@@ -112,9 +112,20 @@ class _ClaudeParts:
             self.kinds.append(kind)
 
 
+def line_provenance(raw_line: str) -> tuple[int, str]:
+    """Return the UTF-8 byte length and SHA-256 hex digest of one physical line.
+
+    Provenance is computed over exactly the bytes of ``raw_line`` (which must not include a
+    trailing newline), so compact and full session reads report identical ``raw_bytes`` and
+    ``raw_sha256`` for the same physical line.
+    """
+    raw_bytes = raw_line.encode("utf-8")
+    return len(raw_bytes), hashlib.sha256(raw_bytes).hexdigest()
+
+
 def compact_record(raw_line: str, *, line: int, source: str) -> CompactRecord:
     """Compact one raw physical JSONL line into a bounded structured record."""
-    raw_bytes = raw_line.encode("utf-8")
+    raw_bytes, raw_sha256 = line_provenance(raw_line)
     record = _parse_object(raw_line)
     compaction = _compact_unknown(record) if record is None else _compact_source(record, source)
     return CompactRecord(
@@ -126,8 +137,8 @@ def compact_record(raw_line: str, *, line: int, source: str) -> CompactRecord:
         text_preview=compaction.text_preview,
         tool_uses=compaction.tool_uses,
         tool_results=compaction.tool_results,
-        raw_bytes=len(raw_bytes),
-        raw_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        raw_bytes=raw_bytes,
+        raw_sha256=raw_sha256,
         truncated=compaction.truncated,
     )
 
