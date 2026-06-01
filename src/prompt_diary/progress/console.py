@@ -73,7 +73,7 @@ class LiveConsoleReporter:
     def _render(self) -> RenderableType:
         state = self._state
         rows: list[RenderableType] = []
-        if state.prepare_sources or state.prepare_steps or state.prepare_done:
+        if state.prepare_sources or state.prepare_step_order or state.prepare_done:
             rows.append(self._render_prepare(state))
         if state.kind_totals:
             rows.append(self._render_generate(state))
@@ -83,8 +83,13 @@ class LiveConsoleReporter:
         table = Table.grid(padding=(0, 1))
         table.add_row(Text("prepare", style="bold"))
         step_names = [
-            *state.prepare_steps.keys(),
-            *(name for name in state.prepare_step_scopes if name not in state.prepare_steps),
+            *state.prepare_step_order,
+            *(name for name in state.prepare_steps if name not in state.prepare_step_order),
+            *(
+                name
+                for name in state.prepare_step_scopes
+                if name not in state.prepare_step_order and name not in state.prepare_steps
+            ),
         ]
         for name in step_names:
             if name in state.prepare_steps:

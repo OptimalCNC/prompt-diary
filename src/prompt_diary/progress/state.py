@@ -49,6 +49,7 @@ class ProgressState:
     label: str = ""
     kind_totals: tuple[tuple[str, int], ...] = ()
     prepare_sources: tuple[str, ...] = ()
+    prepare_step_order: tuple[str, ...] = ()
     prepare_steps: dict[str, tuple[int, int | None]] = field(default_factory=dict)
     prepare_step_scopes: dict[str, dict[str, tuple[int, int | None]]] = field(default_factory=dict)
     prepare_done: bool = False
@@ -79,13 +80,16 @@ def reduce(state: ProgressState, event: ProgressEvent) -> ProgressState:
     if isinstance(event, PrepareStarted):
         return replace(state, prepare_sources=event.sources)
     if isinstance(event, PrepareStep):
+        step_order = state.prepare_step_order
+        if event.name not in step_order:
+            step_order = (*step_order, event.name)
         if event.scope is None:
             steps = dict(state.prepare_steps)
             steps[event.name] = (event.done, event.total)
-            return replace(state, prepare_steps=steps)
+            return replace(state, prepare_step_order=step_order, prepare_steps=steps)
         scopes = {name: dict(values) for name, values in state.prepare_step_scopes.items()}
         scopes.setdefault(event.name, {})[event.scope] = (event.done, event.total)
-        return replace(state, prepare_step_scopes=scopes)
+        return replace(state, prepare_step_order=step_order, prepare_step_scopes=scopes)
     if isinstance(event, PrepareFinished):
         return replace(
             state,

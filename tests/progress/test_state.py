@@ -41,6 +41,27 @@ def test_prepare_steps_track_counts() -> None:
     assert state.prepare_done is False
 
 
+def test_prepare_step_order_uses_first_seen_step() -> None:
+    state = _reduce_all(
+        PrepareStep(
+            at=0.1,
+            name="scanning_sessions",
+            done=12,
+            total=20,
+            scope="codex ~/.codex/sessions",
+        ),
+        PrepareStep(
+            at=0.2,
+            name="discovering",
+            done=7,
+            total=None,
+            scope="codex ~/.codex/sessions",
+        ),
+        PrepareStep(at=0.3, name="discovering", done=16, total=None),
+    )
+    assert state.prepare_step_order == ("scanning_sessions", "discovering")
+
+
 def test_prepare_finished_records_totals() -> None:
     state = _reduce_all(PrepareFinished(at=0.3, projects=2, sessions=9))
     assert state.prepare_done is True
