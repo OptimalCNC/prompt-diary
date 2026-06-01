@@ -3,7 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 
+import pytest
+
 from prompt_diary.generate.evidence_extraction.session_compaction import (
+    PREVIEW_HEAD_BYTES,
+    SHORT_TOOL_RESULT_BYTES,
     compact_record,
     compact_record_to_json,
 )
@@ -740,3 +744,171 @@ def test_to_json_serializes_tool_uses_and_tool_results() -> None:
     assert payload["tool_results"][0]["kind"] == "tool_result"
     assert payload["tool_results"][0]["status"] == "completed"
     assert payload["tool_results"][0]["preview"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Gap 1 — large user/assistant text messages are NEVER trimmed
+# ---------------------------------------------------------------------------
+
+_LARGE_TEXT = "W" * 5000  # 5 000 ASCII bytes — well above every preview bound
+
+
+@pytest.mark.parametrize(
+    ("raw_line", "source"),
+    [
+        # codex event_msg:user_message family (payload["message"] string)
+        pytest.param(
+            json.dumps(
+                {
+                    "payload": {"message": _LARGE_TEXT, "type": "user_message"},
+                    "type": "event_msg",
+                }
+            ),
+            "codex",
+            id="codex-event-user-message",
+        ),
+        # codex event_msg:agent_message family (payload["message"] string)
+        pytest.param(
+            json.dumps(
+                {
+                    "payload": {"message": _LARGE_TEXT, "type": "agent_message"},
+                    "type": "event_msg",
+                }
+            ),
+            "codex",
+            id="codex-event-agent-message",
+        ),
+        # codex response_item:message / role=user (payload["content"] list)
+        pytest.param(
+            json.dumps(
+                {
+                    "payload": {
+                        "content": [{"text": _LARGE_TEXT, "type": "input_text"}],
+                        "role": "user",
+                        "type": "message",
+                    },
+                    "type": "response_item",
+                }
+            ),
+            "codex",
+            id="codex-response-item-user-message",
+        ),
+        # codex response_item:message / role=assistant (payload["content"] list)
+        pytest.param(
+            json.dumps(
+                {
+                    "payload": {
+                        "content": [{"text": _LARGE_TEXT, "type": "output_text"}],
+                        "role": "assistant",
+                        "type": "message",
+                    },
+                    "type": "response_item",
+                }
+            ),
+            "codex",
+            id="codex-response-item-assistant-message",
+        ),
+        # claude-code user message with text content item
+        pytest.param(
+            json.dumps(
+                {
+                    "message": {
+                        "content": [{"text": _LARGE_TEXT, "type": "text"}],
+                        "role": "user",
+                    },
+                    "type": "user",
+                }
+            ),
+            "claude-code",
+            id="claude-user-message",
+        ),
+        # claude-code assistant message with text content item
+        pytest.param(
+            json.dumps(
+                {
+                    "message": {
+                        "content": [{"text": _LARGE_TEXT, "type": "text"}],
+                        "role": "assistant",
+                    },
+                    "type": "assistant",
+                }
+            ),
+            "claude-code",
+            id="claude-assistant-message",
+        ),
+    ],
+)
+def test_large_text_message_is_never_trimmed(raw_line: str, source: str) -> None:
+    """AC#10: user/assistant text messages are preserved in full regardless of size."""
+    record = compact_record(raw_line, line=1, source=source)
+
+    assert record.truncated is False
+    assert "text" in record.content_kinds
+    assert record.text_preview is not None
+    assert len(record.text_preview) == len(_LARGE_TEXT)
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — _bounded_preview slices on UTF-8 bytes, not characters
+# ---------------------------------------------------------------------------
+
+
+def test_bounded_preview_does_not_corrupt_multibyte_char_at_head_boundary() -> None:
+    """A multibyte char straddling PREVIEW_HEAD_BYTES must be dropped, not garbled.
+
+    We fill exactly (PREVIEW_HEAD_BYTES - 1) ASCII bytes so that the *next* byte
+    starts a 2-byte UTF-8 sequence (``é`` = 0xC3 0xA9).  After byte-slicing to
+    PREVIEW_HEAD_BYTES the slice ends with the first byte 0xC3 which is not a
+    complete code point; ``errors="ignore"`` drops it rather than emitting U+FFFD.
+    The rest of the payload is large enough to exceed SHORT_TOOL_RESULT_BYTES so
+    the result is trimmed and ``_bounded_preview`` is exercised.
+    """
+    # Build a tool-result payload: (PREVIEW_HEAD_BYTES - 1) ASCII chars, then
+    # one 'é' (2 UTF-8 bytes), then enough filler to push past SHORT_TOOL_RESULT_BYTES.
+    filler_after = "x" * (SHORT_TOOL_RESULT_BYTES + 200)
+    payload = "a" * (PREVIEW_HEAD_BYTES - 1) + "é" + filler_after
+    raw = json.dumps(
+        {
+            "payload": {
+                "call_id": "call_utf8",
+                "output": payload,
+                "type": "function_call_output",
+            },
+            "type": "response_item",
+        }
+    )
+
+    record = compact_record(raw, line=1, source="codex")
+
+    result = record.tool_results[0]
+    assert result.truncated is True
+    assert "�" not in result.preview
+
+
+def test_bounded_preview_threshold_is_byte_based_not_char_based() -> None:
+    """A payload >1 024 UTF-8 bytes but <1 024 characters must still be trimmed.
+
+    Each '😀' is 4 UTF-8 bytes.  260 copies = 1 040 bytes > SHORT_TOOL_RESULT_BYTES
+    but only 260 characters < 1 024.  If the threshold were char-based the result
+    would be untrimmed; byte-based gives truncated=True.
+    """
+    # 260 x '😀' = 1 040 bytes, 260 characters
+    payload = "😀" * 260
+    assert len(payload.encode("utf-8")) > SHORT_TOOL_RESULT_BYTES
+    assert len(payload) < SHORT_TOOL_RESULT_BYTES
+
+    raw = json.dumps(
+        {
+            "payload": {
+                "call_id": "call_emoji",
+                "output": payload,
+                "type": "function_call_output",
+            },
+            "type": "response_item",
+        }
+    )
+
+    record = compact_record(raw, line=1, source="codex")
+
+    result = record.tool_results[0]
+    assert result.truncated is True
