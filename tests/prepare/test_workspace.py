@@ -268,6 +268,54 @@ def test_prepare_workspace_records_parse_warnings_and_fallback_root(
     ]
 
 
+def test_prepare_workspace_skips_malformed_candidate_and_accepts_codex_message_without_content(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "ReportGenerator"
+    project_root.mkdir()
+    source_root = tmp_path / "codex"
+    malformed_path = source_root / "malformed-only.jsonl"
+    malformed_path.parent.mkdir(parents=True)
+    malformed_path.write_text("not json\n", encoding="utf-8")
+    _write_jsonl(
+        source_root / "missing-content.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "timestamp": "2026-05-11T16:00:00Z",
+                "payload": {"id": "missing-content", "cwd": str(project_root)},
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2026-05-12T00:00:00Z",
+                "payload": {
+                    "role": "user",
+                    "type": "message",
+                },
+            },
+        ],
+    )
+
+    result = prepare_workspace(
+        _target(),
+        reports_root=tmp_path / ".reports",
+        source_specs=(SourceSpec(source="codex", root=source_root),),
+    )
+
+    assert result.session_count == 1
+    project_dir = _single_directory(result.workspace_path / "projects")
+    rows = _load_jsonl(project_dir / "sessions.index.jsonl")
+    assert rows[0]["source_session_id"] == "missing-content"
+    assert rows[0]["turns"] == [
+        {
+            "turn_ref": "T0001",
+            "turn_start_line": 2,
+            "turn_end_line": 2,
+            "target_subagents": [],
+        }
+    ]
+
+
 def test_prepare_workspace_skips_direct_claude_subagent_without_parent(
     tmp_path: Path,
 ) -> None:

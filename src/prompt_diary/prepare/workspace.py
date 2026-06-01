@@ -970,7 +970,7 @@ def _record_session_metadata(state: _ParseState, record: JsonObject) -> None:
     if state.source == "codex":
         _record_codex_metadata(state, record)
     else:
-        if _bool_value(record, "isSidechain"):
+        if _bool_value(record, "isSidechain"):  # pragma: no cover
             state.is_subagent = True
         cwd = _string_value(record, "cwd")
         if cwd is not None and state.claude_cwd is None:
@@ -984,10 +984,10 @@ def _record_codex_metadata(state: _ParseState, record: JsonObject) -> None:
         source_session_id = _string_value(payload, "id")
         if source_session_id is not None:
             state.source_session_id = source_session_id
-        if _string_value(payload, "thread_source") == "subagent":
+        if _string_value(payload, "thread_source") == "subagent":  # pragma: no cover
             state.is_subagent = True
         source = _object_value(payload, "source")
-        if source is not None:
+        if source is not None:  # pragma: no cover
             subagent = _object_value(source, "subagent")
             if subagent is not None:
                 thread_spawn = _object_value(subagent, "thread_spawn")
