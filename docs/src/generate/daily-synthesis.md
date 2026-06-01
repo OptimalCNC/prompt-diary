@@ -1,9 +1,11 @@
 # Daily Report Synthesis
 
 Daily report synthesis is the final report-producing generation phase. It turns project work items
-into a semantic daily report model and a Markdown report, where the four
+into a semantic daily report model, `daily-report.json`, where the four
 [product purposes](../product.md#purposes) must converge from one evidence base: work
-communication, evidence trust, engagement review, and team learning.
+communication, evidence trust, engagement review, and team learning. Reader-facing views —
+`report.md` and any future view — are rendered from that model by a deterministic step; the
+synthesizer that builds the model is view-agnostic.
 
 Daily report synthesis starts from the prepared workspace and generation artifacts. It must not
 rediscover raw sessions outside the prepared workspace.
@@ -22,19 +24,20 @@ Inputs:
 
 Outputs:
 
-- `daily-report.json` in the prepared workspace root
-- `report.md` in the prepared workspace root
+- `daily-report.json` in the prepared workspace root — built by the synthesizer agent
+- `report.md` in the prepared workspace root — rendered from `daily-report.json`
 
-`daily-report.json` is the authoritative report artifact. `report.md` is a deterministic
-Markdown view rendered from that model. Daily report synthesis owns the internal checks needed
-before returning both artifacts. A report that misses required model fields, uses invalid
-citations, hides required evidence-quality limits, or includes forbidden high-risk content is a
-daily report synthesis bug.
+`daily-report.json` is the authoritative report artifact and the synthesizer agent's only output.
+`report.md` is a deterministic view rendered from that model (see [Rendering](#rendering)). The
+phase returns both, but the responsibilities are separate: synthesis builds the model, rendering
+projects it into views. A model that misses required fields, uses invalid citations, hides required
+evidence-quality limits, or includes forbidden high-risk content is a synthesis bug; a view that
+adds, drops, or alters a claim relative to the model is a rendering bug.
 
 ## Report Contract
 
-Daily report synthesis owns the daily report data model, the required Markdown view, and the
-content of both artifacts.
+Daily report synthesis owns the daily report data model and the content of `daily-report.json`.
+The reader-facing views rendered from that model are defined in [Rendering](#rendering).
 
 ### Daily Report Model
 
@@ -135,10 +138,22 @@ Model rules:
 - No-material, interrupted, failed, paused, resumed, and clarification-only interactions stay
   represented when they affect evidence trust, engagement review, or team learning.
 
+## Rendering
+
+Rendering projects `daily-report.json` into reader-facing views. It is deterministic and adds no
+judgment: every claim, citation, confidence value, and evidence-quality signal in a view comes from
+the model. A view never reads sessions, evidence cards, or work items, and never introduces content
+absent from the model — doing so is a rendering bug. Because rendering is deterministic, the "no new
+claims" guarantee is structural, not a rule the synthesizer must remember.
+
+Each view is one renderer over the same model, so adding a view never changes the model or the
+synthesizer. `report.md` is the required view; further views (for example, Notion) are optional and
+may be added without touching synthesis.
+
 ### Markdown Rendering
 
-`report.md` is rendered from `daily-report.json`. Markdown is a presentation format, not the
-source of truth for the report's evidence model.
+`report.md` is the required Markdown view of `daily-report.json`. Markdown is a presentation format,
+not the source of truth for the report's evidence model.
 
 The rendered report must use this structure:
 
@@ -182,10 +197,49 @@ Section intent:
 - `Follow-ups`: specific future work grounded in the day's evidence.
 - `Evidence Gaps`: missing or weak evidence that affects confidence.
 
+When a section's backing model field is empty, the renderer emits the section's fallback bullet so
+every required section is still present:
+
+- Executive Summary: `- No supported work claims found for this report window.`
+- Outcome Overview: `- No supported outcomes found for this report window.`
+- Project Details: `- No supported project-level work items found for this report window.`
+- Verification / Evidence Quality: `- No verification or evidence-quality issues found.`
+- Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
+- AI-Agent Driving Quality: `- No supported reusable agent-driving pattern found.`
+- Problems / Risks / Help Needed: `- No supported problems, risks, or help requests found in target spans.`
+- Blockers and Next Actions: `- No supported blockers or next actions found.`
+- No-Material / Interrupted Examples: `- No supported no-material or interrupted interactions found.`
+- Follow-ups: `- No supported follow-ups found.`
+- Evidence Gaps: `- No evidence gaps found.`
+
 Every concrete work claim in claim-bearing Markdown sections must cite lines inside exactly one
 indexed turn using the report citation format from the
 [Evidence Contract](./evidence-contract.md#session-evidence-cards). The renderer must not add
 claim-bearing prose that is absent from `daily-report.json`.
+
+### Notion Rendering
+
+> Draft — a planned view, not part of the MVP output. It is specified here so the model stays
+> view-agnostic and the renderer boundary stays clear; no Notion renderer ships yet.
+
+Notion rendering projects the same `daily-report.json` into a Notion page so a report can be read
+and shared in a workspace. Like Markdown rendering, it is deterministic, read-only over the model,
+and adds no claim-bearing content.
+
+Planned shape:
+
+- One Notion page per report date, titled `Prompt Diary Report - <report_date>`, with `status`,
+  `window`, and `overall_confidence` as page properties so reports are filterable and sortable.
+- The same section order as the Markdown view, one Notion heading block per section, so the two
+  views stay legible against each other.
+- Each `ReportClaim` becomes a block carrying its `summary`, with `confidence` and citations shown
+  inline; a citation links back to its cited session and line range rather than restating evidence.
+- Empty sections use the same fallback bullets as the Markdown view.
+
+Open questions to settle before a Notion renderer is built: how citations link out (workspace
+session references have no Notion URL yet), whether a run updates a report in place or appends a new
+page, and how `partial` versus `final` status is surfaced. These are deferred with the rest of view
+work.
 
 ## Daily Synthesizer Prompt
 
@@ -194,6 +248,10 @@ readers. The daily synthesizer agent never reads it. At runtime the agent sees o
 prompt below and the workspace files it opens. Any decision in this contract that the agent must
 act on has to be restated as explicit instructions in that prompt source; a cross-reference to
 this contract does not reach the agent.
+
+The prompt is view-agnostic: it instructs only the production of `daily-report.json` and must not
+mention `report.md`, Markdown, Notion, or any rendering detail. Rendering consumes the model after
+synthesis returns; see [Rendering](#rendering).
 
 Prompt source: `src/prompt_diary/generate/prompts/daily-synthesizer.md` — loaded at runtime by the
 orchestrator.
