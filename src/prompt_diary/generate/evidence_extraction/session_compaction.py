@@ -33,6 +33,7 @@ class ToolUse:
 
     name: str
     input_summary: str
+    truncated: bool
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,11 @@ def compact_record_to_json(record: CompactRecord) -> dict[str, Any]:
 
 
 def _tool_use_to_json(tool_use: ToolUse) -> dict[str, Any]:
-    return {"name": tool_use.name, "input_summary": tool_use.input_summary}
+    return {
+        "name": tool_use.name,
+        "input_summary": tool_use.input_summary,
+        "truncated": tool_use.truncated,
+    }
 
 
 def _tool_result_to_json(result: ToolResult) -> dict[str, Any]:
@@ -251,7 +256,9 @@ def _claude_content_item(
             parts.texts.append(text)
     elif item_type == "tool_use":
         parts.add_kind("tool_use")
-        parts.tool_uses = (*parts.tool_uses, _claude_tool_use(item))
+        tool_use = _claude_tool_use(item)
+        parts.tool_uses = (*parts.tool_uses, tool_use)
+        parts.truncated = parts.truncated or tool_use.truncated
     elif item_type == "tool_result":
         parts.add_kind("tool_result")
         result = _claude_tool_result(item, result_meta)
@@ -313,12 +320,12 @@ def _claude_tool_result_payload(content: Any) -> str:
 
 def _claude_tool_use(item: dict[str, Any]) -> ToolUse:
     name = _string(item, "name") or "unknown"
-    input_summary, _ = _bounded_preview(
+    input_summary, args_trimmed = _bounded_preview(
         _json_summary(item.get("input")),
         head=PREVIEW_HEAD_BYTES,
         tail=0,
     )
-    return ToolUse(name=name, input_summary=input_summary)
+    return ToolUse(name=name, input_summary=input_summary, truncated=args_trimmed)
 
 
 def _json_summary(value: Any) -> str:
@@ -365,12 +372,13 @@ def _reasoning_omitted(record_type: str) -> _Compaction:
 def _codex_function_call(record_type: str, payload: dict[str, Any]) -> _Compaction:
     name = _string(payload, "name") or "unknown"
     arguments = _string(payload, "arguments") or ""
-    input_summary, _ = _bounded_preview(arguments, head=PREVIEW_HEAD_BYTES, tail=0)
+    input_summary, args_trimmed = _bounded_preview(arguments, head=PREVIEW_HEAD_BYTES, tail=0)
     return _Compaction(
         record_type=record_type,
         content_kinds=("tool_use",),
         summary=f"Tool call: {name}.",
-        tool_uses=(ToolUse(name=name, input_summary=input_summary),),
+        tool_uses=(ToolUse(name=name, input_summary=input_summary, truncated=args_trimmed),),
+        truncated=args_trimmed,
     )
 
 

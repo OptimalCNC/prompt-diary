@@ -180,6 +180,7 @@ def test_codex_function_call_summarizes_tool_use() -> None:
     tool_use = record.tool_uses[0]
     assert tool_use.name == "exec_command"
     assert "rg -n release" in tool_use.input_summary
+    assert tool_use.truncated is False
     assert record.summary == "Tool call: exec_command."
     assert record.tool_results == ()
     assert record.truncated is False
@@ -362,6 +363,7 @@ def test_claude_assistant_tool_use_summarizes_call_with_text() -> None:
     assert len(record.tool_uses) == 1
     assert record.tool_uses[0].name == "Agent"
     assert "Explore" in record.tool_uses[0].input_summary
+    assert record.tool_uses[0].truncated is False
     assert record.summary == "Assistant message."
     assert record.truncated is False
 
@@ -518,6 +520,109 @@ def test_codex_function_call_with_large_arguments_trims_head_only() -> None:
     assert summary.startswith("START-ARGS")
     assert "END-ARGS" not in summary
     assert summary.endswith("...[trimmed]...\n")
+
+
+# ---------------------------------------------------------------------------
+# Tool-USE input trimming must be flagged as truncation
+# ---------------------------------------------------------------------------
+
+
+def test_codex_function_call_large_arguments_flags_truncation() -> None:
+    """A trimmed codex function-call ``arguments`` must report truncation."""
+    arguments = '{"cmd":"' + ("z" * 1500) + '"}'
+    raw = json.dumps(
+        {
+            "payload": {
+                "arguments": arguments,
+                "call_id": "call_big_args",
+                "name": "exec_command",
+                "type": "function_call",
+            },
+            "type": "response_item",
+        }
+    )
+
+    record = compact_record(raw, line=11, source="codex")
+
+    assert record.truncated is True
+    assert record.tool_uses[0].truncated is True
+    assert len(record.tool_uses[0].input_summary) < len(arguments)
+
+
+def test_codex_function_call_small_arguments_is_not_truncated() -> None:
+    """A codex function-call ``arguments`` below the head bound is reported in full."""
+    arguments = '{"cmd":"ls -la"}'
+    assert len(arguments.encode("utf-8")) <= PREVIEW_HEAD_BYTES
+    raw = json.dumps(
+        {
+            "payload": {
+                "arguments": arguments,
+                "call_id": "call_small_args",
+                "name": "exec_command",
+                "type": "function_call",
+            },
+            "type": "response_item",
+        }
+    )
+
+    record = compact_record(raw, line=11, source="codex")
+
+    assert record.truncated is False
+    assert record.tool_uses[0].truncated is False
+    assert record.tool_uses[0].input_summary == arguments
+
+
+def test_claude_tool_use_large_input_flags_truncation() -> None:
+    """A trimmed claude ``tool_use`` input must report truncation at both levels."""
+    large_value = "z" * 1500
+    raw = json.dumps(
+        {
+            "message": {
+                "content": [
+                    {
+                        "id": "toolu_big",
+                        "input": {"command": large_value},
+                        "name": "Bash",
+                        "type": "tool_use",
+                    }
+                ],
+                "role": "assistant",
+            },
+            "type": "assistant",
+        }
+    )
+
+    record = compact_record(raw, line=4, source="claude-code")
+
+    assert record.truncated is True
+    assert record.tool_uses[0].truncated is True
+    assert len(record.tool_uses[0].input_summary) < len(large_value)
+
+
+def test_claude_tool_use_small_input_is_not_truncated() -> None:
+    """A claude ``tool_use`` input below the head bound is reported in full."""
+    raw = json.dumps(
+        {
+            "message": {
+                "content": [
+                    {
+                        "id": "toolu_small",
+                        "input": {"command": "ls -la"},
+                        "name": "Bash",
+                        "type": "tool_use",
+                    }
+                ],
+                "role": "assistant",
+            },
+            "type": "assistant",
+        }
+    )
+
+    record = compact_record(raw, line=4, source="claude-code")
+
+    assert record.truncated is False
+    assert record.tool_uses[0].truncated is False
+    assert record.tool_uses[0].input_summary == '{"command": "ls -la"}'
 
 
 def test_claude_tool_result_command_kind_and_direct_file_path() -> None:
@@ -741,7 +846,9 @@ def test_to_json_serializes_tool_uses_and_tool_results() -> None:
     payload = compact_record_to_json(compact_record(raw, line=4, source="claude-code"))
 
     assert json.loads(json.dumps(payload)) == payload
-    assert payload["tool_uses"] == [{"name": "Bash", "input_summary": '{"a": 1}'}]
+    assert payload["tool_uses"] == [
+        {"name": "Bash", "input_summary": '{"a": 1}', "truncated": False}
+    ]
     assert payload["tool_results"][0]["kind"] == "tool_result"
     assert payload["tool_results"][0]["status"] == "completed"
     assert payload["tool_results"][0]["preview"] == "ok"
