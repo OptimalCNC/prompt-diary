@@ -35,7 +35,7 @@ def test_events_are_frozen_and_carry_fields() -> None:
 def test_event_construction_covers_all_types() -> None:
     events = [
         PrepareStarted(at=0.0, sources=("codex", "claude-code")),
-        PrepareStep(at=0.1, name="copying_transcripts", done=2, total=9),
+        PrepareStep(at=0.1, name="assigning_projects", done=2, total=None),
         PrepareFinished(at=0.2, projects=2, sessions=9),
         RunStarted(at=0.3, label="2026-05-30", kind_totals=(("evidence_extraction", 9),)),
         TaskStarted(

@@ -25,8 +25,8 @@ def _reduce_all(*events: object) -> ProgressState:
 def test_prepare_steps_track_counts() -> None:
     state = _reduce_all(
         PrepareStarted(at=0.0, sources=("codex", "claude-code")),
-        PrepareStep(at=0.1, name="copying_transcripts", done=2, total=9),
-        PrepareStep(at=0.2, name="copying_transcripts", done=5, total=9),
+        PrepareStep(at=0.1, name="assigning_projects", done=2, total=None),
+        PrepareStep(at=0.2, name="assigning_projects", done=5, total=None),
         PrepareStep(
             at=0.3,
             name="scanning_sessions",
@@ -36,7 +36,7 @@ def test_prepare_steps_track_counts() -> None:
         ),
     )
     assert state.prepare_sources == ("codex", "claude-code")
-    assert state.prepare_steps["copying_transcripts"] == (5, 9)
+    assert state.prepare_steps["assigning_projects"] == (5, None)
     assert state.prepare_step_scopes["scanning_sessions"]["codex ~/.codex/sessions"] == (7, 12)
     assert state.prepare_done is False
 

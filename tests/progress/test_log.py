@@ -21,8 +21,8 @@ def test_format_event_lines() -> None:
     assert format_event(PrepareStarted(at=0.0, sources=("codex", "claude-code"))) == (
         "prepare: starting (sources: codex, claude-code)"
     )
-    assert format_event(PrepareStep(at=0.0, name="copying_transcripts", done=4, total=9)) == (
-        "prepare: copying_transcripts 4/9"
+    assert format_event(PrepareStep(at=0.0, name="assigning_projects", done=4, total=None)) == (
+        "prepare: assigning_projects 4"
     )
     assert format_event(
         PrepareStep(

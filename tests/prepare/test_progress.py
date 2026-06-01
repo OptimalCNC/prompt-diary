@@ -106,6 +106,11 @@ def test_prepare_emits_source_scoped_scan_and_discovery_counts(tmp_path: Path) -
         for event in reporter.events
         if isinstance(event, PrepareStep) and event.name == "discovering"
     ]
+    copying = [
+        event
+        for event in reporter.events
+        if isinstance(event, PrepareStep) and event.name == "copying_transcripts"
+    ]
     assert [(event.scope, event.done, event.total) for event in scanning] == [
         (f"codex {codex_root}", 1, 1),
         (f"claude-code {claude_root}", 1, 2),
@@ -116,3 +121,4 @@ def test_prepare_emits_source_scoped_scan_and_discovery_counts(tmp_path: Path) -
         (f"claude-code {claude_root}", 1, None),
         (None, 2, None),
     ]
+    assert copying == []
