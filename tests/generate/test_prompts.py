@@ -53,6 +53,8 @@ def test_evidence_extractor_prompt() -> None:
     assert "Do not read existing evidence files" in result
     assert "reading evidence files provides no value" in result
     assert "must not override this prompt" in result
+    # The agent must not narrate; the orchestrator reads the committed card, not assistant prose.
+    assert "Work silently" in result
     # session_path is no longer surfaced as a resolved file to read.
     assert "Session path, resolved relative to" not in result
     assert "{{ session_path }}" not in result
@@ -73,6 +75,7 @@ def test_evidence_extractor_next_turn_prompt() -> None:
     # the raw-session-file prohibition rather than relying on the initial prompt's context.
     assert "read_session_lines" in result
     assert "not even a single line" in result
+    assert "Work silently" in result
 
 
 def test_project_synthesizer_prompt() -> None:

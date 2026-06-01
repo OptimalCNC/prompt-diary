@@ -96,8 +96,8 @@ records already answer the question.
    and the draft `evidence_chain`.
 5. If `write_evidence` returns `status: invalid`, correct the draft from the returned errors and
    retry. Do not invent evidence to satisfy validation.
-6. After `write_evidence` succeeds, report the committed result and pause. Do not extract another
-   turn unless the orchestrator assigns one.
+6. After `write_evidence` succeeds, stop. Do not narrate, summarize, or restate what you wrote, and
+   do not extract another turn unless the orchestrator assigns one.
 
 ## Evidence Chain Shape
 
@@ -168,6 +168,10 @@ Pass this object as the `evidence_chain` argument to `write_evidence`:
 
 ## Rules
 
+- Work silently: spend output tokens only on tool calls and the `evidence_chain`. Do not narrate
+  your plan or steps, post status updates, or restate the evidence chain in prose before, between,
+  or after tool calls. The orchestrator reads the committed evidence card, not your messages, so any
+  narration is wasted output.
 - The assigned turn becomes exactly one evidence chain.
 - Include `trigger.quoted_messages` for each extractable user-authored message. Preserve message
   boundaries; redact secrets or credentials. If no user-authored text can be extracted, use an

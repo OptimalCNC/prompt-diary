@@ -23,6 +23,6 @@ Assigned turn to extract now:
 {{ target_turn }}
 ```
 
-Start now: extract this turn and make one successful `write_evidence` commit. If `write_evidence`
-returns `status: invalid`, correct the draft from the returned errors and retry. After it succeeds,
-report the committed result and pause.
+Start now: extract this turn and make one successful `write_evidence` commit. Work silently — do not
+narrate or post status messages. If `write_evidence` returns `status: invalid`, correct the draft
+from the returned errors and retry. After it succeeds, stop without summarizing what you wrote.
