@@ -44,7 +44,7 @@ versus deterministically built.
 
 The concrete `daily-report.json` schema — and the mechanism that produces and validates each field —
 is settled together with the AI synthesis workflow (see
-[Daily Synthesizer Prompt](#daily-synthesizer-prompt)), since it depends on how synthesis is driven;
+[AI Synthesis Workflow](#ai-synthesis-workflow)), since it depends on how synthesis is driven;
 it is intentionally not frozen here.
 
 ### Field Provenance
@@ -107,8 +107,8 @@ its `source_user_messages` — is lifted/resolved input, not output fields.
 Another `synthesize`-heavy judgment lens, grounded by mandatory `Citation`s and seeded deterministically
 by `process_outcome` (reuse) and repeated `failed` / `blocked` terminal states (avoid).
 
-Rows for the remaining sections (Executive Summary, Open Items & Next Steps) are settled with the
-workflow. Evidence-quality signals (confidence, limits, citations) are not a section of their own —
+The Executive Summary carries no synthesized fields — it is projected deterministically (select by
+significance, lift text, resolve citations; see [AI Synthesis Workflow](#ai-synthesis-workflow)). Evidence-quality signals (confidence, limits, citations) are not a section of their own —
 they render inline on each claim, so their provenance lives with whichever section carries them.
 
 ## Rendering
@@ -175,18 +175,13 @@ Section "Work by Project" — the day's outcomes, grouped by project then work i
       Toggle "Why" (folded)                   — trigger.summary (+ agent_reaction) · Citation
       Toggle "User messages" (folded)         — verbatim source_user_messages for the work item's turns · Citation
       List of outcomes — what changed · Tag(confidence) · Citation
+      Callout(limit) (only if any) — what this work item did not verify or confirm · work_items[].limits
       (a work item with no material outcome shows its terminal disposition in place of the outcomes)
     Toggle "Minor activity" (folded)          — the project's no-material / trivial work items
-    needs: projects[] → { project_label, summary, work_items[] → { title, kind, disposition,
-           confidence, trigger.summary, agent_reaction.summary,
-           outcomes[] → {what_changed, confidence, citations}, terminal_states[].summary } }
+    needs: projects[] → { project_label, summary → {text, citations}, work_items[] → { title, kind,
+           disposition, confidence, trigger.summary, agent_reaction.summary,
+           outcomes[] → {what_changed, confidence, citations}, terminal_states[].summary, limits[] } }
            + source_user_messages by covered_turn → verbatim {messages} per (session_ref, turn_ref)
-
-Section "Open Items & Next Steps" — what's unfinished or blocked, each with a grounded next step
-  List(bullet)  {the blocked / unfinished work}            · Tag(disposition) · Citation
-                → next step: {grounded action}  (or "help needed: {what}")
-  needs: next_steps[] → {summary, disposition, next_action, citations, confidence}
-         from blocked / interrupted / failed work items + the agent's grounded next action
 
 Section "Engagement Assessment" — a per-person, cited reading of how the user directed, reviewed, corrected, and resumed the work; judged from their messages, not volume, and never a score
   Prose   overall reading — a short qualitative judgment of how substantively the user's messages
@@ -201,7 +196,7 @@ Section "Engagement Assessment" — a per-person, cited reading of how the user 
     List(bullet)  {observation}                              · Tag(confidence) · Citation
   Callout(limit)  what could not be observed — offline thinking and review are not visible, and
                   interaction precision is limited to the work-item grain
-  needs: engagement_assessment → { overall_reading,
+  needs: engagement_assessment → { overall_reading → {text, citations, confidence},
            observations[] → {dimension, statement, citations, confidence}, limits[] }
          evaluated per work item from { trigger.summary, agent_reaction.summary, outcomes[],
            terminal_states[] } + the work item's source_user_messages (verbatim, by covered_turn)
@@ -222,7 +217,7 @@ Section "Team Learning" — reusable, promotable, and avoidable patterns in how 
   Callout(limit)  productivity is read from observable proxies (outcome vs. visible back-and-forth),
                   never a precise effort metric; single-day evidence — recurrence and "improving over
                   time" need cross-day data (deferred); one-offs are flagged, not asserted
-  needs: team_learning → { takeaways,
+  needs: team_learning → { takeaways → {text, citations, confidence},
            patterns[] → {kind(promote|avoid|reuse), statement, rationale, recurrence, citations, confidence},
            limits[] }
          judged from each work item's arc — trigger → corrections (covered_turns / source_user_messages)
@@ -251,6 +246,12 @@ Notes on the purpose-1 region:
   per turn, already secret-redacted) for the work item's covered turns, so a reader can see exactly
   what was asked. It is untrusted display content — the renderer shows it quoted/escaped and never
   interprets it — and the same substrate feeds the engagement and team-learning readings.
+- Evidence honesty stays visible: each work item's `limits` (what it did not verify or could not
+  confirm) render as a visible caveat, not folded, so a completed-looking outcome never hides the
+  boundary that qualifies it. Failures and blocks already show through `disposition`.
+- Synthesized aggregate prose — the project `summary` here, and likewise the engagement overall
+  reading and team-learning takeaways — carries its own `citations` and `confidence`, so no
+  synthesized claim renders uncited.
 
 Notes on the engagement region:
 
@@ -295,16 +296,6 @@ Notes on the team-learning region:
 - Recommended form (Reuse only): a light, generic suggestion — a reusable prompt, checklist, or
   playbook — never a tool-specific build on one day's evidence.
 
-Notes on open items & next steps:
-
-- Consolidates what used to be split across "Problems / Risks / Help Needed", "Blockers and Next
-  Actions", and "Follow-ups": every unfinished or blocked work item with a grounded next step, or an
-  explicit "help needed" where a human decision is required.
-- Daily synthesis owns next actions (project synthesis must not prescribe them); each next step is
-  grounded in the work item's evidence and cited — no speculative advice.
-- The Executive Summary headlines the top open items; this section is the complete list — the
-  "where to resume" view.
-
 ### Markdown Rendering
 
 Markdown rendering serializes the abstract layout to `report.md`. Markdown is a presentation format,
@@ -327,7 +318,6 @@ Block → Markdown:
 - `Empty` → the section's fallback bullet:
   - Executive Summary: `- No supported work claims found for this report window.`
   - Work by Project: `- No supported project-level work items found for this report window.`
-  - Open Items & Next Steps: `- No supported blockers or next actions found.`
   - Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
   - Team Learning: `- No supported reusable agent-driving pattern found.`
 
@@ -363,19 +353,69 @@ Open questions before a Notion renderer is built: how citations link out (worksp
 references have no Notion URL yet), whether a run updates a report in place or appends a new page,
 and how `partial` versus `final` status is surfaced. These are deferred with the rest of view work.
 
-## Daily Synthesizer Prompt
+## AI Synthesis Workflow
 
-This contract is developer-facing: it documents the design for repository developers and
-readers. The daily synthesizer agent never reads it. At runtime the agent sees only the rendered
-prompt below and the workspace files it opens. Any decision in this contract that the agent must
-act on has to be restated as explicit instructions in that prompt source; a cross-reference to
-this contract does not reach the agent.
+Daily synthesis produces `daily-report.json` by **building a deterministic skeleton in code, then
+filling only the `synthesize` fields with focused, tool-validated agent passes**. This keeps the AI
+surface small and makes faithfulness structural: the write tools reject any synthesized claim that
+arrives uncited or with a required field missing, so "every claim is grounded" is enforced rather than
+left to prompt discipline.
 
-The prompt is view-agnostic: it instructs only the production of `daily-report.json` and must not
-mention `report.md`, Markdown, Notion, or any rendering detail. Rendering consumes the model after
-synthesis returns; see [Rendering](#rendering).
+This page is developer-facing — no agent reads it. Each pass sees only its own rendered prompt and the
+workspace files it opens, so any rule a pass must follow has to be restated in that prompt's source.
+Every pass is view-agnostic: it writes model fields only and never mentions `report.md`, Markdown, or
+Notion (rendering consumes the model afterwards — see [Rendering](#rendering)).
 
-Prompt source: `src/prompt_diary/generate/prompts/daily-synthesizer.md` — loaded at runtime by the
-orchestrator.
+### Steps
 
-See [Daily Synthesizer Prompt](./daily-synthesizer-prompt.md).
+1. **Build (code).** Assemble every deterministic field from `project-synthesis.json` and the evidence
+   cards, with no AI: the header (`report_date` / `status` / `window`), all of **Work by Project**
+   except the project `summary`, and the entire **Executive Summary** (select top outcomes and open
+   items by the significance sort, lift their text, resolve citations).
+2. **Synthesize (agent passes).** Fill the remaining `synthesize` fields through the validating tools
+   below.
+3. **Finalize (code).** Derive `overall_confidence` as a roll-up over the per-claim confidences
+   (including the synthesized ones), assemble the full `daily-report.json`, and validate it — all
+   required fields present, every claim-bearing field carrying a resolvable citation.
+
+### Passes
+
+Each pass reads only its substrate and writes only its fields:
+
+| Pass | × | Reads | Writes (through its tool) |
+| --- | --- | --- | --- |
+| **Per-project summary** | N_projects | one project's work items | `projects[p].summary {text, citations}` |
+| **Engagement** | 1 | all work items + their `source_user_messages` | `overall_reading`, `observations[]`, `limits[]` |
+| **Team Learning** | 1 | all work-item arcs + `source_user_messages` | `takeaways`, `patterns[]`, `limits[]` |
+
+Per-project is the project-synthesis pattern one level up — an aggregate within a project, blind to
+other projects. Engagement and Team Learning are whole-report aggregates because their judgments span
+work items (engagement is per-person; team-learning recurrence is cross-item).
+
+### Tool contracts
+
+Each tool follows the `write_evidence` / `write_work_item` pattern: the agent submits a structured
+object; the tool validates it — returning `status: invalid` with structured errors so the agent
+corrects and retries — then commits. Citations are submitted as turn refs `{session_ref, turn_ref}`
+and resolved to line ranges via the evidence card, so a citation that does not resolve is rejected.
+
+- **`write_project_summary(project_key, summary)`** — `summary: {text, citations}`. Rejects an empty
+  `text`, empty `citations`, or a citation outside this project's covered turns.
+- **`write_engagement(engagement_assessment)`** — `{ overall_reading: {text, citations, confidence},
+  observations: [{dimension, statement, citations, confidence} …], limits: [str …] }`. Rejects an
+  empty `overall_reading.text`, any uncited `overall_reading` or observation, or a `dimension` /
+  `confidence` outside its controlled values.
+- **`write_team_learning(team_learning)`** — `{ takeaways: {text, citations, confidence}, patterns:
+  [{kind, statement, rationale, recurrence, citations, confidence} …], limits: [str …] }`. Rejects an
+  empty `takeaways.text`, any uncited `takeaways` or pattern, or a `kind` / `confidence` outside its
+  controlled values.
+
+Each is a single call (the sections are curated, not coverage-bound). These extend the package MCP
+server, which today exposes `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and
+`write_work_item`.
+
+### Prompts
+
+Each pass has its own focused, view-agnostic prompt under `src/prompt_diary/generate/prompts/`, loaded
+at runtime by the orchestrator. The existing `daily-synthesizer.md` predates this design — it targets
+the pre-redesign model — and is superseded by the per-pass prompts when this workflow is implemented.
