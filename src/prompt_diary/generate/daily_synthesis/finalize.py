@@ -2,20 +2,22 @@
 
 Finalize is the deterministic closing step. It reads the post-pass ``daily-report.json``, rolls the
 per-claim confidences of the material work items and the two judgment sections into a single
-``overall_confidence``, and validates the whole document. A report that has any work item must have
-every work-bearing project's ``summary`` filled and both judgment sections present; every filled
-synthesized claim — the project summaries, the engagement and team-learning leads and their
-entries, and the curated Executive Summary headlines — must carry non-empty ``text`` (where it has
-one) and at least one citation; and every stored citation must carry its four resolved keys. The
+``overall_confidence``, and validates the whole document. A report that has any reportable work item
+must have every project-with-reportable-work's ``summary`` filled and both judgment sections
+present; every filled synthesized claim — the project summaries, the engagement and team-learning
+leads and their entries, and the curated Executive Summary headlines — must carry non-empty ``text``
+(where it has one) and at least one citation; and every stored citation must carry its four resolved
+keys. A project whose work items are all gap/excluded kinds has no committed turn to cite, so it is
+not required to carry a summary. The
 faithfully-lifted Work-by-Project ``outcomes[]`` are exempt from the non-empty-citation rule, as an
 uncited upstream outcome is legitimate. On success it writes the report back with
 ``overall_confidence`` filled and returns :class:`FinalizedResult`; a missing required slot, an
 incomplete synthesized claim, or a malformed citation yields :class:`FinalizeInvalidResult` and
 leaves the file untouched.
 
-An empty report — no work items in any project — has no per-claim confidences to roll up, so its
-``overall_confidence`` is ``null`` and its judgment slots stay ``null``; that is a valid finalized
-state, not an error.
+A report with no reportable work item — every project gap-only or excluded-only, or no project at
+all — has no per-claim confidences to roll up, so its ``overall_confidence`` is ``null`` and its
+judgment slots stay ``null``; that is a valid finalized state, not an error.
 """
 
 from __future__ import annotations
@@ -24,7 +26,11 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from prompt_diary.generate.daily_synthesis.model import CONFIDENCE_RANK, DailyReportWriteError
+from prompt_diary.generate.daily_synthesis.model import (
+    CONFIDENCE_RANK,
+    REPORTABLE_WORK_ITEM_KINDS,
+    DailyReportWriteError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -122,24 +128,35 @@ def _ranked(value: object) -> Iterator[int]:
 
 def _validate(report: dict[str, Any]) -> list[DailyReportWriteError]:
     errors: list[DailyReportWriteError] = []
-    if _has_work_items(report):
+    if _has_reportable_work(report):
         errors.extend(_required_slot_errors(report))
         errors.extend(_completeness_errors(report))
     errors.extend(_citation_errors(report))
     return errors
 
 
-def _has_work_items(report: dict[str, Any]) -> bool:
+def _has_reportable_work(report: dict[str, Any]) -> bool:
+    # A report carries judgment only when some project has reportable work (a committed, citable
+    # turn): a report whose work items are all gap/excluded kinds leaves every judgment slot null.
     return any(
-        _as_list(_as_mapping(project).get("work_items"))
+        _has_reportable_work_item(_as_mapping(project))
         for project in _as_list(report.get("projects"))
+    )
+
+
+def _has_reportable_work_item(project: dict[str, Any]) -> bool:
+    return any(
+        _as_mapping(item).get("kind") in REPORTABLE_WORK_ITEM_KINDS
+        for item in _as_list(project.get("work_items"))
     )
 
 
 def _required_slot_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
     for index, project in enumerate(_as_list(report.get("projects"))):
         mapping = _as_mapping(project)
-        if _as_list(mapping.get("work_items")) and mapping.get("summary") is None:
+        # Only a project with reportable work owes a summary: a gap-only / excluded-only project has
+        # no committed turn to summarize, so its null summary is legitimate.
+        if _has_reportable_work_item(mapping) and mapping.get("summary") is None:
             key = _as_str(mapping.get("project_key"))
             yield DailyReportWriteError(
                 f"projects[{index}].summary", _missing_summary_message(key), _SUMMARY_HINT
@@ -183,8 +200,9 @@ def _completeness_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteErr
 def _project_summary_completeness(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
     for index, project in enumerate(_as_list(report.get("projects"))):
         mapping = _as_mapping(project)
-        # A summary that is still null is reported by the required-slot check, not here.
-        if not _as_list(mapping.get("work_items")) or mapping.get("summary") is None:
+        # A summary that is still null is reported by the required-slot check, not here; a gap-only
+        # project is not required to have one, so a null summary there is not an incompleteness.
+        if not _has_reportable_work_item(mapping) or mapping.get("summary") is None:
             continue
         yield from _cited_claim(mapping.get("summary"), f"projects[{index}].summary")
 

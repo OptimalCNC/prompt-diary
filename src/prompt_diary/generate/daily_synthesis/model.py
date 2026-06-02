@@ -32,6 +32,15 @@ OPEN_DISPOSITIONS: frozenset[str] = frozenset({"blocked", "failed", "interrupted
 # The confidence band ranking shared by Build's significance sort and Finalize's roll-up.
 CONFIDENCE_RANK: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
 
+# The work-item kinds that constitute "reportable work": the two kinds project synthesis guarantees
+# cover a committed, citable turn. A project whose work items are all gap/excluded kinds
+# (``evidence_gap_item`` / ``excluded_with_reason``) has no citable turn, so it gets no summary pass
+# and is not required to carry one; a report with no reportable work item anywhere leaves every
+# judgment slot null. The runner's pass gating and Finalize's required-slot checks share this set.
+REPORTABLE_WORK_ITEM_KINDS: frozenset[str] = frozenset(
+    {"material_work_item", "no_material_work_item"}
+)
+
 _MATERIAL_WORK_ITEM = "material_work_item"
 
 

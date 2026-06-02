@@ -39,11 +39,16 @@ if TYPE_CHECKING:
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 PROJECT_LABEL = "ReportGenerator"
 
+# The two distinct project keys in the two-projects fixture, in workspace (sorted dir-name) order.
+TWO_PROJECTS_KEY_A = "ProjectAlpha-aaaaaaaaaaaa"
+TWO_PROJECTS_KEY_B = "ProjectBeta-bbbbbbbbbbbb"
+
 _FIXTURES_ROOT = Path(__file__).parents[1] / "fixtures" / "daily-synthesis"
 FIXTURE_ROOT = _FIXTURES_ROOT / "basic"
 DISPOSITIONS_FIXTURE_ROOT = _FIXTURES_ROOT / "dispositions"
 CORRUPT_FIXTURE_ROOT = _FIXTURES_ROOT / "corrupt"
 EXEC_UNCITED_FIXTURE_ROOT = _FIXTURES_ROOT / "exec-uncited"
+TWO_PROJECTS_FIXTURE_ROOT = _FIXTURES_ROOT / "two-projects"
 
 DAILY_REPORT_NAME = "daily-report.json"
 
@@ -61,6 +66,17 @@ def copy_dispositions_daily_workspace(tmp_path: Path) -> Path:
     Build does not read evidence cards, so this fixture omits them.
     """
     return _copy_workspace(DISPOSITIONS_FIXTURE_ROOT, tmp_path)
+
+
+def copy_two_projects_daily_workspace(tmp_path: Path) -> Path:
+    """Copy a two-project fixture: two distinct project keys, each with one material work item.
+
+    Each project carries a committed evidence chain and a material work item citing it, so the
+    runner runs one summary pass per project plus the shared engagement and team-learning passes.
+    The two projects deliberately reuse the same ``S0001/T0001`` ref, exercising the cross-project
+    labelling that disambiguates repeated session refs.
+    """
+    return _copy_workspace(TWO_PROJECTS_FIXTURE_ROOT, tmp_path)
 
 
 def copy_corrupt_daily_workspace(tmp_path: Path) -> Path:
@@ -87,6 +103,32 @@ def _copy_workspace(fixture_root: Path, tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     shutil.copytree(fixture_root / "workspace", workspace)
     return workspace
+
+
+def rewrite_envelope_gap_only(workspace_path: Path, *, project_key: str = PROJECT_KEY) -> None:
+    """Rewrite a project's envelope so its only work item is a gap item over an unevidenced turn.
+
+    Models a project that project synthesis covered entirely with ``evidence_gap_item`` (no
+    committed, citable turn): Build keeps the gap item in Work by Project, but the runner runs no
+    summary pass for it and Finalize does not require one. ``source_user_messages`` is cleared so
+    the engagement/team-learning inputs carry nothing for this project either.
+    """
+    path = workspace_path / "projects" / project_key / "project-synthesis.json"
+    envelope = _load_json(path)
+    envelope["work_items"] = [
+        {
+            "work_item_ref": "W0001",
+            "kind": "evidence_gap_item",
+            "title": "Indexed turn with no extractable evidence",
+            "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0003"}],
+            "outcomes": [],
+            "terminal_states": [],
+            "limits": [],
+            "confidence": "low",
+        }
+    ]
+    envelope["source_user_messages"] = []
+    path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 
 
 def project_citation(session_ref: str, turn: str) -> dict[str, str]:

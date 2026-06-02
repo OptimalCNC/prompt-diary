@@ -323,11 +323,14 @@ def test_pipeline_emits_blocked_task_finished(tmp_path: Path) -> None:
     assert blocked_event.status == "blocked"
 
 
-def test_standalone_daily_phase_placeholder_fails_explicitly(tmp_path: Path) -> None:
+def test_standalone_daily_phase_propagates_workspace_error(tmp_path: Path) -> None:
+    # On a workspace with no metadata.json, the runner's Build step raises a PromptDiaryError before
+    # any agent turn; like project synthesis, the runner lets it propagate for the pipeline to wrap
+    # into a failed TaskResult, so the agent script is never invoked.
     task = TaskSpec(task_id="placeholder", kind="daily_synthesis")
     factory = FakeAgentSessionFactory(script=_unused_agent_script)
 
-    with pytest.raises(PromptDiaryError, match="daily synthesis phase runner"):
+    with pytest.raises(PromptDiaryError, match="required JSON file is missing"):
         asyncio.run(
             DailySynthesisRunner(agent_factory=factory).run(
                 workspace_path=tmp_path, task=task, reporter=NULL_REPORTER

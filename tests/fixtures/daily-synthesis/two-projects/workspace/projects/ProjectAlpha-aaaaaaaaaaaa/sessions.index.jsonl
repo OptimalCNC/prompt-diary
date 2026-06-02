@@ -1,0 +1,1 @@
+{"session_path": "sessions/codex/session-001.jsonl", "session_ref": "S0001", "source": "codex", "source_session_id": "019e6c3a-a1a1-78b0-8fe5-50ee8ae8da01", "subagent_path": "", "target_start_line": 2, "target_end_line": 8, "turns": [{"turn_ref": "T0001", "turn_start_line": 2, "turn_end_line": 8, "target_subagents": []}]}

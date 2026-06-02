@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "project_key": "ProjectBeta-bbbbbbbbbbbb",
+  "session_ref": "S0001",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User asked Beta to fix the export bug.",
+        "quoted_messages": [
+          {"text": "Fix the export bug in Beta.", "citations": [{"lines": "2-2"}]}
+        ],
+        "citations": [{"lines": "2-2"}]
+      },
+      "agent_reactions": [
+        {"summary": "Traced the export bug to a missing flush and fixed it.", "citations": [{"lines": "3-5"}]}
+      ],
+      "outcomes": [
+        {"category": "code_outcome", "summary": "Export bug fixed with an explicit flush.", "citations": [{"lines": "5-5"}]}
+      ],
+      "observed_checks": [],
+      "terminal_state": {"type": "material_result", "summary": "Export bug fixed.", "citations": [{"lines": "8-8"}]},
+      "materiality": "material"
+    }
+  ]
+}

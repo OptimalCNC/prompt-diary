@@ -22,6 +22,7 @@ from tests.support.daily_synthesis import (
     finalize_daily_report_via_api,
     finalize_result_to_dict,
     load_daily_report,
+    rewrite_envelope_gap_only,
 )
 
 if TYPE_CHECKING:
@@ -420,6 +421,23 @@ def test_finalize_empty_report_does_not_require_judgment_slots(tmp_path: Path) -
     result = finalize_daily_report_via_api(workspace)
 
     assert finalize_result_to_dict(result) == {"status": "finalized", "overall_confidence": None}
+
+
+def test_finalize_gap_only_project_does_not_require_summary(tmp_path: Path) -> None:
+    # A project covered entirely by an evidence_gap_item has no committed turn to summarize, so
+    # Finalize must not require its (null) summary; the gap-only report is a valid, null-judgment
+    # finalized state — exactly like an empty report.
+    workspace = copy_basic_daily_workspace(tmp_path)
+    rewrite_envelope_gap_only(workspace)
+    build_daily_report_via_api(workspace)
+
+    result = finalize_daily_report_via_api(workspace)
+
+    assert finalize_result_to_dict(result) == {"status": "finalized", "overall_confidence": None}
+    report = load_daily_report(workspace)
+    assert report["projects"][0]["summary"] is None
+    assert report["engagement_assessment"] is None
+    assert report["team_learning"] is None
 
 
 def test_finalize_recomputes_on_rerun(tmp_path: Path) -> None:

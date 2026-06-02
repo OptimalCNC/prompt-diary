@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "project_key": "ProjectBeta-bbbbbbbbbbbb",
+  "project_label": "ProjectBeta",
+  "work_items": [
+    {
+      "work_item_ref": "W0001",
+      "kind": "material_work_item",
+      "title": "Fix the export bug in Beta",
+      "covered_turns": [
+        {"session_ref": "S0001", "turn_ref": "T0001"}
+      ],
+      "trigger": {
+        "summary": "User asked Beta to fix the export bug.",
+        "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]
+      },
+      "agent_reaction": {
+        "summary": "Traced the export bug to a missing flush and fixed it.",
+        "main_actions": ["root-cause trace", "flush fix"]
+      },
+      "outcomes": [
+        {
+          "category": "code_outcome",
+          "summary": "Export bug fixed with an explicit flush.",
+          "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+          "confidence": "medium"
+        }
+      ],
+      "terminal_states": [
+        {
+          "type": "material_result",
+          "summary": "Export bug fixed.",
+          "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]
+        }
+      ],
+      "limits": [],
+      "confidence": "medium"
+    }
+  ],
+  "source_user_messages": [
+    {"session_ref": "S0001", "turn_ref": "T0001", "messages": ["Fix the export bug in Beta."]}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "project_key": "ProjectAlpha-aaaaaaaaaaaa",
+  "session_ref": "S0001",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User asked Alpha to add the import command.",
+        "quoted_messages": [
+          {"text": "Add an import command to Alpha.", "citations": [{"lines": "2-2"}]}
+        ],
+        "citations": [{"lines": "2-2"}]
+      },
+      "agent_reactions": [
+        {"summary": "Implemented the import command and wired it into the CLI.", "citations": [{"lines": "3-5"}]}
+      ],
+      "outcomes": [
+        {"category": "code_outcome", "summary": "Import command added to Alpha's CLI.", "citations": [{"lines": "5-5"}]}
+      ],
+      "observed_checks": [],
+      "terminal_state": {"type": "material_result", "summary": "Import command landed.", "citations": [{"lines": "8-8"}]},
+      "materiality": "material"
+    }
+  ]
+}

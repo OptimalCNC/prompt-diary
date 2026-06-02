@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "project_key": "ProjectAlpha-aaaaaaaaaaaa",
+  "project_label": "ProjectAlpha",
+  "work_items": [
+    {
+      "work_item_ref": "W0001",
+      "kind": "material_work_item",
+      "title": "Add the import command to Alpha",
+      "covered_turns": [
+        {"session_ref": "S0001", "turn_ref": "T0001"}
+      ],
+      "trigger": {
+        "summary": "User asked Alpha to add the import command.",
+        "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]
+      },
+      "agent_reaction": {
+        "summary": "Implemented the import command and wired it into the CLI.",
+        "main_actions": ["import command", "CLI wiring"]
+      },
+      "outcomes": [
+        {
+          "category": "code_outcome",
+          "summary": "Import command added to Alpha's CLI.",
+          "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+          "confidence": "high"
+        }
+      ],
+      "terminal_states": [
+        {
+          "type": "material_result",
+          "summary": "Import command landed.",
+          "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]
+        }
+      ],
+      "limits": [],
+      "confidence": "high"
+    }
+  ],
+  "source_user_messages": [
+    {"session_ref": "S0001", "turn_ref": "T0001", "messages": ["Add an import command to Alpha."]}
+  ]
+}
