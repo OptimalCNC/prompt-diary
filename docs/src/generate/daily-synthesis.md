@@ -417,5 +417,6 @@ server, which today exposes `prompt_diary_ping`, `read_session_lines`, `write_ev
 ### Prompts
 
 Each pass has its own focused, view-agnostic prompt under `src/prompt_diary/generate/prompts/`, loaded
-at runtime by the orchestrator. The existing `daily-synthesizer.md` predates this design — it targets
-the pre-redesign model — and is superseded by the per-pass prompts when this workflow is implemented.
+at runtime by the orchestrator: [Project Summary Prompt](./project-summary-prompt.md),
+[Engagement Prompt](./engagement-prompt.md), and [Team Learning Prompt](./team-learning-prompt.md).
+These replace the single pre-redesign `daily-synthesizer` prompt.

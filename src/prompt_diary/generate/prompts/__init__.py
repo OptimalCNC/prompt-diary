@@ -127,6 +127,34 @@ PROJECT_WORK_ITEM_KINDS: tuple[PromptEnumValue, ...] = (
     ),
 )
 
+ENGAGEMENT_DIMENSIONS: tuple[PromptEnumValue, ...] = (
+    PromptEnumValue(
+        "direction",
+        "framing, goals, supplied context, or acceptance criteria that shaped the work",
+    ),
+    PromptEnumValue(
+        "review",
+        "checking a result before moving on, such as an approval or feedback",
+    ),
+    PromptEnumValue("correction", "redirecting the agent after a wrong or failed attempt"),
+    PromptEnumValue("recovery", "resuming stalled, interrupted, or blocked work"),
+)
+
+TEAM_LEARNING_PATTERN_KINDS: tuple[PromptEnumValue, ...] = (
+    PromptEnumValue(
+        "promote",
+        "an effective practice that reached good outcomes efficiently, worth repeating",
+    ),
+    PromptEnumValue(
+        "avoid",
+        "an ineffective practice that cost attention or quality, with the cheaper alternative",
+    ),
+    PromptEnumValue(
+        "reuse",
+        "a repeatable workflow worth capturing: stable inputs, repeatable steps, clear output",
+    ),
+)
+
 
 def _load(name: str) -> str:
     return files("prompt_diary.generate.prompts").joinpath(name).read_text(encoding="utf-8")
@@ -198,6 +226,31 @@ def project_synthesizer_next_prompt(*, project_key: str, uncovered_turns: str) -
     )
 
 
-def daily_synthesizer_prompt() -> str:
-    """Return the daily synthesizer prompt."""
-    return _render("daily-synthesizer.md")
+def project_summary_prompt(*, project_key: str, project_json: str, work_items: str) -> str:
+    """Return the per-project summary prompt with substituted workspace values."""
+    return _render(
+        "project-summary.md",
+        project_key=project_key,
+        project_json=project_json,
+        work_items=work_items,
+    )
+
+
+def engagement_prompt(*, work_items: str, source_user_messages: str) -> str:
+    """Return the engagement prompt with substituted workspace values."""
+    return _render(
+        "engagement.md",
+        work_items=work_items,
+        source_user_messages=source_user_messages,
+        dimension_descriptions=_format_enum_values(ENGAGEMENT_DIMENSIONS),
+    )
+
+
+def team_learning_prompt(*, work_items: str, source_user_messages: str) -> str:
+    """Return the team-learning prompt with substituted workspace values."""
+    return _render(
+        "team-learning.md",
+        work_items=work_items,
+        source_user_messages=source_user_messages,
+        pattern_kind_descriptions=_format_enum_values(TEAM_LEARNING_PATTERN_KINDS),
+    )

@@ -6,11 +6,13 @@ from typer.testing import CliRunner
 
 from prompt_diary.cli import app
 from prompt_diary.generate.prompts import (
-    daily_synthesizer_prompt,
+    engagement_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
+    project_summary_prompt,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
+    team_learning_prompt,
 )
 
 
@@ -129,11 +131,47 @@ def test_project_synthesizer_next_prompt() -> None:
     assert "write_work_item" in result
 
 
-def test_daily_synthesizer_prompt() -> None:
-    result = daily_synthesizer_prompt()
+def test_project_summary_prompt() -> None:
+    result = project_summary_prompt(
+        project_key="ReportGenerator-abc123",
+        project_json='{"project_key":"ReportGenerator-abc123","project_label":"ReportGenerator"}',
+        work_items="**W0001** material_work_item: simplified the MCP evidence tools.",
+    )
 
     assert isinstance(result, str)
     assert len(result) > 0
+    assert "Project key: ReportGenerator-abc123" in result
+    assert "write_project_summary" in result
+    assert "W0001" in result
+
+
+def test_engagement_prompt() -> None:
+    result = engagement_prompt(
+        work_items="**W0001** material_work_item: simplified the MCP evidence tools.",
+        source_user_messages="S0001/T0001: simplify the evidence tools; drop chain_ref.",
+    )
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "write_engagement" in result
+    assert "direction" in result
+    assert "score or grade" in result
+    assert "W0001" in result
+    assert "chain_ref" in result
+
+
+def test_team_learning_prompt() -> None:
+    result = team_learning_prompt(
+        work_items="**W0001** material_work_item: simplified the MCP evidence tools.",
+        source_user_messages="S0001/T0001: simplify the evidence tools; drop chain_ref.",
+    )
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "write_team_learning" in result
+    assert "promote" in result
+    assert "productivity" in result
+    assert "W0001" in result
 
 
 def test_cli_prompts_evidence_extractor() -> None:
@@ -168,9 +206,25 @@ def test_cli_prompts_project_synthesizer_next() -> None:
     assert result.exit_code == 0
 
 
-def test_cli_prompts_daily_synthesizer() -> None:
+def test_cli_prompts_project_summary() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["prompts", "daily-synthesizer"])
+    result = runner.invoke(app, ["prompts", "project-summary"])
+
+    assert result.exit_code == 0
+
+
+def test_cli_prompts_engagement() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["prompts", "engagement"])
+
+    assert result.exit_code == 0
+
+
+def test_cli_prompts_team_learning() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["prompts", "team-learning"])
 
     assert result.exit_code == 0

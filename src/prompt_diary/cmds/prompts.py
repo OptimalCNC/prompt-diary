@@ -7,11 +7,13 @@ from typing import Annotated
 import typer
 
 from prompt_diary.generate.prompts import (
-    daily_synthesizer_prompt,
+    engagement_prompt,
     evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
+    project_summary_prompt,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
+    team_learning_prompt,
 )
 
 ProjectKeyOption = Annotated[str, typer.Option(help="Project key for template substitution.")]
@@ -32,6 +34,12 @@ EvidenceChainsOption = Annotated[
 UncoveredTurnsOption = Annotated[
     str, typer.Option(help="Rendered uncovered-turns list for template substitution.")
 ]
+WorkItemsOption = Annotated[
+    str, typer.Option(help="Rendered work items for template substitution.")
+]
+SourceUserMessagesOption = Annotated[
+    str, typer.Option(help="Rendered source_user_messages for template substitution.")
+]
 
 
 def register(app: typer.Typer) -> None:
@@ -41,7 +49,9 @@ def register(app: typer.Typer) -> None:
     prompts_app.command(name="evidence-extractor-next-turn")(prompts_evidence_extractor_next_turn)
     prompts_app.command(name="project-synthesizer")(prompts_project_synthesizer)
     prompts_app.command(name="project-synthesizer-next")(prompts_project_synthesizer_next)
-    prompts_app.command(name="daily-synthesizer")(prompts_daily_synthesizer)
+    prompts_app.command(name="project-summary")(prompts_project_summary)
+    prompts_app.command(name="engagement")(prompts_engagement)
+    prompts_app.command(name="team-learning")(prompts_team_learning)
     app.add_typer(prompts_app, name="prompts")
 
 
@@ -109,6 +119,45 @@ def prompts_project_synthesizer_next(
     )
 
 
-def prompts_daily_synthesizer() -> None:
-    """Print the daily synthesizer prompt."""
-    typer.echo(daily_synthesizer_prompt())
+def prompts_project_summary(
+    *,
+    project_key: ProjectKeyOption = "<PROJECT_KEY>",
+    project_json: ProjectJsonOption = "<PROJECT_JSON>",
+    work_items: WorkItemsOption = "<WORK_ITEMS>",
+) -> None:
+    """Print the per-project summary prompt."""
+    typer.echo(
+        project_summary_prompt(
+            project_key=project_key,
+            project_json=project_json,
+            work_items=work_items,
+        )
+    )
+
+
+def prompts_engagement(
+    *,
+    work_items: WorkItemsOption = "<WORK_ITEMS>",
+    source_user_messages: SourceUserMessagesOption = "<SOURCE_USER_MESSAGES>",
+) -> None:
+    """Print the engagement prompt."""
+    typer.echo(
+        engagement_prompt(
+            work_items=work_items,
+            source_user_messages=source_user_messages,
+        )
+    )
+
+
+def prompts_team_learning(
+    *,
+    work_items: WorkItemsOption = "<WORK_ITEMS>",
+    source_user_messages: SourceUserMessagesOption = "<SOURCE_USER_MESSAGES>",
+) -> None:
+    """Print the team-learning prompt."""
+    typer.echo(
+        team_learning_prompt(
+            work_items=work_items,
+            source_user_messages=source_user_messages,
+        )
+    )
