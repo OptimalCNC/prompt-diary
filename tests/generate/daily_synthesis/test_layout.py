@@ -231,6 +231,67 @@ def test_layout_work_item_without_limits_has_no_callout(tmp_path: Path) -> None:
     assert _callouts(second_item.children) == []
 
 
+def _no_outcome_material_report() -> dict[str, Any]:
+    """A minimal report whose one material item has a terminal state but no outcomes.
+
+    Work by Project shows the terminal disposition as the visible claim in place of the outcomes, so
+    the terminal state carries its own citation (unscoped within the project group).
+    """
+    citation = {"project_key": "k", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}
+    return {
+        "schema_version": 1,
+        "report_date": "2026-05-28",
+        "status": "final",
+        "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
+        "overall_confidence": "high",
+        "executive_summary": {"top_outcomes": [], "open_items": []},
+        "projects": [
+            {
+                "project_key": "k",
+                "project_label": "Proj",
+                "summary": {"text": "sum", "citations": [citation]},
+                "work_items": [
+                    {
+                        "work_item_ref": "W0001",
+                        "title": "Blocked item",
+                        "kind": "material_work_item",
+                        "disposition": "blocked",
+                        "confidence": "high",
+                        "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+                        "trigger_summary": None,
+                        "agent_reaction_summary": None,
+                        "outcomes": [],
+                        "terminal_states": [
+                            {"summary": "Blocked on a missing dependency.", "citations": [citation]}
+                        ],
+                        "limits": [],
+                    }
+                ],
+                "source_user_messages": [],
+            }
+        ],
+        "engagement_assessment": None,
+        "team_learning": None,
+    }
+
+
+def test_layout_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path) -> None:
+    del tmp_path
+    # A no-outcome material item renders its terminal-state summary in place of the outcomes, and
+    # that claim carries its citation (unscoped within the project group), not a bare line.
+    group = _groups(_section(build_layout(_no_outcome_material_report()), "Work by Project"))[0]
+    item = _lists(group.children)[0].items[0]
+    assert isinstance(item, Group)
+    terminal_claim = _prose(_lists(item.children)[0].items)[0]
+
+    assert terminal_claim.text == "Blocked on a missing dependency."
+    assert terminal_claim.citation is not None
+    assert [ref["scoped"] for ref in terminal_claim.citation.refs] == [False]
+    assert terminal_claim.citation.refs[0]["lines"] == "2-8"
+    # A terminal state has no per-claim confidence, so (unlike an outcome) it shows no such tag.
+    assert terminal_claim.tags == ()
+
+
 def test_layout_minor_activity_toggle_gathers_minor_items(tmp_path: Path) -> None:
     group = _groups(_section(build_layout(_finalized_report(tmp_path)), "Work by Project"))[0]
     minor = [t for t in _toggles(group.children) if t.label == "Minor activity"]
@@ -283,6 +344,15 @@ def test_layout_engagement_overall_reading_and_present_group(tmp_path: Path) -> 
     assert [(tag.scale, tag.value) for tag in statement.tags] == [("confidence", "medium")]
 
 
+def test_layout_engagement_overall_reading_carries_confidence_tag(tmp_path: Path) -> None:
+    # The overall_reading is a standalone judgment, so its lead Prose carries its own confidence as
+    # an inline tag — it must not render unhedged.
+    section = _section(build_layout(_finalized_report(tmp_path)), "Engagement Assessment")
+
+    reading = _prose(section.children)[0]
+    assert [(tag.scale, tag.value) for tag in reading.tags] == [("confidence", "medium")]
+
+
 def test_layout_engagement_has_limit_callout(tmp_path: Path) -> None:
     section = _section(build_layout(_finalized_report(tmp_path)), "Engagement Assessment")
 
@@ -312,6 +382,14 @@ def test_layout_team_learning_takeaways_and_present_group(tmp_path: Path) -> Non
         "· recurrence: single sighting; likely to recur for future test design"
     )
     assert [(tag.scale, tag.value) for tag in pattern.tags] == [("confidence", "low")]
+
+
+def test_layout_team_learning_takeaways_carries_confidence_tag(tmp_path: Path) -> None:
+    # The takeaways is a standalone judgment, so its lead Prose carries its own confidence tag.
+    section = _section(build_layout(_finalized_report(tmp_path)), "Team Learning")
+
+    takeaways = _prose(section.children)[0]
+    assert [(tag.scale, tag.value) for tag in takeaways.tags] == [("confidence", "low")]
 
 
 # --- empty report -----------------------------------------------------------------------------

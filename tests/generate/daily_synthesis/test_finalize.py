@@ -65,6 +65,29 @@ def _material_item(*, confidence: str, outcome_confidences: list[str]) -> dict[s
     }
 
 
+def _no_outcome_material_item(*, terminal_citations: list[dict[str, str]]) -> dict[str, Any]:
+    """A material item with a blocked terminal and NO outcomes — the terminal is the visible claim.
+
+    With no outcomes, Work by Project renders this item's ``terminal_states[].summary`` in place of
+    the outcomes, so finalize requires each such terminal state to carry a citation.
+    """
+    return {
+        "work_item_ref": "W0001",
+        "title": "Blocked, no material outcome",
+        "kind": "material_work_item",
+        "disposition": "blocked",
+        "confidence": "high",
+        "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+        "trigger_summary": "t",
+        "agent_reaction_summary": "r",
+        "outcomes": [],
+        "terminal_states": [
+            {"summary": "Blocked on a missing dependency.", "citations": terminal_citations}
+        ],
+        "limits": [],
+    }
+
+
 def _report_with_items(work_items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -95,6 +118,18 @@ def _report_with_items(work_items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _roll_up_workspace(tmp_path: Path) -> Path:
+    """A workspace whose committed evidence backs the hand-built ``_report_with_items`` citations.
+
+    Finalize re-resolves every stored citation against the prepared workspace's committed turns, so
+    a roll-up/validation report whose citations are ``_citation()`` (the basic fixture's committed
+    ``S0001/T0001`` → lines ``2-8``) must run over the basic fixture, not an empty workspace with
+    no committed turn to resolve them against. The hand-built report is then written over the seeded
+    one; finalize reads that file plus the workspace's session index and evidence cards.
+    """
+    return copy_basic_daily_workspace(tmp_path)
+
+
 # --- overall_confidence roll-up ---------------------------------------------------------------
 
 
@@ -112,7 +147,7 @@ def test_finalize_fixture_overall_confidence_medium(tmp_path: Path) -> None:
 
 
 def test_finalize_rounds_to_high(tmp_path: Path) -> None:
-    workspace = empty_daily_workspace(tmp_path)
+    workspace = _roll_up_workspace(tmp_path)
     # Material high (3) + outcome high (3); engagement/team high (3,3) -> mean 3.0 -> high.
     _write_report(
         workspace,
@@ -125,7 +160,7 @@ def test_finalize_rounds_to_high(tmp_path: Path) -> None:
 
 
 def test_finalize_high_boundary_at_two_point_five(tmp_path: Path) -> None:
-    workspace = empty_daily_workspace(tmp_path)
+    workspace = _roll_up_workspace(tmp_path)
     report = _report_with_items([_material_item(confidence="high", outcome_confidences=["high"])])
     report["team_learning"]["takeaways"]["confidence"] = "medium"
     report["engagement_assessment"]["overall_reading"]["confidence"] = "medium"
@@ -137,7 +172,7 @@ def test_finalize_high_boundary_at_two_point_five(tmp_path: Path) -> None:
 
 
 def test_finalize_rounds_to_low(tmp_path: Path) -> None:
-    workspace = empty_daily_workspace(tmp_path)
+    workspace = _roll_up_workspace(tmp_path)
     report = _report_with_items([_material_item(confidence="low", outcome_confidences=["low"])])
     report["engagement_assessment"]["overall_reading"]["confidence"] = "low"
     report["team_learning"]["takeaways"]["confidence"] = "low"
@@ -149,7 +184,7 @@ def test_finalize_rounds_to_low(tmp_path: Path) -> None:
 
 
 def test_finalize_medium_boundary_at_one_point_five(tmp_path: Path) -> None:
-    workspace = empty_daily_workspace(tmp_path)
+    workspace = _roll_up_workspace(tmp_path)
     report = _report_with_items([_material_item(confidence="medium", outcome_confidences=["low"])])
     report["engagement_assessment"]["overall_reading"]["confidence"] = "low"
     report["team_learning"]["takeaways"]["confidence"] = "medium"
@@ -161,7 +196,7 @@ def test_finalize_medium_boundary_at_one_point_five(tmp_path: Path) -> None:
 
 
 def test_finalize_ignores_non_material_confidences(tmp_path: Path) -> None:
-    workspace = empty_daily_workspace(tmp_path)
+    workspace = _roll_up_workspace(tmp_path)
     non_material: dict[str, Any] = {
         "work_item_ref": "W0002",
         "title": "minor",
@@ -189,7 +224,7 @@ def test_finalize_ignores_non_material_confidences(tmp_path: Path) -> None:
 
 
 def test_finalize_collects_observation_and_pattern_confidences(tmp_path: Path) -> None:
-    workspace = empty_daily_workspace(tmp_path)
+    workspace = _roll_up_workspace(tmp_path)
     report = _report_with_items([_material_item(confidence="high", outcome_confidences=["high"])])
     report["engagement_assessment"]["observations"] = [
         {
@@ -287,12 +322,98 @@ def test_finalize_accepts_well_formed_report(tmp_path: Path) -> None:
     assert finalize_result_to_dict(result)["status"] == "finalized"
 
 
+# --- validation: citations re-resolved against committed evidence (defense-in-depth) ----------
+
+
+def test_finalize_rejects_citation_with_wrong_lines(tmp_path: Path) -> None:
+    # Defense-in-depth: a citation can carry all four keys yet a span that disagrees with the
+    # session index — the shape it would have if an agent hand-edited daily-report.json instead of
+    # going through a write tool. Finalize re-resolves it and rejects the mismatch.
+    workspace = _built_and_filled(tmp_path)
+    report = load_daily_report(workspace)
+    report["projects"][0]["summary"]["citations"][0]["lines"] = "99-100"
+
+    _write_report(workspace, report)
+    result = finalize_daily_report_via_api(workspace)
+
+    payload = finalize_result_to_dict(result)
+    assert payload["status"] == "invalid"
+    assert "projects[0].summary.citations[0]" in [error["path"] for error in payload["errors"]]
+
+
+def test_finalize_rejects_citation_for_non_committed_turn(tmp_path: Path) -> None:
+    # A fabricated citation to a turn with no committed evidence (here one not even in the session
+    # index) is rejected on re-resolution even though it carries all four keys.
+    workspace = _built_and_filled(tmp_path)
+    report = load_daily_report(workspace)
+    citation = report["engagement_assessment"]["overall_reading"]["citations"][0]
+    citation["turn_ref"] = "T9999"
+    citation["lines"] = "2-8"
+
+    _write_report(workspace, report)
+    result = finalize_daily_report_via_api(workspace)
+
+    payload = finalize_result_to_dict(result)
+    assert payload["status"] == "invalid"
+    assert "engagement_assessment.overall_reading.citations[0]" in [
+        error["path"] for error in payload["errors"]
+    ]
+
+
+# --- validation: a no-outcome material item's terminal claim must be cited --------------------
+
+
+def test_finalize_accepts_no_outcome_material_item_with_cited_terminal(tmp_path: Path) -> None:
+    # A material item with no outcomes renders its terminal disposition as the visible claim; when
+    # that terminal carries a committed citation, finalize accepts the report.
+    workspace = _roll_up_workspace(tmp_path)
+    report = _report_with_items([_no_outcome_material_item(terminal_citations=[_citation()])])
+    _write_report(workspace, report)
+
+    result = finalize_daily_report_via_api(workspace)
+
+    assert finalize_result_to_dict(result)["status"] == "finalized"
+
+
+def test_finalize_rejects_no_outcome_material_item_with_uncited_terminal(tmp_path: Path) -> None:
+    # The same item with an uncited terminal would render an uncited claim, so finalize rejects it
+    # at that terminal state's citations path.
+    workspace = _roll_up_workspace(tmp_path)
+    report = _report_with_items([_no_outcome_material_item(terminal_citations=[])])
+    _write_report(workspace, report)
+
+    payload = finalize_result_to_dict(finalize_daily_report_via_api(workspace))
+
+    assert payload["status"] == "invalid"
+    assert "projects[0].work_items[0].terminal_states[0].citations" in [
+        error["path"] for error in payload["errors"]
+    ]
+
+
+def test_finalize_tolerates_uncited_terminal_when_item_has_outcomes(tmp_path: Path) -> None:
+    # When a material item HAS outcomes, the outcomes are the visible claim and the terminal states
+    # do not render, so an uncited terminal state is not an incompleteness. ``_material_item``
+    # carries an outcome and a terminal state with no citations, and finalize accepts it.
+    workspace = _roll_up_workspace(tmp_path)
+    report = _report_with_items([_material_item(confidence="high", outcome_confidences=["high"])])
+    _write_report(workspace, report)
+
+    result = finalize_daily_report_via_api(workspace)
+
+    assert finalize_result_to_dict(result)["status"] == "finalized"
+
+
 # --- validation: incomplete synthesized claims ------------------------------------------------
 
 
 def _invalid_paths(tmp_path: Path, mutate: Any) -> list[str]:
-    """Build a valid filled report, apply ``mutate`` to it, finalize, and return the error paths."""
-    workspace = empty_daily_workspace(tmp_path)
+    """Build a valid filled report, apply ``mutate`` to it, finalize, and return the error paths.
+
+    Runs over the basic fixture so the report's ``_citation()`` citations re-resolve cleanly and
+    the ONLY error is the one ``mutate`` introduces — not a spurious unsound-citation error from an
+    empty workspace that has no committed turn to resolve them against.
+    """
+    workspace = _roll_up_workspace(tmp_path)
     report = _report_with_items([_material_item(confidence="high", outcome_confidences=["high"])])
     mutate(report)
     _write_report(workspace, report)

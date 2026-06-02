@@ -84,7 +84,7 @@ evidence and cannot ground a claim.
       "trigger_summary": "…",
       "agent_reaction_summary": "…",
       "outcomes": [{"what_changed": "…", "confidence": "high", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]}],
-      "terminal_states": [{"summary": "…"}],
+      "terminal_states": [{"summary": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]}],
       "limits": ["…"]
     }],
     "source_user_messages": [{"session_ref": "S0001", "turn_ref": "T0001", "messages": ["…"]}]
@@ -112,6 +112,11 @@ Field shapes follow the [Field Provenance](#field-provenance) tables. Notes on t
 - `disposition` is set only for `material_work_item`s (one of `completed` / `blocked` / `interrupted`
   / `failed` / `clarification`); minor kinds (`no_material_work_item`, `evidence_gap_item`,
   `excluded_with_reason`) carry `null` and fold into "Minor activity".
+- `terminal_states[]` carries `{summary, citations}` (citations resolved from the work item's
+  `terminal_states[].evidence_refs`, like `outcomes[]`). A material work item with no `outcomes`
+  shows its terminal disposition as the visible claim in place of the outcomes, so each such terminal
+  state must be cited; finalize rejects a no-outcome material item whose rendered terminal claim is
+  uncited.
 - `covered_turns` is lifted onto each work item so rendering can join the project-level
   `source_user_messages` to the work item's "User messages" toggle.
 - The per-project `summary` carries `text` + `citations` only — its confidence is implicit in the
@@ -148,11 +153,12 @@ AI synthesis workflow.
 | work item `title` | `work_items[].title` | lift |
 | `Why` (trigger / agent reaction) | `trigger.summary`, `agent_reaction.summary` | lift |
 | outcome `what changed` | `outcomes[].summary` | lift |
+| terminal `summary` (no-outcome fallback claim) | `terminal_states[].summary` | lift |
 | `confidence` | `work_items[].confidence`, `outcomes[].confidence` | lift |
 | `User messages` | `source_user_messages` (tool-populated) | lift |
 | `disposition` | `terminal_states` + `outcomes` | derive |
 | ordering · material/Minor split | `kind` + sort rule | derive |
-| `Citation` | `evidence_refs` → lines via the session index | resolve |
+| `Citation` | `outcomes[]` / `terminal_states[]` `evidence_refs` → lines via the session index | resolve |
 | project `summary` | the project's work items | **synthesize** |
 
 **Engagement Assessment**
@@ -258,7 +264,8 @@ Section "Work by Project" — the day's outcomes, grouped by project then work i
     Toggle "Minor activity" (folded)          — the project's no-material / trivial work items
     needs: projects[] → { project_label, summary → {text, citations}, work_items[] → { title, kind,
            disposition, confidence, trigger.summary, agent_reaction.summary,
-           outcomes[] → {what_changed, confidence, citations}, terminal_states[].summary, limits[] } }
+           outcomes[] → {what_changed, confidence, citations},
+           terminal_states[] → {summary, citations}, limits[] } }
            + source_user_messages by covered_turn → verbatim {messages} per (session_ref, turn_ref)
 
 Section "Engagement Assessment" — a per-person, cited reading of how the user directed, reviewed, corrected, and resumed the work; judged from their messages, not volume, and never a score
@@ -455,7 +462,11 @@ Notion (rendering consumes the model afterwards — see [Rendering](#rendering))
    below.
 3. **Finalize (code).** Derive `overall_confidence` as a roll-up over the per-claim confidences
    (including the synthesized ones), assemble the full `daily-report.json`, and validate it — all
-   required fields present, every claim-bearing field carrying a resolvable citation.
+   required fields present, every claim-bearing field carrying a resolvable citation. As
+   defense-in-depth against a pass that edits `daily-report.json` directly instead of through a
+   validating write tool, Finalize re-resolves *every* stored citation against the prepared
+   workspace: a citation is rejected unless it carries its four keys, names a committed turn of its
+   own project, and carries the exact line span the session index resolves that turn to.
 
 Two deterministic-rule choices are fixed for the MVP, both tunable later:
 

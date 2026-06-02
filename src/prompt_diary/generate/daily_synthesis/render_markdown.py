@@ -11,6 +11,18 @@ report, the evidence cards, or the work items, and it synthesizes no prose of it
 claims" guarantee is therefore structural: a block's text is rendered as-is, a citation is formatted
 from its stored ``session_ref``/``lines``, and verbatim user messages are quoted and escaped as
 untrusted display content, never interpreted.
+
+Every model-derived display string is session-derived and therefore a prompt-injection surface:
+titles, summaries, statements, rationale, recurrence, limits, outcome / exec text, and project
+labels can all carry active Markdown (links, images, headings, code spans) or, via embedded
+newlines, forge a new block. So the renderer Markdown-neutralizes *all* of them — not just the
+verbatim user messages — through one escaper: it HTML-escapes, backslash-escapes the Markdown
+punctuation, and neutralizes a leading ``#`` so none of that activates. Single-block strings
+(headings, prose) additionally collapse embedded newlines so one model string cannot open a second
+block; callout text keeps its newlines because every callout line is re-prefixed with ``>``. Only
+renderer-controlled tokens (the resolved ``session_ref``/``lines``, the controlled disposition /
+confidence tags, the status / window / overall-confidence metadata, and the fixed Empty fallbacks)
+stay on the plain HTML-escape — they cannot carry free model text.
 """
 
 from __future__ import annotations
@@ -46,7 +58,7 @@ _OUTPUT_NAME = "report.md"
 _SECTION_BASE_LEVEL = 2
 _MAX_HEADING_LEVEL = 6
 
-# The Markdown punctuation neutralized in an untrusted user message so links, images, emphasis, and
+# The Markdown punctuation neutralized in every model-derived string so links, images, emphasis, and
 # code spans render literally. A leading ``#``/``>`` is handled per-line separately, since those are
 # only special at the start of a line. Backslash-escaped in this order after the HTML-escape.
 _MARKDOWN_PUNCTUATION = ("`", "*", "_", "[", "]", "(", ")", "!")
@@ -105,7 +117,10 @@ def _render_group(group: Group, *, level: int) -> list[str]:
 def _render_container(
     title: str, children: tuple[Block, ...], *, level: int, tags: tuple[Tag, ...]
 ) -> list[str]:
-    heading = f"{'#' * min(level, _MAX_HEADING_LEVEL)} {_escape(title)}{_tag_suffix(tags)}"
+    # A title is a single-block model string (a Section constant or a model-derived Group label),
+    # so it is fully Markdown-neutralized and newline-collapsed: it cannot inject a link/image or
+    # break out of its heading line into a forged block.
+    heading = f"{'#' * min(level, _MAX_HEADING_LEVEL)} {_escape_inline(title)}{_tag_suffix(tags)}"
     lines: list[str] = [heading]
     for child in children:
         lines.append("")
@@ -150,39 +165,54 @@ def _render_toggle(block: Toggle, *, level: int) -> list[str]:
 
 
 def _render_callout(block: Callout) -> list[str]:
-    # A "quote" callout carries untrusted verbatim user text: HTML-escape it so embedded markup
-    # cannot break out of the blockquote or the enclosing <details>, and additionally neutralize
-    # Markdown so links/images/emphasis render literally rather than activating. Other tones carry
-    # trusted model prose, still HTML-escaped so any stray ``<…>`` renders as text, not markup. A
-    # blank line in ``text`` separates blockquote paragraphs (one limit per paragraph).
-    escaped = _escape_user_message(block.text) if block.tone == "quote" else _escape(block.text)
-    return [f"> {line}" if line else ">" for line in escaped.split("\n")]
+    # Every callout carries model-derived text — a verbatim user message ("quote") or session
+    # derived model prose such as a work-item limit. Both are Markdown-neutralized (HTML-escape +
+    # punctuation + leading ``#``) so embedded markup cannot break out of the blockquote or the
+    # enclosing <details>, and links/images/emphasis render literally rather than activating.
+    # Newlines are kept (not collapsed): every produced line is re-prefixed with ``>``, so a newline
+    # only opens another blockquote line, never a forged block — and a blank line in ``text``
+    # separates blockquote paragraphs (one limit per paragraph).
+    return [f"> {line}" if line else ">" for line in _escape_markdown(block.text).split("\n")]
 
 
 def _escape(text: str) -> str:
-    """HTML-escape a model string so any embedded ``&``/``<``/``>`` renders as literal text.
+    """HTML-escape a string so any embedded ``&``/``<``/``>`` renders as literal text.
 
-    Applied to *every* model-derived string the renderer emits — titles, summaries, statements,
-    outcome text, the properties line, project labels, and user messages — so embedded HTML such as
-    ``</details>`` cannot prematurely close a toggle or otherwise break the report structure. The
-    renderer's own Markdown punctuation is added around the escaped string, never escaped.
+    The base escape for the renderer-controlled tokens — the resolved ``session_ref``/``lines``, the
+    controlled disposition / confidence tags, the status / window / overall-confidence metadata, and
+    the fixed Empty fallbacks — so embedded HTML such as ``</details>`` cannot prematurely close a
+    toggle or otherwise break the report structure. Free model text instead goes through
+    :func:`_escape_markdown` / :func:`_escape_inline`, which build on this. The renderer's own
+    Markdown punctuation is added around the escaped string, never escaped.
     """
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _escape_user_message(text: str) -> str:
-    """Escape an untrusted user message: HTML-escape, then neutralize Markdown punctuation.
+def _escape_markdown(text: str) -> str:
+    """Neutralize a model-derived string: HTML-escape, then disable Markdown punctuation.
 
     On top of :func:`_escape`, backslash-escape the punctuation that activates Markdown — code
-    spans, emphasis, links, and images — plus a leading ``#`` (heading) on a line, so a message
-    renders exactly as typed instead of becoming an active link, image, heading, or formatting run.
-    A leading ``>`` (blockquote) needs no special case: :func:`_escape` has already turned it into
-    ``&gt;``, which is not a blockquote marker.
+    spans, emphasis, links, and images — plus a leading ``#`` (heading) on each line, so the string
+    renders exactly as written instead of becoming an active link, image, heading, or formatting
+    run. A leading ``>`` (blockquote) needs no special case: :func:`_escape` has already turned it
+    into ``&gt;``, which is not a blockquote marker. Newlines are preserved — callers that render
+    into a single block collapse them via :func:`_escape_inline`; callout text keeps them because
+    every callout line is re-prefixed with ``>``.
     """
     escaped = _escape(text)
     for char in _MARKDOWN_PUNCTUATION:
         escaped = escaped.replace(char, "\\" + char)
     return "\n".join(_escape_heading_lead(line) for line in escaped.split("\n"))
+
+
+def _escape_inline(text: str) -> str:
+    """Neutralize a single-block model string (a heading or prose run).
+
+    On top of :func:`_escape_markdown`, collapse every embedded newline to a space so the string
+    cannot break out of its one line/paragraph and open a forged heading, list, or section below
+    it. Used where the rendered string must stay a single block: headings and prose lines.
+    """
+    return _escape_markdown(text).replace("\n", " ")
 
 
 def _escape_heading_lead(line: str) -> str:
@@ -196,7 +226,10 @@ def _escape_heading_lead(line: str) -> str:
 
 
 def _prose_line(block: Prose) -> str:
-    parts = [_escape(block.text), *(f"· {_escape(tag.value)}" for tag in block.tags)]
+    # The prose text is a single-block model string, so it is fully Markdown-neutralized and
+    # newline-collapsed. The tags are controlled scale values (disposition / confidence), not free
+    # text, so the plain HTML-escape suffices for them.
+    parts = [_escape_inline(block.text), *(f"· {_escape(tag.value)}" for tag in block.tags)]
     if block.citation is not None:
         parts.append(_citation_text(block.citation))
     return " ".join(parts)
@@ -207,9 +240,12 @@ def _citation_text(citation: Citation) -> str:
 
 
 def _ref_text(ref: dict[str, Any]) -> str:
+    # ``session_ref``/``lines`` are resolver-produced tokens (e.g. ``S0001``, ``2-8``), so the plain
+    # HTML-escape suffices. The scoped ``project_label`` is a model-derived string, so it is
+    # Markdown-neutralized like any other display label.
     body = f"{_escape(_ref_str(ref, 'session_ref'))}:{_escape(_ref_str(ref, 'lines'))}"
     if ref.get("scoped"):
-        return f"{_escape(_ref_str(ref, 'project_label'))} · {body}"
+        return f"{_escape_inline(_ref_str(ref, 'project_label'))} · {body}"
     return body
 
 

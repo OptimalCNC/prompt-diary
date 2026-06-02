@@ -12,6 +12,9 @@ import asyncio
 import re
 from typing import TYPE_CHECKING
 
+import pytest
+
+from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.runner import DailySynthesisRunner
 from prompt_diary.generate.pipeline import (
     TaskSpec,
@@ -24,6 +27,7 @@ from tests.support.daily_synthesis import (
     TWO_PROJECTS_KEY_A,
     TWO_PROJECTS_KEY_B,
     copy_basic_daily_workspace,
+    copy_corrupt_daily_workspace,
     copy_two_projects_daily_workspace,
     empty_daily_workspace,
     load_daily_report,
@@ -225,6 +229,28 @@ def test_runner_clears_stale_report_md_when_run_fails(tmp_path: Path) -> None:
 
     assert result.status == "failed"
     assert not stale.exists()
+
+
+def test_runner_clears_stale_report_md_when_build_raises(tmp_path: Path) -> None:
+    # report.md is reset before Build, so a Build that raises on a corrupt envelope also clears a
+    # stale rendered report rather than leaving it beside a now-absent/partial daily-report.json.
+    # The error propagates out of run (the pipeline marks the task failed); the stale file is gone.
+    workspace = copy_corrupt_daily_workspace(tmp_path)
+    stale = _report_md(workspace)
+    stale.write_text("# stale report from a previous run\n", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+    runner = DailySynthesisRunner(agent_factory=factory)
+
+    async def run() -> None:
+        async with factory:
+            await runner.run(workspace_path=workspace, task=_task())
+
+    with pytest.raises(PromptDiaryError):
+        asyncio.run(run())
+
+    assert not stale.exists()
+    # Build raised before any pass ran, so no synthesize conversation was minted.
+    assert factory.runners == []
 
 
 def test_runner_fails_when_finalize_rejects(tmp_path: Path) -> None:

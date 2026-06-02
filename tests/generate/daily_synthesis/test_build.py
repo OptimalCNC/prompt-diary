@@ -132,8 +132,20 @@ def test_build_w0001_full_view(tmp_path: Path) -> None:
             ],
         }
     ]
+    # A no-outcome material item shows its terminal summary as the visible claim, so each terminal
+    # state carries its own resolved citations (like an outcome) rather than rendering uncited.
     assert item["terminal_states"] == [
-        {"summary": "Extraction surface updated to turn_ref identity."}
+        {
+            "summary": "Extraction surface updated to turn_ref identity.",
+            "citations": [
+                {
+                    "project_key": PROJECT_KEY,
+                    "session_ref": "S0001",
+                    "turn_ref": "T0001",
+                    "lines": "2-8",
+                }
+            ],
+        }
     ]
     assert item["limits"] == ["Prompt-test suite not confirmed green within these turns."]
 

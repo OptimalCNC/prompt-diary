@@ -78,11 +78,12 @@ class DailySynthesisRunner:
     ) -> TaskResult:
         """Run the daily synthesis task: Build, the agent passes, Finalize, and render."""
         del reporter
-        report = build_daily_report(workspace_path=workspace_path)
-        # report.md must exist only after a successful render: clear a stale one from a previous
-        # successful run so a run that now fails (a pass writes nothing, or Finalize rejects) does
-        # not leave it beside the new, partial daily-report.json.
+        # report.md must exist only after a successful render, so clear a stale one from a previous
+        # run before anything else — including before Build. A run that now fails (Build raises on a
+        # corrupt envelope, a pass writes nothing, or Finalize rejects) must not leave the old
+        # rendered report beside the new, partial daily-report.json.
         _reset_rendered_report(workspace_path)
+        report = build_daily_report(workspace_path=workspace_path)
 
         for project_key in _work_bearing_projects(report):
             failure = await self._run_project_summary(workspace_path, task, project_key)

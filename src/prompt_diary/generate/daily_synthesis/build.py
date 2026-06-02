@@ -178,7 +178,16 @@ def _work_item_view(item: WorkItem, project_key: str, resolver: CitationResolver
             }
             for outcome in item.outcomes
         ],
-        "terminal_states": [{"summary": state.summary} for state in item.terminal_states],
+        # A no-outcome material work item renders its terminal-state summary as the visible claim in
+        # place of the outcomes, so each terminal state carries its own resolved citations — like an
+        # outcome — rather than rendering uncited.
+        "terminal_states": [
+            {
+                "summary": state.summary,
+                "citations": _resolve_refs(state.evidence_refs, project_key, resolver),
+            }
+            for state in item.terminal_states
+        ],
         "limits": list(item.limits),
     }
 

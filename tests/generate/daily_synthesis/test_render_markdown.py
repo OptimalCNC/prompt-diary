@@ -17,6 +17,7 @@ from prompt_diary.generate.daily_synthesis.layout import (
     Document,
     Group,
     ListBlock,
+    Prose,
     Section,
     Tag,
     Toggle,
@@ -84,8 +85,10 @@ def test_render_executive_summary_outcomes_with_scoped_citations(tmp_path: Path)
     _, text, _ = _render_basic(tmp_path)
 
     assert "## Executive Summary" in text
+    # The model text is Markdown-neutralized: the intraword ``_`` in turn_ref/chain_ref is
+    # backslash-escaped (renders literally), so the golden carries ``turn\_ref`` / ``chain\_ref``.
     assert (
-        "- Top-level turn_ref adopted; chain_ref removed from the evidence surface. "
+        "- Top-level turn\\_ref adopted; chain\\_ref removed from the evidence surface. "
         "[ReportGenerator · S0001:2-8]"
     ) in text
     assert "- Three-layer QA strategy delivered. [ReportGenerator · S0002:2-6]" in text
@@ -108,11 +111,12 @@ def test_render_work_by_project_group_and_summary(tmp_path: Path) -> None:
 def test_render_work_item_heading_with_tags_and_unscoped_outcome(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
-    assert "#### Simplify the MCP evidence tools and drop chain_ref — completed · high" in text
+    # The work-item title is Markdown-neutralized too: the heading carries ``chain\_ref``.
+    assert "#### Simplify the MCP evidence tools and drop chain\\_ref — completed · high" in text
     # Outcome citation is unscoped within the project; the outcome's own confidence renders inline
     # as a tag (it may differ from the work item's), before the citation.
     assert (
-        "- Top-level turn_ref adopted; chain_ref removed from the evidence surface. "
+        "- Top-level turn\\_ref adopted; chain\\_ref removed from the evidence surface. "
         "· high [S0001:2-8]"
     ) in text
 
@@ -135,6 +139,54 @@ def test_render_work_item_limit_callout_is_blockquote(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
     assert "> Prompt-test suite not confirmed green within these turns." in text
+
+
+def test_render_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path) -> None:
+    del tmp_path
+    # A no-outcome material item renders its terminal-state summary as the visible claim, and that
+    # claim is cited (unscoped within the project group) rather than rendering bare.
+    citation = {"project_key": "k", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "report_date": "2026-05-28",
+        "status": "final",
+        "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
+        "overall_confidence": "high",
+        "executive_summary": {"top_outcomes": [], "open_items": []},
+        "projects": [
+            {
+                "project_key": "k",
+                "project_label": "Proj",
+                "summary": {"text": "sum", "citations": [citation]},
+                "work_items": [
+                    {
+                        "work_item_ref": "W0001",
+                        "title": "Blocked item",
+                        "kind": "material_work_item",
+                        "disposition": "blocked",
+                        "confidence": "high",
+                        "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+                        "trigger_summary": None,
+                        "agent_reaction_summary": None,
+                        "outcomes": [],
+                        "terminal_states": [
+                            {"summary": "Blocked on a missing dependency.", "citations": [citation]}
+                        ],
+                        "limits": [],
+                    }
+                ],
+                "source_user_messages": [],
+            }
+        ],
+        "engagement_assessment": None,
+        "team_learning": None,
+    }
+
+    text = render_markdown(build_layout(report))
+
+    assert "#### Blocked item — blocked · high" in text
+    # The terminal-state summary renders as the bullet claim, carrying its unscoped citation.
+    assert "- Blocked on a missing dependency. [S0001:2-8]" in text
 
 
 def test_render_minor_activity_toggle(tmp_path: Path) -> None:
@@ -164,11 +216,17 @@ def test_render_engagement_section(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
     assert "## Engagement Assessment" in text
-    assert "The user framed concrete goals and approved results." in text
-    assert "### Direction" in text
-    # The observation carries its own confidence inline, before the scoped citation.
+    # The overall_reading is a standalone judgment, so its own confidence renders inline on the lead
+    # line as ``· medium`` before the scoped citation (it is not left unhedged).
     assert (
-        "- Asked to simplify the evidence tools and drop chain_ref. "
+        "The user framed concrete goals and approved results. "
+        "· medium [ReportGenerator · S0001:2-8]"
+    ) in text
+    assert "### Direction" in text
+    # The observation carries its own confidence inline, before the scoped citation; the intraword
+    # ``_`` in chain_ref is Markdown-neutralized to ``chain\_ref``.
+    assert (
+        "- Asked to simplify the evidence tools and drop chain\\_ref. "
         "· medium [ReportGenerator · S0001:2-8]" in text
     )
     # The agent-named limit and the standing limit are distinct blockquote paragraphs (``> a\n>\n>
@@ -185,7 +243,11 @@ def test_render_team_learning_section(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
     assert "## Team Learning" in text
-    assert "Capturing a reusable QA approach is worth promoting." in text
+    # The takeaways is a standalone judgment, so its own confidence renders inline on the lead line.
+    assert (
+        "Capturing a reusable QA approach is worth promoting. · low [ReportGenerator · S0002:2-6]"
+        in text
+    )
     assert "### Reuse" in text
     # The pattern renders statement — rationale · recurrence · confidence · citation, all lifted.
     assert (
@@ -212,15 +274,28 @@ def test_render_empty_report_renders_four_fallbacks(tmp_path: Path) -> None:
 # --- no new claims ----------------------------------------------------------------------------
 
 
+# A test-local mirror of the renderer's single-block escaping (HTML-escape + Markdown punctuation +
+# leading ``#`` neutralization + newline collapse). Restated here rather than importing the
+# renderer's private escaper, so the no-new-claims check independently re-derives the expected form.
+def _expected_inline(text: str) -> str:
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    for char in ("`", "*", "_", "[", "]", "(", ")", "!"):
+        escaped = escaped.replace(char, "\\" + char)
+    lines = [
+        f"\\{line}" if line.lstrip(" ").startswith("#") else line for line in escaped.split("\n")
+    ]
+    return " ".join(lines)
+
+
 def test_render_no_new_claims_every_outcome_and_observation_in_model(tmp_path: Path) -> None:
     _, text, report = _render_basic(tmp_path)
 
-    # Every claim-bearing string the model carries must appear verbatim in the rendered output;
-    # and the renderer must not introduce claim-bearing prose absent from the model. We assert the
-    # forward direction over every model claim string (outcomes, summaries, observations, patterns
-    # with their rationale/recurrence, limits) and rely on the layout/render structure for the
-    # converse. Trusted model prose appears verbatim; the basic fixture has no ``&``/``<``/``>``, so
-    # HTML-escaping leaves these claim strings unchanged.
+    # Every claim-bearing string the model carries must appear in the rendered output (the renderer
+    # introduces no claim-bearing prose absent from the model). The renderer Markdown-neutralizes
+    # every model string, so we assert each claim after applying the same neutralization (mirrored
+    # by ``_expected_inline``); none of the basic fixture's claims carry a newline, so this matches
+    # both the single-block and callout escapes. The converse (no extra claims) rests on the
+    # layout/render structure.
     claims: list[str] = []
     summary = report["executive_summary"]
     claims += [entry["text"] for entry in summary["top_outcomes"]]
@@ -242,7 +317,8 @@ def test_render_no_new_claims_every_outcome_and_observation_in_model(tmp_path: P
     claims += list(learning["limits"])
 
     for claim in claims:
-        assert claim in text, f"model claim missing from render: {claim!r}"
+        rendered = _expected_inline(claim)
+        assert rendered in text, f"model claim missing from render: {rendered!r}"
 
     # User messages are deliberately excluded here: they are untrusted display content, not claims,
     # so they render quoted and Markdown-escaped (not verbatim). Their survival and escaping are
@@ -333,7 +409,7 @@ def test_render_user_message_leading_heading_is_neutralized(tmp_path: Path) -> N
 
 def test_render_amp_in_trusted_prose_is_html_escaped(tmp_path: Path) -> None:
     del tmp_path
-    # Trusted model prose is still HTML-escaped so a stray ``&``/``<`` renders as literal text.
+    # Model prose is HTML-escaped so a stray ``&``/``<`` renders as literal text.
     section = Section(
         "Engagement Assessment",
         (Callout("limit", "Reviewed A & B; weighed <thresholds>."),),
@@ -342,6 +418,89 @@ def test_render_amp_in_trusted_prose_is_html_escaped(tmp_path: Path) -> None:
     text = render_markdown(_doc_with_section(section))
 
     assert "> Reviewed A &amp; B; weighed &lt;thresholds&gt;." in text
+
+
+# --- model-derived string escaping (not just user messages) -----------------------------------
+
+# A single model string carrying a link, an image, a leading heading, and an embedded newline that
+# tries to open a forged ``## Injected`` section below it. Every model-derived display string is a
+# prompt-injection surface, so all of these must render literally, never activate.
+_INJECTION = "see [x](http://y) and ![img](z)\n# Injected\n## Injected section"
+
+
+def _assert_no_active_markdown(text: str) -> None:
+    # None of the active forms survive: no live link/image, and the embedded ``#`` lines did not
+    # become real headings (a real heading line would start with ``#``/``##`` at column 0).
+    assert "[x](http://y)" not in text
+    assert "![img](z)" not in text
+    assert "\n# Injected" not in text
+    assert "\n## Injected section" not in text
+
+
+def test_render_work_item_title_markdown_is_neutralized(tmp_path: Path) -> None:
+    del tmp_path
+    # A work-item title (a model-derived Group label) is fully neutralized: links/images are escaped
+    # and the embedded newlines are collapsed, so the title cannot break out of its heading line.
+    work_item = Group(_INJECTION, (Tag("completed", "disposition"), Tag("high", "confidence")))
+    section = Section("Work by Project", (Group("Proj", (ListBlock("bullet", (work_item,)),)),))
+
+    text = render_markdown(_doc_with_section(section))
+
+    _assert_no_active_markdown(text)
+    # The neutralized title stays on its single heading line (newlines collapsed to spaces). A
+    # leading ``#``/``##`` on each original line is backslash-escaped at its start, so neither
+    # becomes a heading marker.
+    assert (
+        "#### see \\[x\\]\\(http://y\\) and \\!\\[img\\]\\(z\\) \\# Injected \\## Injected section"
+        " — completed · high"
+    ) in text
+
+
+def test_render_project_summary_markdown_is_neutralized(tmp_path: Path) -> None:
+    del tmp_path
+    # A per-project summary is a model-derived single-block prose run: neutralized and collapsed.
+    summary = Prose(_INJECTION, None)
+    section = Section("Work by Project", (Group("Proj", (summary,)),))
+
+    text = render_markdown(_doc_with_section(section))
+
+    _assert_no_active_markdown(text)
+    assert (
+        "see \\[x\\]\\(http://y\\) and \\!\\[img\\]\\(z\\) \\# Injected \\## Injected section"
+    ) in text
+
+
+def test_render_observation_statement_markdown_is_neutralized(tmp_path: Path) -> None:
+    del tmp_path
+    # An engagement observation statement is model-derived prose inside a list item: neutralized.
+    statement = Prose(_INJECTION, None, tags=(Tag("medium", "confidence"),))
+    group = Group("Direction", (ListBlock("bullet", (statement,)),))
+    section = Section("Engagement Assessment", (group,))
+
+    text = render_markdown(_doc_with_section(section))
+
+    _assert_no_active_markdown(text)
+    assert (
+        "- see \\[x\\]\\(http://y\\) and \\!\\[img\\]\\(z\\) \\# Injected \\## Injected section"
+        " · medium"
+    ) in text
+
+
+def test_render_work_item_limit_markdown_is_neutralized(tmp_path: Path) -> None:
+    del tmp_path
+    # A work-item limit is model-derived callout text. A callout keeps newlines (each line is
+    # re-prefixed with ``>``), so the embedded ``#`` lines stay inside the blockquote — neutralized
+    # per line — and never become real headings, and the link/image are escaped.
+    section = Section("Work by Project", (Group("Proj", (Callout("limit", _INJECTION),)),))
+
+    text = render_markdown(_doc_with_section(section))
+
+    _assert_no_active_markdown(text)
+    # Each blockquote line is Markdown-neutralized: a leading ``#``/``##`` is backslash-escaped at
+    # its start, so neither line becomes a heading.
+    assert "> see \\[x\\]\\(http://y\\) and \\!\\[img\\]\\(z\\)" in text
+    assert "> \\# Injected" in text
+    assert "> \\## Injected section" in text
 
 
 # --- cross-project citation scoping (>1 project) ----------------------------------------------

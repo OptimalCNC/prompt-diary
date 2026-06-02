@@ -369,10 +369,16 @@ def _outcomes_block(item: dict[str, Any]) -> ListBlock:
         items = tuple(_outcome_prose(_mapping(outcome)) for outcome in outcomes)
     else:
         items = tuple(
-            Prose(_str(_mapping(state).get("summary")))
-            for state in _list(item.get("terminal_states"))
+            _terminal_state_prose(_mapping(state)) for state in _list(item.get("terminal_states"))
         )
     return ListBlock("bullet", items)
+
+
+def _terminal_state_prose(state: dict[str, Any]) -> Prose:
+    # For a no-outcome material item the terminal summary is the visible claim, so it carries its
+    # citation — unscoped within the project group, like an outcome. A terminal state has no
+    # per-claim confidence in the model, so (unlike an outcome) it renders no confidence tag.
+    return Prose(_str(state.get("summary")), _citation(state.get("citations"), {}, scoped=False))
 
 
 def _outcome_prose(outcome: dict[str, Any]) -> Prose:
@@ -492,9 +498,14 @@ def _pattern_text(pattern: dict[str, Any]) -> str:
 
 
 def _cited_text_prose(value: object, labels: dict[str, str]) -> Prose:
+    # The engagement overall_reading and team-learning takeaways are standalone judgments that carry
+    # their own confidence (unlike a per-project summary), so the lead Prose shows it inline as a
+    # ``· {confidence}`` tag — the same hedge outcomes/observations/patterns already render.
     mapping = _mapping(value)
     return Prose(
-        _str(mapping.get("text")), _citation(mapping.get("citations"), labels, scoped=True)
+        _str(mapping.get("text")),
+        _citation(mapping.get("citations"), labels, scoped=True),
+        tags=_confidence_tags(mapping),
     )
 
 

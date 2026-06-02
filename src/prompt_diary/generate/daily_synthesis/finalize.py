@@ -6,14 +6,21 @@ per-claim confidences of the material work items and the two judgment sections i
 must have every project-with-reportable-work's ``summary`` filled and both judgment sections
 present; every filled synthesized claim — the project summaries, the engagement and team-learning
 leads and their entries, and the curated Executive Summary headlines — must carry non-empty ``text``
-(where it has one) and at least one citation; and every stored citation must carry its four resolved
-keys. A project whose work items are all gap/excluded kinds has no committed turn to cite, so it is
-not required to carry a summary. The
-faithfully-lifted Work-by-Project ``outcomes[]`` are exempt from the non-empty-citation rule, as an
-uncited upstream outcome is legitimate. On success it writes the report back with
-``overall_confidence`` filled and returns :class:`FinalizedResult`; a missing required slot, an
-incomplete synthesized claim, or a malformed citation yields :class:`FinalizeInvalidResult` and
-leaves the file untouched.
+(where it has one) and at least one citation. A no-outcome material work item renders its terminal
+disposition as the visible claim in Work by Project, so each such terminal state must carry a
+citation too. A project whose work items are all gap/excluded kinds has no committed turn to cite,
+so it is not required to carry a summary. The faithfully-lifted Work-by-Project ``outcomes[]`` are
+exempt from the non-empty-citation rule, as an uncited upstream outcome is legitimate.
+
+Every stored citation is re-resolved against the prepared workspace as defense-in-depth: the passes
+run in a workspace-write sandbox, so an agent that edits ``daily-report.json`` directly — instead of
+calling the validating write tools — could plant a citation the write path never saw. Finalize
+therefore rejects any stored citation that does not (a) carry its four resolved keys, (b) name a
+committed (evidence-bearing) turn of its own project, and (c) carry the exact line span the session
+index resolves that turn to. A fabricated or tampered citation cannot survive this even though it
+never passed a write tool. On success it writes the report back with ``overall_confidence`` filled
+and returns :class:`FinalizedResult`; a missing required slot, an incomplete synthesized claim, or a
+malformed/fabricated citation yields :class:`FinalizeInvalidResult` and leaves the file untouched.
 
 A report with no reportable work item — every project gap-only or excluded-only, or no project at
 all — has no per-claim confidences to roll up, so its ``overall_confidence`` is ``null`` and its
@@ -23,14 +30,20 @@ judgment slots stay ``null``; that is a valid finalized state, not an error.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+from prompt_diary.generate.daily_synthesis.citations import CitationResolver
 from prompt_diary.generate.daily_synthesis.model import (
     CONFIDENCE_RANK,
     REPORTABLE_WORK_ITEM_KINDS,
     DailyReportWriteError,
 )
+from prompt_diary.generate.project_synthesis.cards import (
+    committed_turn_keys,
+    load_committed_chains,
+)
+from prompt_diary.generate.workspace import load_prepared_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -46,6 +59,7 @@ __all__ = [
 
 _REPORT_NAME = "daily-report.json"
 _CITATION_KEYS = ("project_key", "session_ref", "turn_ref", "lines")
+_MATERIAL_WORK_ITEM = "material_work_item"
 
 
 @dataclass(frozen=True)
@@ -67,13 +81,51 @@ class FinalizeInvalidResult:
 FinalizeResult: TypeAlias = FinalizedResult | FinalizeInvalidResult
 
 
+@dataclass
+class _CommittedResolver:
+    """Re-resolve a stored citation against the prepared workspace's committed turns.
+
+    A stored citation is sound only when its turn is committed (evidence-bearing) in its own project
+    AND its ``lines`` match the span the session index resolves that turn to. The session-index
+    resolver is built once; the per-project committed-turn set is read lazily and cached, mirroring
+    the write-tool scope so finalize and the write path agree on the citable universe.
+    """
+
+    resolver: CitationResolver
+    workspace_path: Path
+    _committed: dict[str, frozenset[tuple[str, str]]] = field(default_factory=dict)
+
+    @classmethod
+    def from_workspace(cls, workspace_path: Path) -> _CommittedResolver:
+        return cls(
+            resolver=CitationResolver.from_workspace(load_prepared_workspace(workspace_path)),
+            workspace_path=workspace_path,
+        )
+
+    def is_sound(self, *, project_key: str, session_ref: str, turn_ref: str, lines: str) -> bool:
+        """Whether the citation names a committed turn of its project with the resolved span."""
+        if (session_ref, turn_ref) not in self._committed_for(project_key):
+            return False
+        hit = self.resolver.resolve(
+            project_key=project_key, session_ref=session_ref, turn_ref=turn_ref
+        )
+        return hit is not None and hit.lines == lines
+
+    def _committed_for(self, project_key: str) -> frozenset[tuple[str, str]]:
+        cached = self._committed.get(project_key)
+        if cached is None:
+            cached = committed_turn_keys(load_committed_chains(self.workspace_path, project_key))
+            self._committed[project_key] = cached
+        return cached
+
+
 def finalize_daily_report(*, workspace_path: Path) -> FinalizeResult:
     """Roll up ``overall_confidence``, validate the report, and write it on success."""
     path = workspace_path / _REPORT_NAME
     report = _load_json(path)
 
     overall_confidence = _overall_confidence(report)
-    errors = _validate(report)
+    errors = _validate(report, _CommittedResolver.from_workspace(workspace_path))
     if errors:
         return FinalizeInvalidResult("invalid", tuple(errors))
 
@@ -126,12 +178,12 @@ def _ranked(value: object) -> Iterator[int]:
         yield rank
 
 
-def _validate(report: dict[str, Any]) -> list[DailyReportWriteError]:
+def _validate(report: dict[str, Any], committed: _CommittedResolver) -> list[DailyReportWriteError]:
     errors: list[DailyReportWriteError] = []
     if _has_reportable_work(report):
         errors.extend(_required_slot_errors(report))
         errors.extend(_completeness_errors(report))
-    errors.extend(_citation_errors(report))
+    errors.extend(_citation_errors(report, committed))
     return errors
 
 
@@ -180,12 +232,14 @@ def _completeness_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteErr
     and their entries) and the curated Executive Summary headlines. A present-but-empty slot would
     pass the required-slot presence check yet ground no claim, so finalize must reject it. Faithful
     Work-by-Project ``outcomes[]`` are deliberately not checked: they are uncited lifts of upstream
-    work items, which may legitimately carry no citation.
+    work items, which may legitimately carry no citation — but a no-outcome material item renders
+    its terminal disposition as the visible claim instead, so that terminal state must be cited.
     """
     summary = _as_mapping(report.get("executive_summary"))
     yield from _cited_claim_list(summary.get("top_outcomes"), "executive_summary.top_outcomes")
     yield from _cited_claim_list(summary.get("open_items"), "executive_summary.open_items")
     yield from _project_summary_completeness(report)
+    yield from _terminal_claim_completeness(report)
     yield from _section_completeness(
         report.get("engagement_assessment"),
         "engagement_assessment",
@@ -195,6 +249,24 @@ def _completeness_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteErr
     yield from _section_completeness(
         report.get("team_learning"), "team_learning", "takeaways", "patterns"
     )
+
+
+def _terminal_claim_completeness(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
+    """A no-outcome material item renders its terminal disposition, so each must carry a citation.
+
+    Only the no-outcome case is checked: when a material item has outcomes, the outcomes are the
+    visible claim (and uncited outcomes are tolerated as faithful lifts), and the terminal states do
+    not render. When it has none, each terminal state is what renders in their place, so an uncited
+    one would surface as an uncited claim and is rejected here.
+    """
+    for project_index, project in enumerate(_as_list(report.get("projects"))):
+        for item_index, raw_item in enumerate(_as_list(_as_mapping(project).get("work_items"))):
+            item = _as_mapping(raw_item)
+            if item.get("kind") != _MATERIAL_WORK_ITEM or _as_list(item.get("outcomes")):
+                continue
+            base = f"projects[{project_index}].work_items[{item_index}].terminal_states"
+            for state_index, state in enumerate(_as_list(item.get("terminal_states"))):
+                yield from _citations_present(state, f"{base}[{state_index}]")
 
 
 def _project_summary_completeness(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
@@ -239,10 +311,23 @@ def _citations_present(value: object, base: str) -> Iterator[DailyReportWriteErr
         yield DailyReportWriteError(path, _empty_citations_message(path), _EMPTY_CITATIONS_HINT)
 
 
-def _citation_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
+def _citation_errors(
+    report: dict[str, Any], committed: _CommittedResolver
+) -> Iterator[DailyReportWriteError]:
+    # Two-stage per citation: first the four-key shape guard, then a re-resolution against the
+    # prepared workspace. A citation that survives the shape check but names a non-committed turn or
+    # carries a span that disagrees with the session index is fabricated/tampered — rejected here
+    # even though it never passed a write tool.
     for path, citation in _iter_citations(report):
         if not _is_well_formed(citation):
             yield DailyReportWriteError(path, _malformed_citation_message(path), _CITATION_HINT)
+        elif not committed.is_sound(
+            project_key=_as_str(citation.get("project_key")),
+            session_ref=_as_str(citation.get("session_ref")),
+            turn_ref=_as_str(citation.get("turn_ref")),
+            lines=_as_str(citation.get("lines")),
+        ):
+            yield DailyReportWriteError(path, _unsound_citation_message(path), _UNSOUND_HINT)
 
 
 def _iter_citations(report: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -267,11 +352,15 @@ def _project_citations(
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     base = f"projects[{project_index}]"
     yield from _cited_object(project.get("summary"), f"{base}.summary")
-    for item_index, item in enumerate(_as_list(project.get("work_items"))):
-        for outcome_index, outcome in enumerate(_as_list(_as_mapping(item).get("outcomes"))):
-            yield from _cited_object(
-                outcome, f"{base}.work_items[{item_index}].outcomes[{outcome_index}]"
-            )
+    for item_index, raw_item in enumerate(_as_list(project.get("work_items"))):
+        item = _as_mapping(raw_item)
+        item_base = f"{base}.work_items[{item_index}]"
+        for outcome_index, outcome in enumerate(_as_list(item.get("outcomes"))):
+            yield from _cited_object(outcome, f"{item_base}.outcomes[{outcome_index}]")
+        # Terminal-state citations are stored on every material item (they render in the no-outcome
+        # case); re-resolve them too, so a fabricated terminal citation cannot slip past finalize.
+        for state_index, state in enumerate(_as_list(item.get("terminal_states"))):
+            yield from _cited_object(state, f"{item_base}.terminal_states[{state_index}]")
 
 
 def _section_citations(
@@ -332,6 +421,10 @@ def _malformed_citation_message(path: str) -> str:
     return f"{path} must carry the four resolved citation keys"
 
 
+def _unsound_citation_message(path: str) -> str:
+    return f"{path} must name a committed turn of its project with the resolved line span"
+
+
 def _empty_claim_text_message(path: str) -> str:
     return f"{path}.text must be a non-empty synthesized claim"
 
@@ -345,3 +438,6 @@ _SECTION_HINT = "run the engagement and team-learning passes before finalize"
 _CITATION_HINT = "a stored citation must carry project_key, session_ref, turn_ref, and lines"
 _CLAIM_TEXT_HINT = "a synthesized claim renders its text; it must not be empty"
 _EMPTY_CITATIONS_HINT = "every synthesized claim must cite the turns it rests on"
+_UNSOUND_HINT = (
+    "cite a committed turn of the citation's own project; lines must match the session index span"
+)
