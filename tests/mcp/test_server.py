@@ -8,6 +8,26 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import pytest
 
 from prompt_diary.mcp import server as mcp_server
+from tests.support.daily_synthesis import (
+    PROJECT_KEY as DS_PROJECT_KEY,
+)
+from tests.support.daily_synthesis import (
+    assert_engagement_written,
+    assert_project_summary_written,
+    assert_team_learning_written,
+    call_write_project_summary_api,
+    copy_basic_daily_workspace,
+    seed_daily_report_skeleton,
+    valid_engagement,
+    valid_project_summary,
+    valid_team_learning,
+)
+from tests.support.daily_synthesis import (
+    assert_invalid_result as assert_daily_invalid,
+)
+from tests.support.daily_synthesis import (
+    result_to_dict as daily_result_to_dict,
+)
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
     SESSION_REF,
@@ -249,6 +269,149 @@ def test_write_work_item_uses_workspace_env_var(
     result = mcp_server.write_work_item(PS_PROJECT_KEY, valid_material_work_item())
 
     assert work_item_result_to_dict(result)["status"] == "appended"
+
+
+def test_write_project_summary_is_registered_by_mcp_server() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert "write_project_summary" in [tool.name for tool in tools]
+
+
+def test_write_project_summary_mcp_input_shape_contains_contract_fields() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    write_tool = next(tool for tool in tools if tool.name == "write_project_summary")
+
+    properties = write_tool.inputSchema["properties"]
+    assert {"project_key", "summary"} <= set(properties)
+    assert {"project_key", "summary"} <= set(write_tool.inputSchema["required"])
+
+
+def test_write_project_summary_mcp_success_returns_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    seed_daily_report_skeleton(workspace)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+
+    result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "write_project_summary",
+            {"project_key": DS_PROJECT_KEY, "summary": valid_project_summary()},
+        )
+    )
+
+    assert_project_summary_written(result)
+
+
+def test_write_project_summary_mcp_invalid_result_matches_api_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_workspace = copy_basic_daily_workspace(tmp_path / "api")
+    mcp_workspace = copy_basic_daily_workspace(tmp_path / "mcp")
+    seed_daily_report_skeleton(api_workspace)
+    seed_daily_report_skeleton(mcp_workspace)
+    invalid = valid_project_summary()
+    invalid["text"] = "  "
+    api_result = call_write_project_summary_api(workspace_path=api_workspace, summary=invalid)
+    monkeypatch.chdir(mcp_workspace)
+    server = mcp_server.build_mcp_server()
+
+    mcp_result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "write_project_summary",
+            {"project_key": DS_PROJECT_KEY, "summary": invalid},
+        )
+    )
+
+    assert mcp_result == daily_result_to_dict(api_result)
+    assert_daily_invalid(mcp_result, path="summary.text")
+
+
+def test_write_engagement_is_registered_by_mcp_server() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert "write_engagement" in [tool.name for tool in tools]
+
+
+def test_write_engagement_mcp_input_shape_contains_contract_fields() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    write_tool = next(tool for tool in tools if tool.name == "write_engagement")
+
+    properties = write_tool.inputSchema["properties"]
+    assert {"overall_reading", "observations", "limits"} <= set(properties)
+    assert {"overall_reading", "observations", "limits"} <= set(write_tool.inputSchema["required"])
+
+
+def test_write_engagement_mcp_success_returns_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    seed_daily_report_skeleton(workspace)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+    payload = valid_engagement()
+
+    result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "write_engagement",
+            {
+                "overall_reading": payload["overall_reading"],
+                "observations": payload["observations"],
+                "limits": payload["limits"],
+            },
+        )
+    )
+
+    assert_engagement_written(result)
+
+
+def test_write_team_learning_is_registered_by_mcp_server() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert "write_team_learning" in [tool.name for tool in tools]
+
+
+def test_write_team_learning_mcp_input_shape_contains_contract_fields() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    write_tool = next(tool for tool in tools if tool.name == "write_team_learning")
+
+    properties = write_tool.inputSchema["properties"]
+    assert {"takeaways", "patterns", "limits"} <= set(properties)
+    assert {"takeaways", "patterns", "limits"} <= set(write_tool.inputSchema["required"])
+
+
+def test_write_team_learning_mcp_success_returns_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    seed_daily_report_skeleton(workspace)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+    payload = valid_team_learning()
+
+    result = asyncio.run(
+        _call_mcp_tool(
+            server,
+            "write_team_learning",
+            {
+                "takeaways": payload["takeaways"],
+                "patterns": payload["patterns"],
+                "limits": payload["limits"],
+            },
+        )
+    )
+
+    assert_team_learning_written(result)
 
 
 def test_read_session_lines_is_registered_by_mcp_server() -> None:

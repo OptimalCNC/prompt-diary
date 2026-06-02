@@ -155,6 +155,19 @@ def test_parse_team_learning_rejects_bad_confidence() -> None:
     assert "patterns[0].confidence" in _error_paths(result)
 
 
+def test_parse_engagement_rejects_blank_limit() -> None:
+    payload = valid_engagement()
+    payload["limits"] = ["  "]
+
+    result = parse_engagement(
+        overall_reading=payload["overall_reading"],
+        observations=payload["observations"],
+        limits=payload["limits"],
+    )
+
+    assert "limits[0]" in _error_paths(result)
+
+
 def test_parse_team_learning_rejects_blank_rationale() -> None:
     payload = valid_team_learning()
     payload["patterns"][0]["rationale"] = "   "

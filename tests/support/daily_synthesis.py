@@ -5,18 +5,42 @@ the session index, the evidence cards, and the project-synthesis envelope. Daily
 the session index (for citation resolution) and ``project-synthesis.json`` (work items and
 ``source_user_messages``); the evidence cards are kept for workspace fidelity even though daily
 synthesis does not read them directly.
+
+The write tools patch a single ``daily-report.json`` at the workspace root. A deterministic Build
+step (a later stage) seeds that file with the three synthesize slots set to ``null``; until Build
+exists, :func:`seed_daily_report_skeleton` writes a minimal valid skeleton so the write tools have
+something to patch.
+
+The write-tool API (``prompt_diary.generate.daily_synthesis.mcp``) is imported lazily inside the
+``call_*``/``result_to_dict`` helpers rather than at module top level: the fixtures and builders
+here are shared with ``test_model.py`` and ``test_citations.py``, which must keep importing even
+before the write-tool module exists. The new write tests import the API directly and so fail at
+import time (the expected RED state) without taking the shared builders down with them.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+import pytest
+
+if TYPE_CHECKING:
+    from prompt_diary.generate.daily_synthesis.mcp import (
+        WriteEngagementResult,
+        WriteProjectSummaryResult,
+        WriteTeamLearningResult,
+    )
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 PROJECT_LABEL = "ReportGenerator"
 
 FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "daily-synthesis" / "basic"
+
+DAILY_REPORT_NAME = "daily-report.json"
 
 
 def copy_basic_daily_workspace(tmp_path: Path) -> Path:
@@ -85,3 +109,219 @@ def valid_team_learning() -> dict[str, Any]:
         ],
         "limits": ["Single-day evidence; recurrence cannot be confirmed."],
     }
+
+
+def seed_daily_report_skeleton(workspace_path: Path) -> Path:
+    """Write a minimal valid ``daily-report.json`` skeleton with the synthesize slots null.
+
+    Stands in for the deterministic Build step until it exists: the write tools require the file
+    to already exist and only patch their own slot. ``report_date``/``status``/``timezone`` and the
+    report window are derived from the fixture ``metadata.json``; one ``projects`` entry is emitted
+    per project directory, each with ``summary`` set to ``null``.
+    """
+    metadata = _load_json(workspace_path / "metadata.json")
+    window_local = _as_mapping(metadata.get("report_window_local"))
+    skeleton: dict[str, Any] = {
+        "schema_version": 1,
+        "report_date": metadata.get("report_date"),
+        "status": metadata.get("status"),
+        "window": {
+            "start": window_local.get("start"),
+            "end": window_local.get("end"),
+            "timezone": metadata.get("timezone"),
+        },
+        "overall_confidence": None,
+        "executive_summary": {"top_outcomes": [], "open_items": []},
+        "projects": [
+            {
+                "project_key": project_key,
+                "project_label": project_label,
+                "summary": None,
+                "work_items": [],
+                "source_user_messages": [],
+            }
+            for project_key, project_label in _workspace_projects(workspace_path)
+        ],
+        "engagement_assessment": None,
+        "team_learning": None,
+    }
+    path = daily_report_path(workspace_path)
+    path.write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def daily_report_path(workspace_path: Path) -> Path:
+    return workspace_path / DAILY_REPORT_NAME
+
+
+def load_daily_report(workspace_path: Path) -> dict[str, Any]:
+    """Read ``daily-report.json`` back as a dict."""
+    return _load_json(daily_report_path(workspace_path))
+
+
+def daily_report_text(workspace_path: Path) -> str:
+    return daily_report_path(workspace_path).read_text(encoding="utf-8")
+
+
+def project_slot(workspace_path: Path, project_key: str = PROJECT_KEY) -> dict[str, Any]:
+    """Return the ``projects`` entry for ``project_key`` from the stored daily report."""
+    report = load_daily_report(workspace_path)
+    for entry in _as_list(report.get("projects")):
+        mapping = _as_mapping(entry)
+        if mapping.get("project_key") == project_key:
+            return mapping
+    pytest.fail(f"no projects entry for {project_key!r} in {DAILY_REPORT_NAME}")
+
+
+def call_write_project_summary_api(
+    *,
+    workspace_path: Path,
+    project_key: str = PROJECT_KEY,
+    summary: dict[str, Any] | None = None,
+) -> WriteProjectSummaryResult:
+    # Imported lazily so this shared module keeps importing before the write-tool module exists.
+    from prompt_diary.generate.daily_synthesis.mcp import write_project_summary  # noqa: PLC0415
+
+    return write_project_summary(
+        workspace_path=workspace_path,
+        project_key=project_key,
+        summary=valid_project_summary() if summary is None else summary,
+    )
+
+
+def call_write_engagement_api(
+    *,
+    workspace_path: Path,
+    overall_reading: dict[str, Any] | None = None,
+    observations: list[Any] | None = None,
+    limits: list[Any] | None = None,
+) -> WriteEngagementResult:
+    # Imported lazily so this shared module keeps importing before the write-tool module exists.
+    from prompt_diary.generate.daily_synthesis.mcp import write_engagement  # noqa: PLC0415
+
+    payload = valid_engagement()
+    return write_engagement(
+        workspace_path=workspace_path,
+        overall_reading=payload["overall_reading"] if overall_reading is None else overall_reading,
+        observations=payload["observations"] if observations is None else observations,
+        limits=payload["limits"] if limits is None else limits,
+    )
+
+
+def call_write_team_learning_api(
+    *,
+    workspace_path: Path,
+    takeaways: dict[str, Any] | None = None,
+    patterns: list[Any] | None = None,
+    limits: list[Any] | None = None,
+) -> WriteTeamLearningResult:
+    # Imported lazily so this shared module keeps importing before the write-tool module exists.
+    from prompt_diary.generate.daily_synthesis.mcp import write_team_learning  # noqa: PLC0415
+
+    payload = valid_team_learning()
+    return write_team_learning(
+        workspace_path=workspace_path,
+        takeaways=payload["takeaways"] if takeaways is None else takeaways,
+        patterns=payload["patterns"] if patterns is None else patterns,
+        limits=payload["limits"] if limits is None else limits,
+    )
+
+
+def result_to_dict(result: object) -> dict[str, Any]:
+    # Imported lazily so this shared module keeps importing before the write-tool module exists.
+    from prompt_diary.generate.daily_synthesis.mcp import (  # noqa: PLC0415
+        DailyReportInvalidResult,
+        EngagementWrittenResult,
+        ProjectSummaryWrittenResult,
+        TeamLearningWrittenResult,
+    )
+
+    if isinstance(result, ProjectSummaryWrittenResult):
+        return {"status": result.status, "project_key": result.project_key}
+    if isinstance(result, (EngagementWrittenResult, TeamLearningWrittenResult)):
+        return {"status": result.status}
+    if isinstance(result, DailyReportInvalidResult):
+        return {
+            "status": result.status,
+            "errors": [
+                {"path": error.path, "message": error.message, "hint": error.hint}
+                for error in result.errors
+            ],
+        }
+    if isinstance(result, Mapping):
+        return dict(cast("Mapping[str, Any]", result))
+    pytest.fail(f"result must be a daily-report write result or mapping, got {type(result)!r}")
+
+
+def assert_project_summary_written(result: object, *, project_key: str = PROJECT_KEY) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "written"
+    assert payload["project_key"] == project_key
+
+
+def assert_engagement_written(result: object) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "written"
+
+
+def assert_team_learning_written(result: object) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "written"
+
+
+def assert_invalid_result(
+    result: object,
+    *,
+    path: str,
+    message_contains: str | None = None,
+    hint_contains: str | None = None,
+) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "invalid"
+    errors_obj = payload["errors"]
+    assert isinstance(errors_obj, list)
+    matching: list[Mapping[str, Any]] = []
+    for error_obj in cast("list[object]", errors_obj):
+        if isinstance(error_obj, Mapping):
+            error = cast("Mapping[str, Any]", error_obj)
+            if error.get("path") == path:
+                matching.append(error)
+    assert matching, f"expected an invalid error at path {path!r}: {errors_obj!r}"
+    error = matching[0]
+    message = error.get("message")
+    hint = error.get("hint")
+    assert isinstance(message, str) and message  # noqa: PT018
+    assert isinstance(hint, str) and hint  # noqa: PT018
+    if message_contains is not None:
+        assert message_contains in message
+    if hint_contains is not None:
+        assert hint_contains in hint
+
+
+def _workspace_projects(workspace_path: Path) -> list[tuple[str, str]]:
+    projects_root = workspace_path / "projects"
+    projects: list[tuple[str, str]] = []
+    for project_dir in sorted(projects_root.iterdir(), key=lambda path: path.name):
+        if not project_dir.is_dir():
+            continue
+        project_json = _load_json(project_dir / "project.json")
+        project_key = _as_str(project_json.get("project_key"))
+        project_label = _as_str(project_json.get("project_label"))
+        projects.append((project_key, project_label))
+    return projects
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+
+
+def _as_mapping(value: object) -> dict[str, Any]:
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+
+
+def _as_list(value: object) -> list[Any]:
+    return cast("list[Any]", value) if isinstance(value, list) else []
+
+
+def _as_str(value: object) -> str:
+    return value if isinstance(value, str) else ""

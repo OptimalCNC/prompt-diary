@@ -55,8 +55,9 @@ the cited indexed turn's line range (for example `"2-8"`); the report citation f
 citation carries `project_key` to stay unambiguous across projects. The per-project summary pass
 submits `{session_ref, turn_ref}` (its project is the tool argument); the cross-project engagement
 and team-learning passes submit `{project_key, session_ref, turn_ref}`. The tools resolve every
-citation against the session index, rejecting any turn that does not resolve or that falls outside
-the pass's allowed scope.
+citation to its line range via the session index and reject any turn that is not a committed
+(evidence-bearing) turn of its project — a turn covered only by an evidence-gap item carries no
+evidence and cannot ground a claim.
 
 ```json
 {
@@ -478,8 +479,8 @@ corrects and retries — then commits. Citations are submitted as turn refs `{se
 and resolved to line ranges via the session index, so a citation that does not resolve is rejected.
 
 - **`write_project_summary(project_key, summary)`** — `summary: {text, citations}`. Rejects an empty
-  `text`, empty `citations`, a citation outside this project's covered turns, or a citation whose
-  submitted `project_key` names a different project.
+  `text`, empty `citations`, a citation that names a turn with no committed evidence in this project,
+  or a citation whose submitted `project_key` names a different project.
 - **`write_engagement(overall_reading, observations, limits)`** — `overall_reading: {text, citations,
   confidence}`, `observations: [{dimension, statement, citations, confidence} …]`, `limits: [str …]`.
   Rejects an empty `overall_reading.text`, any uncited `overall_reading` or observation, or a

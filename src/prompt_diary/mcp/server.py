@@ -9,6 +9,13 @@ from typing import Annotated, Literal
 import pydantic
 from mcp.server.fastmcp import FastMCP
 
+from prompt_diary.generate.daily_synthesis.mcp import write_engagement as write_engagement_api
+from prompt_diary.generate.daily_synthesis.mcp import (
+    write_project_summary as write_project_summary_api,
+)
+from prompt_diary.generate.daily_synthesis.mcp import (
+    write_team_learning as write_team_learning_api,
+)
 from prompt_diary.generate.evidence_extraction.mcp import write_evidence as write_evidence_api
 from prompt_diary.generate.evidence_extraction.session_reader import (
     read_session_lines as read_session_lines_api,
@@ -61,6 +68,46 @@ def write_work_item(
     )
 
 
+def write_project_summary(
+    project_key: str,
+    summary: dict[str, object],
+) -> object:
+    """Validate and patch one project's daily-report summary slot from the resolved workspace."""
+    return write_project_summary_api(
+        workspace_path=_resolve_workspace(),
+        project_key=project_key,
+        summary=summary,
+    )
+
+
+def write_engagement(
+    overall_reading: dict[str, object],
+    observations: list[object],
+    limits: list[object],
+) -> object:
+    """Validate and patch the daily-report engagement slot from the resolved workspace."""
+    return write_engagement_api(
+        workspace_path=_resolve_workspace(),
+        overall_reading=overall_reading,
+        observations=observations,
+        limits=limits,
+    )
+
+
+def write_team_learning(
+    takeaways: dict[str, object],
+    patterns: list[object],
+    limits: list[object],
+) -> object:
+    """Validate and patch the daily-report team-learning slot from the resolved workspace."""
+    return write_team_learning_api(
+        workspace_path=_resolve_workspace(),
+        takeaways=takeaways,
+        patterns=patterns,
+        limits=limits,
+    )
+
+
 def read_session_lines(
     project_key: str,
     session_ref: str,
@@ -90,6 +137,9 @@ def build_mcp_server() -> FastMCP[None]:
     server.tool()(prompt_diary_ping)
     server.tool()(write_evidence)
     server.tool()(write_work_item)
+    server.tool()(write_project_summary)
+    server.tool()(write_engagement)
+    server.tool()(write_team_learning)
     server.tool()(read_session_lines)
     return server
 
