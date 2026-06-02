@@ -36,107 +36,16 @@ adds, drops, or alters a claim relative to the model is a rendering bug.
 
 ## Report Contract
 
-Daily report synthesis owns the daily report data model and the content of `daily-report.json`.
-The reader-facing views rendered from that model are defined in [Rendering](#rendering).
+Daily report synthesis owns the daily report data model — the content of `daily-report.json` — from
+which the reader-facing views in [Rendering](#rendering) are produced. Its shape is set by the
+abstract layout: the union of every block's `needs` is what `daily-report.json` must carry, and the
+[Field Provenance](#field-provenance) tables below record which of those fields are AI-`synthesize`d
+versus deterministically built.
 
-### Daily Report Model
-
-The JSON model is semantic, not a Markdown abstract syntax tree. It must encode the report's
-claims, confidence, citations, evidence quality, engagement judgments, agent-driving lessons,
-risks, blockers, follow-ups, and evidence gaps as typed fields that can be mapped to an
-implementation data model.
-
-The model must not place evidence-bearing claims only in Markdown strings. Prose fields are
-allowed, but any claim that affects a report reading must carry local structure for its evidence,
-confidence, and source relationship.
-
-Required top-level shape:
-
-```json
-{
-  "schema_version": 1,
-  "report_date": "2026-05-12",
-  "status": "final",
-  "window": {
-    "local_start": "2026-05-12T00:00:00+08:00",
-    "local_end": "2026-05-13T00:00:00+08:00",
-    "timezone": "Asia/Shanghai"
-  },
-  "overall_confidence": "medium",
-  "executive_summary": {
-    "top_outcomes": [],
-    "main_risks": [],
-    "confidence_limits": []
-  },
-  "outcome_overview": [],
-  "projects": [],
-  "verification_evidence_quality": {
-    "verified_results": [],
-    "partially_verified_results": [],
-    "unverified_claims": [],
-    "contradictions": [],
-    "missing_checks": [],
-    "confidence_limits": []
-  },
-  "engagement_assessment": {
-    "overall_judgment": "Insufficient evidence to judge",
-    "supporting_observations": [],
-    "limits": []
-  },
-  "ai_agent_driving_quality": {
-    "useful_patterns": [],
-    "risks_or_antipatterns": [],
-    "shareable_skills": []
-  },
-  "problems_risks_help_needed": [],
-  "blockers_next_actions": [],
-  "no_material_interrupted_examples": [],
-  "follow_ups": [],
-  "evidence_gaps": []
-}
-```
-
-Common record shapes:
-
-- `ReportCitation`: `project_key`, `session_ref`, and `lines`. `lines` uses the same
-  `<start>-<end>` range as report Markdown citations.
-- `WorkItemRef`: `project_key` and `work_item_ref`.
-- `SessionRef`: `project_key` and `session_ref`.
-- `EvidenceChainRef`: `project_key`, `session_ref`, and `turn_ref`. `turn_ref` is never used
-  without `session_ref`.
-- `GapRef`: `project_key`, `session_ref`, and `turn_ref` for an indexed turn that has no committed
-  evidence chain.
-- `SourceRef`: the most specific available synthesis or evidence handle, such as `WorkItemRef`,
-  `SessionRef`, `EvidenceChainRef`, or `GapRef`. Turn-level source refs use `EvidenceChainRef` or
-  `GapRef`; a bare `turn_ref` is invalid.
-- `ReportClaim`: `summary`, `confidence`, `citations`, and `source_refs`. It may also include
-  `verification_status`, `trigger`, `agent_reaction`, `result`, `risk`, or `recommended_next_action`
-  when those fields serve the surrounding section.
-- `ProjectReport`: `project_key`, `project_label`, `summary`, `work_items`, `blockers`, `risks`,
-  `confidence`, and evidence-accounting notes needed to explain omitted, no-material, interrupted,
-  or evidence-gap items.
-- `EngagementObservation`: observable user direction, review, correction, resume action, or
-  acceptance criteria, with `citations`, `confidence`, and `limits`.
-
-Model rules:
-
-- All required top-level fields are present. Empty arrays are valid when no supported content
-  exists.
-- Claim-bearing fields use `ReportClaim` or a narrower record that contains equivalent citation
-  and confidence fields.
-- Every concrete work claim cites lines inside exactly one indexed turn using the report citation
-  rules from the [Evidence Contract](./evidence-contract.md#session-evidence-cards).
-- Trigger, agent reaction, result, terminal state, and confidence remain separable for major
-  outcomes.
-- MVP scope (verification deferred): populate `verification_evidence_quality` only with observable
-  signals — `contradictions` drawn from `failed` terminal states, `missing_checks` for material
-  outcomes that carry no observed check, and `confidence_limits`. Leave `verified_results`,
-  `partially_verified_results`, and `unverified_claims` empty; verified/unverified verdicts are not
-  synthesized here and will later be derived from verification fields on evidence-chain outcomes.
-- Evidence gaps may refer to `metadata.json` or session indexes, but session content claims still
-  require normal session-line citations.
-- No-material, interrupted, failed, paused, resumed, and clarification-only interactions stay
-  represented when they bear on the report's evidence honesty, engagement review, or team learning.
+The concrete `daily-report.json` schema — and the mechanism that produces and validates each field —
+is settled together with the AI synthesis workflow (see
+[Daily Synthesizer Prompt](#daily-synthesizer-prompt)), since it depends on how synthesis is driven;
+it is intentionally not frozen here.
 
 ### Field Provenance
 
@@ -149,9 +58,9 @@ also guarantees they cannot drift from the evidence they came from.
 - **resolve** — looked up deterministically, such as a turn reference to its line range via the evidence card.
 - **synthesize** — newly written by the agent; the only AI-produced fields.
 
-This table is filled in section by section as the abstract layout settles, and mirrors each block's
-`needs`. (The [Daily Report Model](#daily-report-model) JSON above predates the layout redesign and
-will be reconciled with the layout when the contract is settled — after the layout.)
+These tables capture, per lens, which fields are AI-`synthesize`d versus deterministically built, and
+mirror each block's `needs`. The mechanism that produces and enforces this split is settled with the
+AI synthesis workflow.
 
 **Work by Project**
 
@@ -168,8 +77,39 @@ will be reconciled with the layout when the contract is settled — after the la
 | `Citation` | `evidence_refs` → lines via the evidence card | resolve |
 | project `summary` | the project's work items | **synthesize** |
 
-Pending sections (Executive Summary, and the evidence-trust / engagement / team-learning lenses) get
-their rows as each is designed.
+**Engagement Assessment**
+
+| Field | Source | Provenance |
+| --- | --- | --- |
+| `Citation` | observation `citations` → lines via the evidence card | resolve |
+| observation `dimension` | classified by the agent (direction / review / correction / recovery) | **synthesize** |
+| observation `statement` | the work item's messages + reaction / outcome context | **synthesize** |
+| `confidence` | the agent's per-observation judgment | **synthesize** |
+| `overall_reading` | the engagement observations | **synthesize** |
+| `limits` | named by the agent + standing offline / work-item-grain limits | **synthesize** |
+
+This is the judgment lens: its output fields are `synthesize`, grounded by mandatory `Citation`s. The
+substrate it reads — the work item's `trigger` / `agent_reaction` / `outcomes` / `terminal_states` and
+its `source_user_messages` — is lifted/resolved input, not output fields.
+
+**Team Learning**
+
+| Field | Source | Provenance |
+| --- | --- | --- |
+| `Citation` | pattern `citations` → lines via the evidence card | resolve |
+| pattern `kind` | classified by the agent (promote / avoid / reuse) | **synthesize** |
+| pattern `statement` / `rationale` | the work item arc + `source_user_messages`, read in context | **synthesize** |
+| `recurrence` | occurrences across work items (countable seed; the agent states it) | **synthesize** |
+| `confidence` | the agent's per-pattern judgment | **synthesize** |
+| `takeaways` | the patterns | **synthesize** |
+| `limits` | named by the agent + standing single-day / proxy-metric limits | **synthesize** |
+
+Another `synthesize`-heavy judgment lens, grounded by mandatory `Citation`s and seeded deterministically
+by `process_outcome` (reuse) and repeated `failed` / `blocked` terminal states (avoid).
+
+Rows for the remaining sections (Executive Summary, Open Items & Next Steps) are settled with the
+workflow. Evidence-quality signals (confidence, limits, citations) are not a section of their own —
+they render inline on each claim, so their provenance lives with whichever section carries them.
 
 ## Rendering
 
@@ -192,9 +132,8 @@ structural, not a rule the synthesizer must remember.
 
 Each block also declares the model data it consumes (`needs:`). Those needs are the layout's claim
 on the contract — the union of every `needs` is what `daily-report.json` must carry — so settling
-the layout settles the model. The layout is refined section by section as each report lens is
-designed; sections not yet designed appear as placeholders. It is the living structure this page
-tracks. Each field's provenance — `lift` / `derive` / `resolve` / `synthesize` — is recorded in
+the layout settles the model, and it is the living structure this page tracks. Each field's
+provenance — `lift` / `derive` / `resolve` / `synthesize` — is recorded in
 [Field Provenance](#field-provenance); only `synthesize` fields need the agent.
 
 ### Abstract Layout
@@ -215,18 +154,18 @@ Blocks (engine-independent presentation primitives):
 - `Toggle(label)` — a collapsible region, collapsed by default; reveals its children on demand.
 - `Empty(fallback)` — explicit empty-state when a section's data is absent.
 
-Layout (the purpose-1 region — work communication — is detailed; later lenses are placeholders
-filled as they are designed):
+Layout (all sections below are designed):
 
 ```text
 Document  "Prompt Diary Report — {report_date}"
   properties: status{final|partial} · window{start–end, tz} · overall_confidence{high|medium|low}
   needs: report_date, status, window, overall_confidence
 
-Section "Executive Summary" — the 30-second cross-project digest
-  List(bullet)  top material outcomes (curated) — Prose · Citation
-  List(bullet)  headline unfinished / blocked   — Prose · Citation
-      needs: executive_summary → {top_outcomes[], unfinished[]} → {text, citations}
+Section "Executive Summary" — the 30-second digest: what got done and what's open
+  List(bullet)  top outcomes (curated across projects)     — Prose · Citation
+  List(bullet)  headline open items (unfinished / blocked) — Prose · Citation
+      needs: executive_summary → { top_outcomes[] → {text, citations},
+                                   open_items[]   → {text, citations} }
 
 Section "Work by Project" — the day's outcomes, grouped by project then work item
   Group per project (ordered by significance)
@@ -243,29 +182,52 @@ Section "Work by Project" — the day's outcomes, grouped by project then work i
            outcomes[] → {what_changed, confidence, citations}, terminal_states[].summary } }
            + source_user_messages by covered_turn → verbatim {messages} per (session_ref, turn_ref)
 
-Section "Verification / Evidence Quality" — observed contradictions or failures, missing checks, and confidence limits; verified/unverified verdicts deferred (MVP)
-    blocks: to design (Evidence-Trust lens)
+Section "Open Items & Next Steps" — what's unfinished or blocked, each with a grounded next step
+  List(bullet)  {the blocked / unfinished work}            · Tag(disposition) · Citation
+                → next step: {grounded action}  (or "help needed: {what}")
+  needs: next_steps[] → {summary, disposition, next_action, citations, confidence}
+         from blocked / interrupted / failed work items + the agent's grounded next action
 
-Section "Engagement Assessment" — observable evidence of how the user directed, reviewed, corrected, or resumed agent work
-    blocks: to design (Engagement lens)
+Section "Engagement Assessment" — a per-person, cited reading of how the user directed, reviewed, corrected, and resumed the work; judged from their messages, not volume, and never a score
+  Prose   overall reading — a short qualitative judgment of how substantively the user's messages
+          steered the day's work, grounded in the observations below and explicit about limits · synthesize · Citation
+  Group "Direction"  (only if any)  — framing, goals, supplied context, acceptance criteria
+    List(bullet)  {observation}                              · Tag(confidence) · Citation
+  Group "Review"     (only if any)  — checking a result before moving on (approval, feedback)
+    List(bullet)  {observation}                              · Tag(confidence) · Citation
+  Group "Correction" (only if any)  — redirecting the agent after a wrong or failed attempt
+    List(bullet)  {observation}                              · Tag(confidence) · Citation
+  Group "Recovery"   (only if any)  — resuming stalled, interrupted, or blocked work
+    List(bullet)  {observation}                              · Tag(confidence) · Citation
+  Callout(limit)  what could not be observed — offline thinking and review are not visible, and
+                  interaction precision is limited to the work-item grain
+  needs: engagement_assessment → { overall_reading,
+           observations[] → {dimension, statement, citations, confidence}, limits[] }
+         evaluated per work item from { trigger.summary, agent_reaction.summary, outcomes[],
+           terminal_states[] } + the work item's source_user_messages (verbatim, by covered_turn)
 
-Section "AI-Agent Driving Quality" — reusable working mechanisms, good practices, risks, anti-patterns, and skills worth sharing
-    blocks: to design (Team-Learning lens)
-
-Section "Problems / Risks / Help Needed" — unresolved risks, unsupported claims, missing verification, or areas needing human input
-    blocks: to design
-
-Section "Blockers and Next Actions" — blockers or open issues paired with supported next actions
-    blocks: to design
-
-Section "No-Material / Interrupted Examples" — low-value, interrupted, paused, resumed, failed, or clarification-only interactions that are useful workflow signals
-    blocks: to design (Team-Learning lens)
-
-Section "Follow-ups" — specific future work grounded in the day's evidence
-    blocks: to design
-
-Section "Evidence Gaps" — missing or weak evidence that affects confidence
-    blocks: to design
+Section "Team Learning" — reusable, promotable, and avoidable patterns in how the work was done,
+                          judged by productivity (good outcomes per unit of human attention), not by
+                          prompt polish; abstracted for the team, within-day (trends deferred)
+  Prose   key takeaways — the few patterns most worth the team's attention, or a note that the day
+          shows nothing strong enough to generalize · synthesize · Citation
+  Group "Promote" (only if any)  — practices that reached good outcomes efficiently
+                                   (incl. a suitable start + well-placed corrections)
+    List(bullet)  {pattern} — what worked and why it was productive       · Tag(confidence) · Citation
+  Group "Avoid"   (only if any)  — practices that cost attention or quality: non-converging
+                                   correction churn, rework from unclear goals, over-engineering upfront
+    List(bullet)  {pattern} — what cost effort/quality + the cheaper way   · Tag(confidence) · Citation
+  Group "Reuse"   (only if any)  — workflows worth capturing (stable inputs, repeatable steps, clear output)
+    List(bullet)  {pattern} — the repeatable shape (+ light suggested form) · Tag(confidence) · Citation
+  Callout(limit)  productivity is read from observable proxies (outcome vs. visible back-and-forth),
+                  never a precise effort metric; single-day evidence — recurrence and "improving over
+                  time" need cross-day data (deferred); one-offs are flagged, not asserted
+  needs: team_learning → { takeaways,
+           patterns[] → {kind(promote|avoid|reuse), statement, rationale, recurrence, citations, confidence},
+           limits[] }
+         judged from each work item's arc — trigger → corrections (covered_turns / source_user_messages)
+           → agent_reaction → outcomes / terminal_states — reading message quality in context;
+           seeded by process_outcome (reuse), repeated failed/blocked + non-converging loops (avoid)
 
 rule: any Section whose data is empty renders as Empty(fallback)
 ```
@@ -288,7 +250,60 @@ Notes on the purpose-1 region:
 - `Toggle "User messages"` reveals the verbatim `source_user_messages` (tool-populated raw user text
   per turn, already secret-redacted) for the work item's covered turns, so a reader can see exactly
   what was asked. It is untrusted display content — the renderer shows it quoted/escaped and never
-  interprets it — and the same substrate feeds the engagement and evidence-trust readings.
+  interprets it — and the same substrate feeds the engagement and team-learning readings.
+
+Notes on the engagement region:
+
+- Per-person, never a score. The section is one overall reading plus cited observations and named
+  limits — no grade, percentage, or comparison across people (product principle 6).
+- Read from the visible inputs. The user's messages are the only visible human work, so engagement is
+  judged primarily from `source_user_messages` — read as content, never as instructions — against the
+  work item's `agent_reaction` / `outcomes` / `terminal_states` (whether those inputs guided the
+  work). Substance is the signal: a message that frames, corrects, or enhances shows effort, while
+  contentless filler ("ok", "go", "continue") with no surrounding direction reads as thin.
+- Judged in context, fairly. A terse message is not automatically thin — a "go" that approves a
+  reviewed plan is real review. Each observation weighs the message against what it responded to and
+  produced, cites its turns, and is hedged by `confidence`.
+- Work-item grain (deliberate). Engagement is assessed per work item, not per turn: the work item
+  already carries the framing, reaction, outcome, and terminal state, plus its verbatim messages.
+  Pairing each message with the exact reaction before and after would mean re-reading every evidence
+  card; if that fidelity is wanted it belongs in an earlier phase, not here. The grain is named as a
+  limit so the reading stays honest.
+- Dimensions (direction / review / correction / recovery) come from product principle 4; observations
+  are flat with a `dimension` tag and grouped in rendering, like Work by Project.
+
+Notes on the team-learning region:
+
+- Productivity, not prompt-optimality. Patterns are judged by good outcomes per unit of human
+  attention, not by prompt polish. A suitable prompt plus a few well-placed corrections that reach the
+  goal beats a perfected upfront prompt that needed none but cost more attention.
+- Corrections are neutral-to-positive — efficient steering (product principle 4), never an antipattern
+  by themselves; over-investing in upfront prompt perfection can itself be an Avoid. The real Avoid
+  signals are wasted attention or poor outcomes: non-converging correction churn, rework from unclear
+  goals, redoing the same thing.
+- Conservative and hedged. Productivity is read from observable proxies (was the outcome reached? how
+  much visible back-and-forth?), never a precise effort metric; a pattern is asserted only when
+  recurring or clearly likely to recur, and single sightings are flagged or pushed to "needs more
+  evidence." The lens does not moralize.
+- Context over frequency. With one day there is little repetition, so the reading leans on each
+  pattern's arc in context — prompt → corrections → outcome — rather than counting occurrences;
+  cross-day trends ("improving over time") are deferred.
+- Patterns, not a verdict on the person, and aligned with engagement: neither rewards volume, both
+  treat well-placed corrections as good. Team learning abstracts the shareable pattern; engagement
+  attributes the behavior. Coverage of no-material / interrupted items stays in Work by Project's
+  "Minor activity"; this section surfaces only the recurring pattern they may reveal.
+- Recommended form (Reuse only): a light, generic suggestion — a reusable prompt, checklist, or
+  playbook — never a tool-specific build on one day's evidence.
+
+Notes on open items & next steps:
+
+- Consolidates what used to be split across "Problems / Risks / Help Needed", "Blockers and Next
+  Actions", and "Follow-ups": every unfinished or blocked work item with a grounded next step, or an
+  explicit "help needed" where a human decision is required.
+- Daily synthesis owns next actions (project synthesis must not prescribe them); each next step is
+  grounded in the work item's evidence and cited — no speculative advice.
+- The Executive Summary headlines the top open items; this section is the complete list — the
+  "where to resume" view.
 
 ### Markdown Rendering
 
@@ -312,14 +327,9 @@ Block → Markdown:
 - `Empty` → the section's fallback bullet:
   - Executive Summary: `- No supported work claims found for this report window.`
   - Work by Project: `- No supported project-level work items found for this report window.`
-  - Verification / Evidence Quality: `- No verification or evidence-quality issues found.`
+  - Open Items & Next Steps: `- No supported blockers or next actions found.`
   - Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
-  - AI-Agent Driving Quality: `- No supported reusable agent-driving pattern found.`
-  - Problems / Risks / Help Needed: `- No supported problems, risks, or help requests found in target spans.`
-  - Blockers and Next Actions: `- No supported blockers or next actions found.`
-  - No-Material / Interrupted Examples: `- No supported no-material or interrupted interactions found.`
-  - Follow-ups: `- No supported follow-ups found.`
-  - Evidence Gaps: `- No evidence gaps found.`
+  - Team Learning: `- No supported reusable agent-driving pattern found.`
 
 Every concrete work claim in a claim-bearing section cites lines inside exactly one indexed turn
 using the report citation format from the
