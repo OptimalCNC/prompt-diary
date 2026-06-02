@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "project_label": "ReportGenerator",
+  "work_items": [
+    {
+      "work_item_ref": "W0001",
+      "kind": "material_work_item",
+      "title": "Material work item whose outcome and terminal carry no evidence_refs",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+      "trigger": {"summary": "Trigger W0001.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]},
+      "agent_reaction": {"summary": "Reaction W0001.", "main_actions": ["try"]},
+      "outcomes": [
+        {"category": "code_outcome", "summary": "Uncited outcome.", "evidence_refs": [], "confidence": "high"}
+      ],
+      "terminal_states": [
+        {"type": "failed", "summary": "Uncited failed terminal.", "evidence_refs": []}
+      ],
+      "limits": [],
+      "confidence": "high"
+    }
+  ],
+  "source_user_messages": [
+    {"session_ref": "S0001", "turn_ref": "T0001", "messages": ["msg t1"]}
+  ]
+}

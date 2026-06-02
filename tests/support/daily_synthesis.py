@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 if TYPE_CHECKING:
+    from prompt_diary.generate.daily_synthesis.finalize import FinalizeResult
     from prompt_diary.generate.daily_synthesis.mcp import (
         WriteEngagementResult,
         WriteProjectSummaryResult,
@@ -38,16 +39,53 @@ if TYPE_CHECKING:
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 PROJECT_LABEL = "ReportGenerator"
 
-FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "daily-synthesis" / "basic"
+_FIXTURES_ROOT = Path(__file__).parents[1] / "fixtures" / "daily-synthesis"
+FIXTURE_ROOT = _FIXTURES_ROOT / "basic"
+DISPOSITIONS_FIXTURE_ROOT = _FIXTURES_ROOT / "dispositions"
+CORRUPT_FIXTURE_ROOT = _FIXTURES_ROOT / "corrupt"
+EXEC_UNCITED_FIXTURE_ROOT = _FIXTURES_ROOT / "exec-uncited"
 
 DAILY_REPORT_NAME = "daily-report.json"
 
 
 def copy_basic_daily_workspace(tmp_path: Path) -> Path:
     """Copy the post-project-synthesis daily-synthesis fixture into a writable test directory."""
+    return _copy_workspace(FIXTURE_ROOT, tmp_path)
+
+
+def copy_dispositions_daily_workspace(tmp_path: Path) -> Path:
+    """Copy the disposition-coverage fixture: one project of material work items per disposition.
+
+    Its envelope exercises every disposition branch (failed / blocked / interrupted / completed /
+    clarification, plus failed-wins precedence) and a non-empty Executive Summary ``open_items``.
+    Build does not read evidence cards, so this fixture omits them.
+    """
+    return _copy_workspace(DISPOSITIONS_FIXTURE_ROOT, tmp_path)
+
+
+def copy_corrupt_daily_workspace(tmp_path: Path) -> Path:
+    """Copy a workspace whose ``project-synthesis.json`` holds one structurally-invalid work item.
+
+    The lone work item carries a non-controlled ``kind``, so ``parse_work_item`` rejects it. Build
+    must fail loudly on this post-synthesis corruption rather than silently dropping the work item.
+    """
+    return _copy_workspace(CORRUPT_FIXTURE_ROOT, tmp_path)
+
+
+def copy_exec_uncited_daily_workspace(tmp_path: Path) -> Path:
+    """Copy a workspace whose one material work item has an uncited outcome and terminal state.
+
+    Its outcome and ``failed`` terminal carry empty ``evidence_refs``, so their resolved citations
+    are empty. Build keeps the work item in Work by Project (uncited) but omits the would-be
+    Executive Summary headlines, which must be cited.
+    """
+    return _copy_workspace(EXEC_UNCITED_FIXTURE_ROOT, tmp_path)
+
+
+def _copy_workspace(fixture_root: Path, tmp_path: Path) -> Path:
     tmp_path.mkdir(parents=True, exist_ok=True)
     workspace = tmp_path / "workspace"
-    shutil.copytree(FIXTURE_ROOT / "workspace", workspace)
+    shutil.copytree(fixture_root / "workspace", workspace)
     return workspace
 
 
@@ -225,6 +263,80 @@ def call_write_team_learning_api(
         patterns=payload["patterns"] if patterns is None else patterns,
         limits=payload["limits"] if limits is None else limits,
     )
+
+
+def build_daily_report_via_api(workspace_path: Path) -> dict[str, Any]:
+    """Run the deterministic Build step against ``workspace_path`` and return the skeleton."""
+    # Imported lazily so this shared module keeps importing before the build module exists.
+    from prompt_diary.generate.daily_synthesis.build import build_daily_report  # noqa: PLC0415
+
+    return build_daily_report(workspace_path=workspace_path)
+
+
+def fill_synthesize_slots(workspace_path: Path, *, project_key: str = PROJECT_KEY) -> None:
+    """Fill the three synthesize slots with the ``valid_*`` builders via the Stage-1 write tools."""
+    assert_project_summary_written(
+        call_write_project_summary_api(workspace_path=workspace_path, project_key=project_key),
+        project_key=project_key,
+    )
+    assert_engagement_written(call_write_engagement_api(workspace_path=workspace_path))
+    assert_team_learning_written(call_write_team_learning_api(workspace_path=workspace_path))
+
+
+def finalize_daily_report_via_api(workspace_path: Path) -> FinalizeResult:
+    """Run the deterministic Finalize step against ``workspace_path``."""
+    # Imported lazily so this shared module keeps importing before the finalize module exists.
+    from prompt_diary.generate.daily_synthesis.finalize import (  # noqa: PLC0415
+        finalize_daily_report,
+    )
+
+    return finalize_daily_report(workspace_path=workspace_path)
+
+
+def empty_daily_workspace(tmp_path: Path) -> Path:
+    """Build a minimal prepared workspace with metadata but no projects (no work items).
+
+    The smallest input that exercises the empty-report path: ``load_prepared_workspace`` returns no
+    projects, Build emits an empty ``projects`` list and empty executive summary, and Finalize sees
+    no work items.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "schema_version": 2,
+        "report_date": "2026-05-28",
+        "timezone": "Asia/Shanghai",
+        "status": "final",
+        "report_window_local": {
+            "start": "2026-05-28T00:00:00+08:00",
+            "end": "2026-05-29T00:00:00+08:00",
+        },
+    }
+    (workspace / "metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+    return workspace
+
+
+def finalize_result_to_dict(result: object) -> dict[str, Any]:
+    """Reduce a finalize result to a comparable dict (status + payload)."""
+    # Imported lazily so this shared module keeps importing before the finalize module exists.
+    from prompt_diary.generate.daily_synthesis.finalize import (  # noqa: PLC0415
+        FinalizedResult,
+        FinalizeInvalidResult,
+    )
+
+    if isinstance(result, FinalizedResult):
+        return {"status": result.status, "overall_confidence": result.overall_confidence}
+    if isinstance(result, FinalizeInvalidResult):
+        return {
+            "status": result.status,
+            "errors": [
+                {"path": error.path, "message": error.message, "hint": error.hint}
+                for error in result.errors
+            ],
+        }
+    pytest.fail(f"result must be a finalize result, got {type(result)!r}")
 
 
 def result_to_dict(result: object) -> dict[str, Any]:

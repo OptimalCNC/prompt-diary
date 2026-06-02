@@ -21,6 +21,42 @@ _CONFIDENCE_VALUES = frozenset({"high", "medium", "low"})
 _DIMENSIONS = frozenset(item.value for item in ENGAGEMENT_DIMENSIONS)
 _PATTERN_KINDS = frozenset(item.value for item in TEAM_LEARNING_PATTERN_KINDS)
 
+# The work-item disposition scale (daily-synthesis.md). A material work item carries exactly one of
+# these, derived deterministically by the Build step from its terminal states and outcomes; minor
+# kinds carry no disposition. Ordered most-to-least severe, matching the derivation precedence.
+DISPOSITIONS: tuple[str, ...] = ("completed", "blocked", "interrupted", "failed", "clarification")
+
+# The dispositions whose work items surface as Executive Summary open items: the unfinished ones.
+OPEN_DISPOSITIONS: frozenset[str] = frozenset({"blocked", "failed", "interrupted"})
+
+# The confidence band ranking shared by Build's significance sort and Finalize's roll-up.
+CONFIDENCE_RANK: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
+
+_MATERIAL_WORK_ITEM = "material_work_item"
+
+
+def derive_disposition(
+    *, kind: str, terminal_types: frozenset[str], has_outcomes: bool
+) -> str | None:
+    """Derive a material work item's disposition from its terminal states and outcomes.
+
+    Returns a member of :data:`DISPOSITIONS`, or ``None`` for a non-material work item. The
+    precedence is most-to-least severe — a failed/blocked/interrupted branch wins over a completion,
+    a completion (any outcome or a ``material_result`` terminal) wins over a bare clarification, and
+    every remaining material work item folds into ``clarification`` as the residual disposition.
+    """
+    if kind != _MATERIAL_WORK_ITEM:
+        return None
+    if "failed" in terminal_types:
+        return "failed"
+    if "blocked" in terminal_types:
+        return "blocked"
+    if "interrupted" in terminal_types:
+        return "interrupted"
+    if has_outcomes or "material_result" in terminal_types:
+        return "completed"
+    return "clarification"
+
 
 @dataclass(frozen=True)
 class DailyReportWriteError:

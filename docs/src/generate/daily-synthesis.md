@@ -457,6 +457,16 @@ Notion (rendering consumes the model afterwards — see [Rendering](#rendering))
    (including the synthesized ones), assemble the full `daily-report.json`, and validate it — all
    required fields present, every claim-bearing field carrying a resolvable citation.
 
+Two deterministic-rule choices are fixed for the MVP, both tunable later:
+
+- **Executive Summary is uncapped.** Build emits every material outcome and every open item,
+  ordered by significance — completeness over truncation. Curating or capping the headline lists is
+  deferred.
+- **`overall_confidence` is the mean of the per-claim confidence bands.** Finalize averages the
+  bands of the material work items and their outcomes, plus the engagement and team-learning
+  judgments, and bands the mean at 2.5 (`high`) / 1.5 (`medium`). It is a simple roll-up, not a
+  weighted or evidence-quality-aware score.
+
 ### Passes
 
 Each pass reads only its substrate and writes only its fields:

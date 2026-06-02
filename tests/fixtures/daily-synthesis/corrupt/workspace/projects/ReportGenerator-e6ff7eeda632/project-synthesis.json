@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "project_label": "ReportGenerator",
+  "work_items": [
+    {
+      "work_item_ref": "W0001",
+      "kind": "totally_invalid_kind",
+      "title": "Structurally invalid work item",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+      "outcomes": [],
+      "terminal_states": [],
+      "limits": [],
+      "confidence": "low"
+    }
+  ],
+  "source_user_messages": [
+    {"session_ref": "S0001", "turn_ref": "T0001", "messages": ["msg t1"]}
+  ]
+}

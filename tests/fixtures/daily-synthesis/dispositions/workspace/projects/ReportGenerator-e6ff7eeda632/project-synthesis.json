@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "project_label": "ReportGenerator",
+  "work_items": [
+    {
+      "work_item_ref": "W0001",
+      "kind": "material_work_item",
+      "title": "Failed attempt",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+      "trigger": {"summary": "Trigger W0001.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]},
+      "agent_reaction": {"summary": "Reaction W0001.", "main_actions": ["try"]},
+      "outcomes": [],
+      "terminal_states": [
+        {"type": "failed", "summary": "W0001 failed terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]}
+      ],
+      "limits": [],
+      "confidence": "medium"
+    },
+    {
+      "work_item_ref": "W0002",
+      "kind": "material_work_item",
+      "title": "Blocked attempt",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0002"}],
+      "trigger": {"summary": "Trigger W0002.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0002"}]},
+      "agent_reaction": {"summary": "Reaction W0002.", "main_actions": ["try"]},
+      "outcomes": [],
+      "terminal_states": [
+        {"type": "blocked", "summary": "W0002 blocked terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0002"}]}
+      ],
+      "limits": [],
+      "confidence": "high"
+    },
+    {
+      "work_item_ref": "W0003",
+      "kind": "material_work_item",
+      "title": "Interrupted attempt",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0003"}],
+      "trigger": {"summary": "Trigger W0003.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0003"}]},
+      "agent_reaction": {"summary": "Reaction W0003.", "main_actions": ["try"]},
+      "outcomes": [],
+      "terminal_states": [
+        {"type": "interrupted", "summary": "W0003 interrupted terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0003"}]}
+      ],
+      "limits": [],
+      "confidence": "low"
+    },
+    {
+      "work_item_ref": "W0004",
+      "kind": "material_work_item",
+      "title": "Clarification only",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0004"}],
+      "trigger": {"summary": "Trigger W0004.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0004"}]},
+      "agent_reaction": {"summary": "Reaction W0004.", "main_actions": ["discuss"]},
+      "outcomes": [],
+      "terminal_states": [
+        {"type": "clarification_only", "summary": "W0004 clarification terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0004"}]}
+      ],
+      "limits": [],
+      "confidence": "medium"
+    },
+    {
+      "work_item_ref": "W0005",
+      "kind": "material_work_item",
+      "title": "Completed via material_result without outcomes",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0005"}],
+      "trigger": {"summary": "Trigger W0005.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0005"}]},
+      "agent_reaction": {"summary": "Reaction W0005.", "main_actions": ["ship"]},
+      "outcomes": [],
+      "terminal_states": [
+        {"type": "material_result", "summary": "W0005 material_result terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0005"}]}
+      ],
+      "limits": [],
+      "confidence": "high"
+    },
+    {
+      "work_item_ref": "W0006",
+      "kind": "material_work_item",
+      "title": "Completed via outcomes with other terminal",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0006"}],
+      "trigger": {"summary": "Trigger W0006.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0006"}]},
+      "agent_reaction": {"summary": "Reaction W0006.", "main_actions": ["ship"]},
+      "outcomes": [
+        {"category": "code_outcome", "summary": "W0006 outcome.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0006"}], "confidence": "low"}
+      ],
+      "terminal_states": [
+        {"type": "other", "summary": "W0006 other terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0006"}]}
+      ],
+      "limits": [],
+      "confidence": "low"
+    },
+    {
+      "work_item_ref": "W0007",
+      "kind": "material_work_item",
+      "title": "No-material terminal without outcomes",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0007"}],
+      "trigger": {"summary": "Trigger W0007.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0007"}]},
+      "agent_reaction": {"summary": "Reaction W0007.", "main_actions": ["discuss"]},
+      "outcomes": [],
+      "terminal_states": [
+        {"type": "no_material", "summary": "W0007 no_material terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0007"}]}
+      ],
+      "limits": [],
+      "confidence": "medium"
+    },
+    {
+      "work_item_ref": "W0008",
+      "kind": "material_work_item",
+      "title": "Failed wins over blocked",
+      "covered_turns": [{"session_ref": "S0002", "turn_ref": "T0001"}],
+      "trigger": {"summary": "Trigger W0008.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]},
+      "agent_reaction": {"summary": "Reaction W0008.", "main_actions": ["try"]},
+      "outcomes": [
+        {"category": "code_outcome", "summary": "W0008 outcome.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}], "confidence": "high"}
+      ],
+      "terminal_states": [
+        {"type": "failed", "summary": "W0008 failed terminal.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]},
+        {"type": "blocked", "summary": "W0008 blocked terminal.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]}
+      ],
+      "limits": [],
+      "confidence": "high"
+    }
+  ],
+  "source_user_messages": [
+    {"session_ref": "S0001", "turn_ref": "T0001", "messages": ["msg t1"]},
+    {"session_ref": "S0002", "turn_ref": "T0001", "messages": ["msg s2 t1"]}
+  ]
+}

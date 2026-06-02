@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from prompt_diary.generate.daily_synthesis.model import (
+    DISPOSITIONS,
     InvalidDailyReportInput,
     ParsedEngagement,
     ParsedProjectSummary,
     ParsedTeamLearning,
+    derive_disposition,
     parse_engagement,
     parse_project_summary,
     parse_team_learning,
@@ -24,6 +26,93 @@ from tests.support.daily_synthesis import (
 def _error_paths(result: object) -> list[str]:
     assert isinstance(result, InvalidDailyReportInput)
     return [error.path for error in result.errors]
+
+
+# --- dispositions scale ----------------------------------------------------------------------
+
+
+def test_dispositions_match_doc_scale() -> None:
+    # The disposition scale pinned by daily-synthesis.md (completed / blocked / interrupted /
+    # failed / clarification). Build is its only consumer.
+    assert DISPOSITIONS == ("completed", "blocked", "interrupted", "failed", "clarification")
+
+
+def test_derive_disposition_returns_none_for_non_material() -> None:
+    # Minor kinds carry no disposition regardless of their (empty) terminal states.
+    assert (
+        derive_disposition(
+            kind="no_material_work_item", terminal_types=frozenset(), has_outcomes=False
+        )
+        is None
+    )
+    assert (
+        derive_disposition(kind="evidence_gap_item", terminal_types=frozenset(), has_outcomes=False)
+        is None
+    )
+
+
+def test_derive_disposition_failed_wins_over_blocked_and_interrupted() -> None:
+    types = frozenset({"failed", "blocked", "interrupted"})
+    assert (
+        derive_disposition(kind="material_work_item", terminal_types=types, has_outcomes=True)
+        == "failed"
+    )
+
+
+def test_derive_disposition_blocked_wins_over_interrupted() -> None:
+    types = frozenset({"blocked", "interrupted"})
+    assert (
+        derive_disposition(kind="material_work_item", terminal_types=types, has_outcomes=False)
+        == "blocked"
+    )
+
+
+def test_derive_disposition_interrupted() -> None:
+    assert (
+        derive_disposition(
+            kind="material_work_item", terminal_types=frozenset({"interrupted"}), has_outcomes=False
+        )
+        == "interrupted"
+    )
+
+
+def test_derive_disposition_completed_via_outcomes() -> None:
+    # An outcome with a non-failure terminal still reads as completed.
+    assert (
+        derive_disposition(
+            kind="material_work_item", terminal_types=frozenset({"other"}), has_outcomes=True
+        )
+        == "completed"
+    )
+
+
+def test_derive_disposition_completed_via_material_result() -> None:
+    assert (
+        derive_disposition(
+            kind="material_work_item",
+            terminal_types=frozenset({"material_result"}),
+            has_outcomes=False,
+        )
+        == "completed"
+    )
+
+
+def test_derive_disposition_clarification_is_the_residual() -> None:
+    # No failure branch, no completion signal: every remaining material item folds to clarification.
+    assert (
+        derive_disposition(
+            kind="material_work_item",
+            terminal_types=frozenset({"clarification_only"}),
+            has_outcomes=False,
+        )
+        == "clarification"
+    )
+    assert (
+        derive_disposition(
+            kind="material_work_item", terminal_types=frozenset({"no_material"}), has_outcomes=False
+        )
+        == "clarification"
+    )
 
 
 # --- project summary -------------------------------------------------------------------------
