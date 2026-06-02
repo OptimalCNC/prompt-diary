@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0002",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User asked to design the evidence-extraction QA approach.",
+        "quoted_messages": [
+          {"text": "Design the QA approach for evidence extraction.", "citations": [{"lines": "2-2"}]}
+        ],
+        "citations": [{"lines": "2-2"}]
+      },
+      "agent_reactions": [
+        {"summary": "Outlined a three-layer test strategy and wrote the QA notes.", "citations": [{"lines": "3-5"}]}
+      ],
+      "outcomes": [
+        {"category": "process_outcome", "summary": "Three-layer QA strategy delivered.", "citations": [{"lines": "5-5"}]}
+      ],
+      "observed_checks": [],
+      "terminal_state": {"type": "material_result", "summary": "QA design delivered.", "citations": [{"lines": "6-6"}]},
+      "materiality": "material"
+    }
+  ]
+}

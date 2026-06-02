@@ -22,7 +22,9 @@ than a laboriously perfected upfront prompt that cost more attention. So:
 
 You receive the day's work items (already synthesized) and, per covered turn, the user's verbatim
 messages in `source_user_messages`. With one day there is little repetition, so read each pattern in
-its context — prompt to corrections to outcome — rather than counting occurrences.
+its context — prompt to corrections to outcome — rather than counting occurrences. Each work item is
+labeled with the `project_key` it belongs to; session refs repeat across projects, so cite with that
+`project_key`.
 
 ### Work Items
 
@@ -46,7 +48,7 @@ Call `write_team_learning` with:
 {
   "takeaways": {
     "text": "<the few patterns most worth the team's attention, or that nothing generalizes>",
-    "citations": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}],
+    "citations": [{"project_key": "<project_key>", "session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}],
     "confidence": "<high|medium|low>"
   },
   "patterns": [
@@ -55,7 +57,7 @@ Call `write_team_learning` with:
       "statement": "<the pattern>",
       "rationale": "<why it helped or what it cost>",
       "recurrence": "<how often it occurred or how likely it is to recur>",
-      "citations": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}],
+      "citations": [{"project_key": "<project_key>", "session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}],
       "confidence": "<high|medium|low>"
     }
   ],
@@ -68,7 +70,8 @@ If it returns `status: invalid`, correct from the returned errors and retry.
 ## Rules
 
 - Patterns, not a verdict on the person; productivity is the measure, not prompt polish.
-- Every pattern and the takeaways must cite the turns they rest on.
+- Every pattern and the takeaways must cite the turns they rest on, each citation carrying the cited
+  work item's `project_key`.
 - Be conservative: assert a pattern only when recurring or clearly likely to recur; otherwise note in
   `limits` that it needs more evidence.
 - Cross-day trends ("improving over time") are out of scope; read within this day only.

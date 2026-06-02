@@ -42,10 +42,87 @@ abstract layout: the union of every block's `needs` is what `daily-report.json` 
 [Field Provenance](#field-provenance) tables below record which of those fields are AI-`synthesize`d
 versus deterministically built.
 
-The concrete `daily-report.json` schema — and the mechanism that produces and validates each field —
-is settled together with the AI synthesis workflow (see
-[AI Synthesis Workflow](#ai-synthesis-workflow)), since it depends on how synthesis is driven;
-it is intentionally not frozen here.
+The concrete `daily-report.json` schema is **frozen** below — it is the union of the abstract
+layout's `needs`. `synthesize` fields (see [Field Provenance](#field-provenance)) are written by the
+agent passes; every other field is built deterministically by code. The phase writes one
+`daily-report.json`: code lays down the deterministic skeleton with the three `synthesize` slots set
+to `null`, each pass patches its own slot through its validating tool, and a finalize step fills
+`overall_confidence` and validates the whole document (see [AI Synthesis Workflow](#ai-synthesis-workflow)).
+
+Citations are stored **resolved** as `{project_key, session_ref, turn_ref, lines}`, where `lines` is
+the cited indexed turn's line range (for example `"2-8"`); the report citation format `S0001:2-8` is
+`session_ref:lines`, scoped to its project. Session refs are assigned per project, so every stored
+citation carries `project_key` to stay unambiguous across projects. The per-project summary pass
+submits `{session_ref, turn_ref}` (its project is the tool argument); the cross-project engagement
+and team-learning passes submit `{project_key, session_ref, turn_ref}`. The tools resolve every
+citation against the session index, rejecting any turn that does not resolve or that falls outside
+the pass's allowed scope.
+
+```json
+{
+  "schema_version": 1,
+  "report_date": "2026-05-28",
+  "status": "final",
+  "window": {"start": "2026-05-28T00:00:00+08:00", "end": "2026-05-29T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+  "overall_confidence": "high",
+  "executive_summary": {
+    "top_outcomes": [{"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]}],
+    "open_items": [{"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0002", "lines": "9-12"}]}]
+  },
+  "projects": [{
+    "project_key": "ReportGenerator-e6ff7eeda632",
+    "project_label": "ReportGenerator",
+    "summary": {"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]},
+    "work_items": [{
+      "work_item_ref": "W0001",
+      "title": "…",
+      "kind": "material_work_item",
+      "disposition": "completed",
+      "confidence": "high",
+      "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+      "trigger_summary": "…",
+      "agent_reaction_summary": "…",
+      "outcomes": [{"what_changed": "…", "confidence": "high", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]}],
+      "terminal_states": [{"summary": "…"}],
+      "limits": ["…"]
+    }],
+    "source_user_messages": [{"session_ref": "S0001", "turn_ref": "T0001", "messages": ["…"]}]
+  }],
+  "engagement_assessment": {
+    "overall_reading": {"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}], "confidence": "medium"},
+    "observations": [{"dimension": "direction", "statement": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}], "confidence": "medium"}],
+    "limits": ["…"]
+  },
+  "team_learning": {
+    "takeaways": {"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0002", "turn_ref": "T0001", "lines": "2-6"}], "confidence": "low"},
+    "patterns": [{"kind": "reuse", "statement": "…", "rationale": "…", "recurrence": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0002", "turn_ref": "T0001", "lines": "2-6"}], "confidence": "low"}],
+    "limits": ["…"]
+  }
+}
+```
+
+Field shapes follow the [Field Provenance](#field-provenance) tables. Notes on the schema:
+
+- `summary` (per project), `engagement_assessment`, and `team_learning` are `null` in the skeleton
+  and filled by their passes. Finalize requires `summary` non-null for any project with work items,
+  and requires `engagement_assessment` / `team_learning` non-null when the report has any work item;
+  an empty report (no work items) leaves the judgment sections `null`, and they render as
+  `Empty(fallback)`.
+- `disposition` is set only for `material_work_item`s (one of `completed` / `blocked` / `interrupted`
+  / `failed` / `clarification`); minor kinds (`no_material_work_item`, `evidence_gap_item`,
+  `excluded_with_reason`) carry `null` and fold into "Minor activity".
+- `covered_turns` is lifted onto each work item so rendering can join the project-level
+  `source_user_messages` to the work item's "User messages" toggle.
+- The per-project `summary` carries `text` + `citations` only — its confidence is implicit in the
+  work items it rolls up, each of which shows its own `confidence`. `overall_reading` and `takeaways`
+  carry their own `confidence` because they are standalone judgments.
+- `overall_confidence` is `high` / `medium` / `low` for a report with work items; for an empty report
+  (no work items, judgment sections `null`) it is `null` — there are no per-claim confidences to roll
+  up — and the header renders it as not applicable.
+- The passes are idempotent on a single `daily-report.json`: each tool does an atomic
+  read-modify-write that replaces its own slot (re-running a pass overwrites, never duplicates), and
+  finalize recomputes `overall_confidence` from the current slots on every run, so a re-run never
+  leaves a stale roll-up.
 
 ### Field Provenance
 
@@ -55,7 +132,7 @@ also guarantees they cannot drift from the evidence they came from.
 
 - **lift** — copied verbatim from an upstream artifact (a work item, `source_user_messages`); no transformation.
 - **derive** — computed deterministically from upstream fields.
-- **resolve** — looked up deterministically, such as a turn reference to its line range via the evidence card.
+- **resolve** — looked up deterministically, such as a turn reference to its line range via the session index.
 - **synthesize** — newly written by the agent; the only AI-produced fields.
 
 These tables capture, per lens, which fields are AI-`synthesize`d versus deterministically built, and
@@ -74,14 +151,14 @@ AI synthesis workflow.
 | `User messages` | `source_user_messages` (tool-populated) | lift |
 | `disposition` | `terminal_states` + `outcomes` | derive |
 | ordering · material/Minor split | `kind` + sort rule | derive |
-| `Citation` | `evidence_refs` → lines via the evidence card | resolve |
+| `Citation` | `evidence_refs` → lines via the session index | resolve |
 | project `summary` | the project's work items | **synthesize** |
 
 **Engagement Assessment**
 
 | Field | Source | Provenance |
 | --- | --- | --- |
-| `Citation` | observation `citations` → lines via the evidence card | resolve |
+| `Citation` | observation `citations` → lines via the session index | resolve |
 | observation `dimension` | classified by the agent (direction / review / correction / recovery) | **synthesize** |
 | observation `statement` | the work item's messages + reaction / outcome context | **synthesize** |
 | `confidence` | the agent's per-observation judgment | **synthesize** |
@@ -96,7 +173,7 @@ its `source_user_messages` — is lifted/resolved input, not output fields.
 
 | Field | Source | Provenance |
 | --- | --- | --- |
-| `Citation` | pattern `citations` → lines via the evidence card | resolve |
+| `Citation` | pattern `citations` → lines via the session index | resolve |
 | pattern `kind` | classified by the agent (promote / avoid / reuse) | **synthesize** |
 | pattern `statement` / `rationale` | the work item arc + `source_user_messages`, read in context | **synthesize** |
 | `recurrence` | occurrences across work items (countable seed; the agent states it) | **synthesize** |
@@ -249,9 +326,10 @@ Notes on the purpose-1 region:
 - Evidence honesty stays visible: each work item's `limits` (what it did not verify or could not
   confirm) render as a visible caveat, not folded, so a completed-looking outcome never hides the
   boundary that qualifies it. Failures and blocks already show through `disposition`.
-- Synthesized aggregate prose — the project `summary` here, and likewise the engagement overall
-  reading and team-learning takeaways — carries its own `citations` and `confidence`, so no
-  synthesized claim renders uncited.
+- Synthesized aggregate prose carries its own `citations`, so no synthesized claim renders uncited.
+  The engagement overall reading and team-learning takeaways additionally carry their own
+  `confidence`; the per-project `summary` does not — its confidence is implicit in the work items it
+  rolls up, each shown with its own `confidence`.
 
 Notes on the engagement region:
 
@@ -397,18 +475,22 @@ work items (engagement is per-person; team-learning recurrence is cross-item).
 Each tool follows the `write_evidence` / `write_work_item` pattern: the agent submits a structured
 object; the tool validates it — returning `status: invalid` with structured errors so the agent
 corrects and retries — then commits. Citations are submitted as turn refs `{session_ref, turn_ref}`
-and resolved to line ranges via the evidence card, so a citation that does not resolve is rejected.
+and resolved to line ranges via the session index, so a citation that does not resolve is rejected.
 
 - **`write_project_summary(project_key, summary)`** — `summary: {text, citations}`. Rejects an empty
-  `text`, empty `citations`, or a citation outside this project's covered turns.
-- **`write_engagement(engagement_assessment)`** — `{ overall_reading: {text, citations, confidence},
-  observations: [{dimension, statement, citations, confidence} …], limits: [str …] }`. Rejects an
-  empty `overall_reading.text`, any uncited `overall_reading` or observation, or a `dimension` /
-  `confidence` outside its controlled values.
-- **`write_team_learning(team_learning)`** — `{ takeaways: {text, citations, confidence}, patterns:
-  [{kind, statement, rationale, recurrence, citations, confidence} …], limits: [str …] }`. Rejects an
-  empty `takeaways.text`, any uncited `takeaways` or pattern, or a `kind` / `confidence` outside its
-  controlled values.
+  `text`, empty `citations`, a citation outside this project's covered turns, or a citation whose
+  submitted `project_key` names a different project.
+- **`write_engagement(overall_reading, observations, limits)`** — `overall_reading: {text, citations,
+  confidence}`, `observations: [{dimension, statement, citations, confidence} …]`, `limits: [str …]`.
+  Rejects an empty `overall_reading.text`, any uncited `overall_reading` or observation, or a
+  `dimension` / `confidence` outside its controlled values.
+- **`write_team_learning(takeaways, patterns, limits)`** — `takeaways: {text, citations, confidence}`,
+  `patterns: [{kind, statement, rationale, recurrence, citations, confidence} …]`, `limits: [str …]`.
+  Rejects an empty `takeaways.text`, any uncited `takeaways` or pattern, or a `kind` / `confidence`
+  outside its controlled values.
+
+  Each agent submits exactly the fields shown in its prompt's JSON block; the tools resolve the
+  submitted `{session_ref, turn_ref}` citations to stored `{session_ref, turn_ref, lines}`.
 
 Each is a single call (the sections are curated, not coverage-bound). These extend the package MCP
 server, which today exposes `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and

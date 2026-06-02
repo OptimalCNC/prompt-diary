@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "project_label": "ReportGenerator",
+  "work_items": [
+    {
+      "work_item_ref": "W0001",
+      "kind": "material_work_item",
+      "title": "Simplify the MCP evidence tools and drop chain_ref",
+      "covered_turns": [
+        {"session_ref": "S0001", "turn_ref": "T0001"}
+      ],
+      "trigger": {
+        "summary": "User asked to simplify the MCP evidence tools and remove chain_ref.",
+        "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]
+      },
+      "agent_reaction": {
+        "summary": "Updated the MCP tools page, evidence contract, and extractor prompt to a top-level turn_ref identity.",
+        "main_actions": ["turn_ref migration", "chain_ref removal"]
+      },
+      "outcomes": [
+        {
+          "category": "document_outcome",
+          "summary": "Top-level turn_ref adopted; chain_ref removed from the evidence surface.",
+          "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+          "confidence": "high"
+        }
+      ],
+      "terminal_states": [
+        {
+          "type": "material_result",
+          "summary": "Extraction surface updated to turn_ref identity.",
+          "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]
+        }
+      ],
+      "limits": ["Prompt-test suite not confirmed green within these turns."],
+      "confidence": "high"
+    },
+    {
+      "work_item_ref": "W0002",
+      "kind": "material_work_item",
+      "title": "Design the evidence-extraction QA approach",
+      "covered_turns": [
+        {"session_ref": "S0002", "turn_ref": "T0001"}
+      ],
+      "trigger": {
+        "summary": "User asked to design the evidence-extraction QA approach.",
+        "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]
+      },
+      "agent_reaction": {
+        "summary": "Outlined a three-layer test strategy and wrote the QA notes.",
+        "main_actions": ["three-layer strategy", "QA notes"]
+      },
+      "outcomes": [
+        {
+          "category": "process_outcome",
+          "summary": "Three-layer QA strategy delivered.",
+          "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}],
+          "confidence": "medium"
+        }
+      ],
+      "terminal_states": [
+        {
+          "type": "material_result",
+          "summary": "QA design delivered.",
+          "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]
+        }
+      ],
+      "limits": [],
+      "confidence": "medium"
+    },
+    {
+      "work_item_ref": "W0003",
+      "kind": "no_material_work_item",
+      "title": "Clarify whether the placeholder wording was misleading",
+      "covered_turns": [
+        {"session_ref": "S0001", "turn_ref": "T0002"}
+      ],
+      "outcomes": [],
+      "terminal_states": [],
+      "limits": [],
+      "confidence": "low"
+    },
+    {
+      "work_item_ref": "W0004",
+      "kind": "evidence_gap_item",
+      "title": "Indexed turn with no extractable evidence",
+      "covered_turns": [
+        {"session_ref": "S0001", "turn_ref": "T0003"}
+      ],
+      "outcomes": [],
+      "terminal_states": [],
+      "limits": [],
+      "confidence": "low"
+    }
+  ],
+  "source_user_messages": [
+    {"session_ref": "S0001", "turn_ref": "T0001", "messages": ["Please simplify the MCP evidence tools and drop chain_ref."]},
+    {"session_ref": "S0001", "turn_ref": "T0002", "messages": ["Is that placeholder misleading?"]},
+    {"session_ref": "S0002", "turn_ref": "T0001", "messages": ["Design the QA approach for evidence extraction."]}
+  ]
+}
