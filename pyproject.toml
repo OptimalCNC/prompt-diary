@@ -8,6 +8,7 @@ dependencies = [
     "jinja2>=3.1",
     "mcp>=1.2",
     "msgspec>=0.21.1",
+    "notion-client>=2.0",
     "openai-codex>=0.1.0b2",
     "rich>=13",
     "typer>=0.25.1",
@@ -45,6 +46,9 @@ source = ["prompt_diary"]
 omit = [
     "src/prompt_diary/integrations/codex_runner.py",
     "src/prompt_diary/progress/console.py",
+    # The real Notion SDK adapter is exercised by the live publish path, not the unit suite (the
+    # publisher logic is fully tested against a fake), like codex_runner.py above.
+    "src/prompt_diary/generate/daily_synthesis/notion_client_adapter.py",
 ]
 
 [tool.coverage.report]

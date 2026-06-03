@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -19,6 +20,8 @@ from prompt_diary.cmds.common import (
 )
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
+from prompt_diary.generate.daily_synthesis.notion_client_adapter import build_notion_client
+from prompt_diary.generate.daily_synthesis.notion_publish import publish_workspace_report
 from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
@@ -37,12 +40,29 @@ from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
     from prompt_diary.agent import AgentSessionFactory
+    from prompt_diary.generate.daily_synthesis.notion_publish import NotionClientProtocol
     from prompt_diary.generate.pipeline import PhaseRunner, TaskKind
     from prompt_diary.models import SourceSpec
     from prompt_diary.progress.reporter import ProgressReporter
+
+# Environment variables that configure the optional Notion publish (`generate --notion`). These are
+# the variable *names* to read from the environment, not secrets — the token value never lives here.
+_NOTION_TOKEN_ENV = "NOTION_API_KEY"  # noqa: S105 - env var name to read, not a credential
+_NOTION_DATABASE_ENV = "NOTION_PAGE_ID"
+
+NotionOption = Annotated[
+    bool,
+    typer.Option(
+        help=(
+            "After generating, publish the report to the Notion database in "
+            f"${_NOTION_DATABASE_ENV} (authenticating with ${_NOTION_TOKEN_ENV})."
+        ),
+    ),
+]
 
 GenerateProjectKeyOption = Annotated[
     str,
@@ -102,11 +122,15 @@ def generate(
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
+    notion: NotionOption = False,
 ) -> None:
     """Run the full generation pipeline."""
     if ctx.invoked_subcommand is not None:
         return
     try:
+        # With --notion, fail fast on missing configuration before the expensive pipeline runs.
+        if notion:
+            _notion_credentials()
         with build_cli_reporter(quiet=quiet) as reporter:
             workspace_path, messages = workspace_for_generate_target(
                 date=date,
@@ -118,9 +142,47 @@ def generate(
             result = workflow.run_pipeline(
                 workspace_path=workspace_path, messages=messages, reporter=reporter
             )
+        # Publishing is an explicit, outward-facing step after a successful pipeline, so it runs
+        # outside the reporter context and only when --notion is set.
+        published = publish_report_to_notion(workspace_path) if notion else ()
     except PromptDiaryError as exc:
         exit_with_error(exc)
-    echo_messages(result.messages)
+    echo_messages((*result.messages, *published))
+
+
+def publish_report_to_notion(
+    workspace_path: Path,
+    *,
+    client_factory: Callable[..., NotionClientProtocol] = build_notion_client,
+) -> tuple[str, ...]:
+    """Publish the workspace's rendered Notion payload to the configured database.
+
+    Reads the integration token and target database id from the environment so credentials never
+    pass through the command line. ``client_factory`` is injected in tests; by default it builds the
+    real ``notion_client`` SDK adapter. Any non-:class:`PromptDiaryError` failure (a malformed
+    artifact, client construction, an unforeseen SDK/HTTP error) is converted into a structured,
+    token-free error so the publish path never crashes the CLI with a traceback.
+    """
+    token, database_id = _notion_credentials()
+    try:
+        client = client_factory(token=token)
+        result = publish_workspace_report(
+            workspace_path=workspace_path, client=client, database_id=database_id
+        )
+    except PromptDiaryError:
+        raise
+    except Exception as exc:
+        raise PromptDiaryError(_notion_publish_failed_message(exc)) from exc
+    return (f"Published report to Notion: {result.url or result.page_id}",)
+
+
+def _notion_credentials() -> tuple[str, str]:
+    """Return the Notion (token, database_id) from the environment, raising if either is missing."""
+    token = os.environ.get(_NOTION_TOKEN_ENV)
+    database_id = os.environ.get(_NOTION_DATABASE_ENV)
+    if not token or not database_id:
+        raise PromptDiaryError(_missing_notion_env_message())
+    return token, database_id
 
 
 def generate_evidence(
@@ -263,3 +325,14 @@ def _run_phase_command(
 
 def _missing_workspace_message(workspace_path: Path) -> str:
     return f"prepared workspace is missing: {workspace_path}; run prepare first"
+
+
+def _missing_notion_env_message() -> str:
+    return (
+        f"set {_NOTION_TOKEN_ENV} (integration token) and {_NOTION_DATABASE_ENV} (database id) "
+        "to publish to Notion"
+    )
+
+
+def _notion_publish_failed_message(cause: object) -> str:
+    return f"failed to publish the report to Notion: {cause}"

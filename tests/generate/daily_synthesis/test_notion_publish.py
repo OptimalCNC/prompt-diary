@@ -311,6 +311,18 @@ def test_publish_raises_when_append_result_lacks_a_block_id() -> None:
         publish_report(client=client, database_id="db", payload=_payload([deep]))
 
 
+def test_publish_wraps_a_retrieve_or_create_failure_with_an_actionable_message() -> None:
+    class _RetrieveBoom(_FakeNotionClient):
+        def retrieve_database(self, *, database_id: str) -> dict[str, Any]:
+            self.calls.append(("retrieve", database_id))
+            raise RuntimeError(_NETWORK_DOWN)  # e.g. a 401/404/timeout from the SDK
+
+    client = _RetrieveBoom(_schema())
+
+    with pytest.raises(PromptDiaryError, match="Notion request failed"):
+        publish_report(client=client, database_id="db", payload=_payload([]))
+
+
 def test_publish_wraps_an_append_failure_with_the_created_page_location() -> None:
     class _Boom(_FakeNotionClient):
         def append_children(

@@ -173,6 +173,62 @@ def test_generate_prints_pipeline_messages(
     assert result.stdout == "prepared\ngenerated\n"
 
 
+def test_generate_notion_flag_appends_publish_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # The preflight reads these before the pipeline; set them so the happy path proceeds.
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+
+    def workspace_for_generate_target(
+        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+    ) -> tuple[Path, tuple[str, ...]]:
+        del date, today, timezone_name
+        return tmp_path, ("prepared",)
+
+    published_for: list[Path] = []
+
+    def publish_report_to_notion(workspace_path: Path, **_kwargs: object) -> tuple[str, ...]:
+        published_for.append(workspace_path)
+        return ("Published report to Notion: https://notion.so/x",)
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(pipeline_messages=("generated",)),
+    )
+    monkeypatch.setattr(generate_cmd, "publish_report_to_notion", publish_report_to_notion)
+
+    result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12", "--notion"])
+
+    assert result.exit_code == 0
+    # The publish message is appended after the pipeline messages, and it published the workspace.
+    assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
+    assert published_for == [tmp_path]
+
+
+def test_generate_notion_flag_fails_fast_when_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOTION_API_KEY", raising=False)
+    monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
+
+    def must_not_run(**_kwargs: object) -> tuple[Path, tuple[str, ...]]:
+        raise AssertionError  # the preflight must reject before the pipeline starts
+
+    monkeypatch.setattr(generate_cmd, "workspace_for_generate_target", must_not_run)
+
+    result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12", "--notion"])
+
+    # Missing config is rejected cleanly (no traceback) before any pipeline work begins.
+    assert result.exit_code == 2
+    assert "NOTION_API_KEY" in result.stderr
+
+
 def test_generate_phase_error_exits_with_stderr(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

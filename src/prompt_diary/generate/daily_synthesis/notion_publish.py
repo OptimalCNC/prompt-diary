@@ -97,12 +97,20 @@ def publish_report(
     *, client: NotionClientProtocol, database_id: str, payload: NotionPagePayload
 ) -> PublishResult:
     """Create a new database row for ``payload`` and append its body block tree."""
-    schema = _database_properties(client, database_id)
-    # Refuse to publish an undated row: report_date is the row's only reliable sort/filter key (the
-    # banner omits it), so a payload missing it fails before any Notion write.
+    # Refuse to publish an undated row before any network call: report_date is the row's only
+    # reliable sort/filter key (the banner omits it).
     report_date = _required_report_date(payload)
-    properties = _page_properties(schema, payload.title, report_date)
-    page = client.create_page(parent={"database_id": database_id}, properties=properties)
+    # Translate SDK failures on the retrieve/create calls — a bad token (401), a wrong or unshared
+    # database id (404), a rate limit, or a timeout — into a structured, actionable error instead of
+    # an uncaught traceback. Our own structured errors (e.g. no title property) pass through as-is.
+    try:
+        schema = _database_properties(client, database_id)
+        properties = _page_properties(schema, payload.title, report_date)
+        page = client.create_page(parent={"database_id": database_id}, properties=properties)
+    except PromptDiaryError:
+        raise
+    except Exception as exc:
+        raise PromptDiaryError(_request_failed_message(database_id, exc)) from exc
     # A created page always carries an id; treat its absence as a contract violation rather than
     # appending the body under an empty id and returning a useless result.
     page_id = _str(page.get("id"))
@@ -243,6 +251,13 @@ def _no_title_property_message() -> str:
 
 def _missing_report_date_message() -> str:
     return "Notion report payload has no report_date; refusing to publish an undated row"
+
+
+def _request_failed_message(database_id: str, cause: object) -> str:
+    return (
+        f"Notion request failed for database {database_id}; check the integration token and that "
+        f"the integration can access this database: {cause}"
+    )
 
 
 def _create_missing_id_message() -> str:
