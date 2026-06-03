@@ -41,8 +41,10 @@ regardless). Set `NOTION_API_KEY` (a Notion internal-integration token) and `NOT
 target database id, shared with that integration) in the environment — credentials never pass on the
 command line. Each run appends a new dated row; re-publishing never edits or deletes existing rows.
 
-The generation framework and CLI are in place. The model-backed phase implementations are still
-under development, so generation currently fails clearly at the unimplemented phase runner.
+Generation drives a three-phase, artifact-first pipeline — evidence extraction, then project
+synthesis, then daily report synthesis — through the Codex CLI, producing `daily-report.json`, the
+rendered `report.md`, and `report.notion.json`. It requires the `codex` CLI to be installed and
+authenticated; the subcommands above run each phase standalone against an already-prepared workspace.
 
 Both `prepare` and `generate` show a live progress dashboard when running on a TTY and write
 append-only log lines when output is piped, redirected, or running in CI. Pass `--quiet` to either
