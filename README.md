@@ -35,6 +35,12 @@ report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key
 report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
+Pass `--notion` to `report generate` to also publish the finished report as a new row in a Notion
+database (the deterministic `report.notion.json` payload is always written beside `report.md`
+regardless). Set `NOTION_API_KEY` (a Notion internal-integration token) and `NOTION_PAGE_ID` (the
+target database id, shared with that integration) in the environment — credentials never pass on the
+command line. Each run appends a new dated row; re-publishing never edits or deletes existing rows.
+
 The generation framework and CLI are in place. The model-backed phase implementations are still
 under development, so generation currently fails clearly at the unimplemented phase runner.
 

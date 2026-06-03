@@ -48,7 +48,8 @@ __all__ = [
 
 # Note: a ``Table`` block (the doc's tabular primitive) is deliberately omitted. It is a Notion-only
 # affordance — the cross-project slice the linear Markdown view does not provide — and no section of
-# the current layout emits one, so it is deferred with the rest of the Notion renderer.
+# the current layout emits one. The Notion renderer ships without it; it remains a future
+# cross-project-database affordance.
 
 
 @dataclass(frozen=True)

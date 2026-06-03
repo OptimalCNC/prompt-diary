@@ -414,30 +414,51 @@ claim-bearing prose absent from `daily-report.json`.
 
 ### Notion Rendering
 
-> Draft — a planned view, not part of the MVP output. It is specified here so the layout stays
-> engine-independent and the renderer boundary stays clear; no Notion renderer ships yet.
+Notion rendering serializes the same abstract layout into a Notion page payload and publishes it as
+a row in a Notion database. Like Markdown rendering it is deterministic, read-only over the model,
+and adds no claim-bearing content. It is split in two: a pure renderer
+(`daily_synthesis/render_notion.py`) that walks the layout into Notion block JSON and writes it to
+`report.notion.json`, and a publisher (`daily_synthesis/notion_publish.py`, with the real SDK behind
+`notion_client_adapter.py`) that pushes that payload. `report.notion.json` is a deterministic
+artifact emitted on every run beside `report.md`; publishing is opt-in (see below).
 
-Notion rendering serializes the same abstract layout into a Notion page. Like Markdown rendering it
-is deterministic, read-only over the model, and adds no claim-bearing content.
+Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
 
-Block → Notion:
+- `Document` → the page: its title, plus a `properties` map (report_date, status, window, overall
+  confidence) the publisher maps to database columns.
+- `Section` → a `heading_2`; a `Group` that is a direct section child (a project, an
+  engagement/team-learning dimension) → a `heading_3`.
+- `Group` that is a list item (a work item) → a native **`toggle`** whose label carries the
+  disposition and confidence and whose blocks nest inside — a collapsible record, the idiomatic
+  Notion form for a titled cluster in a list.
+- `Prose` → a `paragraph`, or a `bulleted_list_item` / `numbered_list_item` inside a list; its
+  confidence tags and `Citation` ride in the same rich text.
+- `Citation` → an inline-`code` run (e.g. `ReportGenerator · S0001:2-8`), never a link — workspace
+  session references have no Notion URL.
+- `Toggle` → a native `toggle`; `Callout` tone `quote` (a verbatim user message) → a `quote` block,
+  tone `limit` → a `callout` block with a warning icon; `Empty` → the Markdown view's fallback text.
 
-- `Document` → a page titled `Prompt Diary Report — <report_date>`; `properties` become page
-  properties (status, window, overall confidence) so reports are filterable and sortable across days.
-- `Section` and `Group` → heading or toggle blocks.
-- `Prose` → a text block; `Citation` → a link or mention.
-- `List` → bulleted or numbered list blocks; a `List` of uniform tagged records (the per-project
-  outcomes) can instead be a filterable, sortable database view — the cross-project slice the linear
-  Markdown view does not provide.
-- `Toggle` → a native toggle block.
-- `Table` → a Notion database or linked view whose filters and sorts realize the layout's
-  affordances directly; `Tag` columns become select or status properties.
-- `Callout` → a callout block.
-- `Empty` → the same fallback text as the Markdown view.
+Safety is structural: every model-derived string is placed only in a plain rich-text `text.content`
+(never a `link` or other interpreted field), and Notion stores content literally, so no escaping is
+needed and a session-derived string cannot forge structure. Notion's content limits are honored in
+the payload (each `text.content` ≤ 2000 chars; each block's rich-text array ≤ 100 runs, truncating a
+pathologically long single string with a fixed marker).
 
-Open questions before a Notion renderer is built: how citations link out (workspace session
-references have no Notion URL yet), whether a run updates a report in place or appends a new page,
-and how `partial` versus `final` status is surfaced. These are deferred with the rest of view work.
+Publishing (`report generate --notion`): the publisher reads the integration token and target
+database id from `NOTION_API_KEY` and `NOTION_PAGE_ID` (so credentials never pass on the command
+line) and creates a **new row** per report — re-publishing never edits or deletes an existing row, so
+the user prunes stale rows by hand. Property mapping is schema-driven: the database's single
+title-typed property gets the page title, every date-typed property gets the report date, and other
+types are left for the user. Metadata the database has no column for (status, window, overall
+confidence) is surfaced in a banner callout at the top of the page body, so the report is
+self-describing against any schema. The page is created empty and its block tree appended one nesting
+level at a time, keeping each request within Notion's per-request and create-nesting limits.
+
+The previously open questions are resolved: citations render as inline code (no link); a run always
+appends a new page (never in place); and `partial` versus `final` `status` shows in the metadata
+banner (and in the `status` column if the database has one). Deferred: setting `汇报人`-style people
+columns, find-or-create of the target database, and database-schema introspection beyond
+property-type matching.
 
 ## AI Synthesis Workflow
 
