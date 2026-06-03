@@ -92,6 +92,9 @@ def test_layout_document_title_and_properties(tmp_path: Path) -> None:
 
     assert document.title == "Prompt Diary Report — 2026-05-28"
     assert document.properties == {
+        # ``report_date`` is carried for the Notion renderer's Date column; the Markdown header
+        # ignores it (it reads only status/window/overall_confidence).
+        "report_date": "2026-05-28",
         "status": "final",
         # The window range uses an en dash (U+2013), built here as an escape to keep the source
         # free of an ambiguous literal.

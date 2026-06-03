@@ -228,6 +228,9 @@ def _properties(report: dict[str, Any]) -> dict[str, str]:
     window = _mapping(report.get("window"))
     confidence = report.get("overall_confidence")
     return {
+        # ``report_date`` is carried for the Notion renderer's Date property column; the Markdown
+        # header reads only status/window/overall_confidence, so it is unaffected by the extra key.
+        "report_date": _str(report.get("report_date")),
         "status": _str(report.get("status")),
         "window": (
             f"{_str(window.get('start'))}{_RANGE_DASH}{_str(window.get('end'))}, "

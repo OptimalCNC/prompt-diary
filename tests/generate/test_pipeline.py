@@ -81,6 +81,7 @@ def test_generation_plan_builds_project_local_fan_in(tmp_path: Path) -> None:
     assert [artifact.path.as_posix() for artifact in daily.output_artifacts] == [
         "daily-report.json",
         "report.md",
+        "report.notion.json",
     ]
 
 
@@ -945,6 +946,12 @@ def _write_daily_synthesis(workspace_path: Path) -> None:
         )
         + "\n",
         encoding="utf-8",
+    )
+    # The daily task also declares the Notion payload artifact; the mock writes a minimal one so the
+    # pipeline's missing-output check passes (the real runner renders it from the layout).
+    _write_json(
+        workspace_path / "report.notion.json",
+        {"title": "Prompt Diary Report - 2026-05-12", "properties": {}, "children": []},
     )
 
 

@@ -168,6 +168,13 @@ def markdown_report_artifact() -> ArtifactSpec:
     return ArtifactSpec(path=PurePosixPath("report.md"), description="Markdown report")
 
 
+def notion_report_artifact() -> ArtifactSpec:
+    """Return the rendered Notion page payload artifact."""
+    return ArtifactSpec(
+        path=PurePosixPath("report.notion.json"), description="Notion report payload"
+    )
+
+
 def build_generation_plan(workspace_path: Path) -> GenerationPlan:
     """Build a project-local fan-in generation plan from a prepared workspace."""
     workspace = load_prepared_workspace(workspace_path)
@@ -499,7 +506,11 @@ def _daily_synthesis_task(workspace: PreparedWorkspace) -> TaskSpec:
             ArtifactSpec(PurePosixPath("metadata.json"), "workspace metadata"),
             *project_artifacts,
         ),
-        output_artifacts=(daily_report_model_artifact(), markdown_report_artifact()),
+        output_artifacts=(
+            daily_report_model_artifact(),
+            markdown_report_artifact(),
+            notion_report_artifact(),
+        ),
     )
 
 

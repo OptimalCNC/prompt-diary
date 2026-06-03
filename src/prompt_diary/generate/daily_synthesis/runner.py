@@ -33,6 +33,7 @@ from prompt_diary.generate.daily_synthesis.inputs import (
 )
 from prompt_diary.generate.daily_synthesis.model import REPORTABLE_WORK_ITEM_KINDS
 from prompt_diary.generate.daily_synthesis.render_markdown import render_report
+from prompt_diary.generate.daily_synthesis.render_notion import render_notion_artifact
 from prompt_diary.generate.pipeline import TaskResult
 from prompt_diary.generate.prompts import (
     engagement_prompt,
@@ -60,6 +61,7 @@ a mid-level effort instead of inheriting the user's global Codex setting. It is 
 
 _REPORT_NAME = "daily-report.json"
 _REPORT_MD_NAME = "report.md"
+_REPORT_NOTION_NAME = "report.notion.json"
 
 
 @dataclass(frozen=True)
@@ -78,10 +80,11 @@ class DailySynthesisRunner:
     ) -> TaskResult:
         """Run the daily synthesis task: Build, the agent passes, Finalize, and render."""
         del reporter
-        # report.md must exist only after a successful render, so clear a stale one from a previous
-        # run before anything else — including before Build. A run that now fails (Build raises on a
-        # corrupt envelope, a pass writes nothing, or Finalize rejects) must not leave the old
-        # rendered report beside the new, partial daily-report.json.
+        # The rendered reports (report.md, report.notion.json) must exist only after a successful
+        # render, so clear stale ones from a previous run before anything else — including before
+        # Build. A run that now fails (Build raises on a corrupt envelope, a pass writes nothing, or
+        # Finalize rejects) must not leave an old rendered report beside the new, partial
+        # daily-report.json.
         _reset_rendered_report(workspace_path)
         report = build_daily_report(workspace_path=workspace_path)
 
@@ -103,7 +106,17 @@ class DailySynthesisRunner:
                 errors=tuple(error.message for error in finalized.errors),
             )
 
-        render_report(workspace_path=workspace_path)
+        # Render both views transactionally: if either renderer raises, leave neither rendered
+        # report behind (the pipeline turns the propagated error into a failed task), so a failed
+        # run never leaves a fresh report.md without its report.notion.json, or vice versa.
+        rendered = False
+        try:
+            render_report(workspace_path=workspace_path)
+            render_notion_artifact(workspace_path=workspace_path)
+            rendered = True
+        finally:
+            if not rendered:
+                _reset_rendered_report(workspace_path)
         return TaskResult(
             task_id=task.task_id, status="success", output_artifacts=task.output_artifacts
         )
@@ -202,7 +215,10 @@ def _slot(workspace_path: Path, slot: str) -> object:
 
 
 def _reset_rendered_report(workspace_path: Path) -> None:
+    # Clear both rendered views (Markdown and Notion) so a run that fails before rendering leaves no
+    # stale report beside the new, partial daily-report.json.
     (workspace_path / _REPORT_MD_NAME).unlink(missing_ok=True)
+    (workspace_path / _REPORT_NOTION_NAME).unlink(missing_ok=True)
 
 
 def _read_report(workspace_path: Path) -> dict[str, Any]:

@@ -9,6 +9,7 @@ empty-report short-circuit are exercised end to end without Codex.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,7 @@ from prompt_diary.generate.pipeline import (
     daily_report_model_artifact,
     daily_synthesis_task_id,
     markdown_report_artifact,
+    notion_report_artifact,
 )
 from tests.support.daily_synthesis import (
     PROJECT_KEY,
@@ -40,12 +42,20 @@ if TYPE_CHECKING:
 
     from prompt_diary.generate.pipeline import TaskResult
 
+# Raised by the fake renderer to exercise the runner's transactional render cleanup; kept as a
+# constant so the raise site avoids ruff's long-inline-message rule (TRY003).
+_RENDER_FAILED = "notion render failed"
+
 
 def _task() -> TaskSpec:
     return TaskSpec(
         task_id=daily_synthesis_task_id(),
         kind="daily_synthesis",
-        output_artifacts=(daily_report_model_artifact(), markdown_report_artifact()),
+        output_artifacts=(
+            daily_report_model_artifact(),
+            markdown_report_artifact(),
+            notion_report_artifact(),
+        ),
     )
 
 
@@ -61,6 +71,10 @@ def _run(factory: DailySynthesisAgentSessionFactory, workspace: Path) -> TaskRes
 
 def _report_md(workspace: Path) -> Path:
     return workspace / "report.md"
+
+
+def _report_notion(workspace: Path) -> Path:
+    return workspace / "report.notion.json"
 
 
 # --- happy path ----------------------------------------------------------------------------------
@@ -81,13 +95,62 @@ def test_runner_fills_all_slots_and_renders(tmp_path: Path) -> None:
     assert _report_md(workspace).read_text(encoding="utf-8").strip()
 
 
-def test_runner_returns_both_output_artifacts(tmp_path: Path) -> None:
+def test_runner_returns_all_output_artifacts(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
 
     result = _run(DailySynthesisAgentSessionFactory(), workspace)
 
     paths = {str(artifact.path) for artifact in result.output_artifacts}
-    assert paths == {"daily-report.json", "report.md"}
+    assert paths == {"daily-report.json", "report.md", "report.notion.json"}
+
+
+def test_runner_renders_notion_payload(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+
+    result = _run(DailySynthesisAgentSessionFactory(), workspace)
+
+    assert result.status == "success"
+    # The Notion payload is written beside report.md as a well-formed page payload.
+    payload = json.loads(_report_notion(workspace).read_text(encoding="utf-8"))
+    assert payload["title"] == "Prompt Diary Report — 2026-05-28"
+    assert payload["children"]
+
+
+def test_runner_clears_stale_notion_payload_when_run_fails(tmp_path: Path) -> None:
+    # A previous run left a report.notion.json; this run fails (a summary pass writes nothing), so
+    # the stale Notion payload must be cleared before Build, like the stale report.md.
+    workspace = copy_basic_daily_workspace(tmp_path)
+    stale = _report_notion(workspace)
+    stale.write_text("{}\n", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory(skip_pass=frozenset({"project_summary"}))
+
+    result = _run(factory, workspace)
+
+    assert result.status == "failed"
+    assert not stale.exists()
+
+
+def test_runner_clears_both_reports_when_a_render_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # If a renderer raises after Finalize, the run leaves neither rendered report behind: the
+    # Markdown render succeeds and writes report.md, then the Notion render fails, and the runner's
+    # transactional cleanup removes both before the error propagates (the pipeline turns it failed).
+    workspace = copy_basic_daily_workspace(tmp_path)
+
+    def _boom(*, workspace_path: Path) -> Path:
+        del workspace_path
+        raise RuntimeError(_RENDER_FAILED)
+
+    monkeypatch.setattr(
+        "prompt_diary.generate.daily_synthesis.runner.render_notion_artifact", _boom
+    )
+
+    with pytest.raises(RuntimeError, match=_RENDER_FAILED):
+        _run(DailySynthesisAgentSessionFactory(), workspace)
+
+    assert not _report_md(workspace).exists()
+    assert not _report_notion(workspace).exists()
 
 
 def test_runner_runs_one_pass_per_project_plus_two(tmp_path: Path) -> None:
