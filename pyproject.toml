@@ -10,6 +10,7 @@ dependencies = [
     "msgspec>=0.21.1",
     "notion-client>=2.0",
     "openai-codex>=0.1.0b2",
+    "platformdirs>=4.0",
     "rich>=13",
     "typer>=0.25.1",
 ]
