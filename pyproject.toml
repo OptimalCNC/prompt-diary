@@ -148,6 +148,8 @@ select = [
 "tests/**" = [
     # Allow pytest assertions in tests.
     "S101",
+    # Test fixtures use fake/sentinel credentials, not real secrets.
+    "S105",
 ]
 
 [tool.ruff.lint.isort]

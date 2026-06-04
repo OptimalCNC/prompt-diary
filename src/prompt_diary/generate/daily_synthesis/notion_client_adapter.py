@@ -15,14 +15,22 @@ sources, which the publisher does not model).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from notion_client import Client
+
+from prompt_diary.errors import PromptDiaryError
 
 if TYPE_CHECKING:
     from prompt_diary.generate.daily_synthesis.notion_publish import NotionClientProtocol
 
-__all__ = ["NotionSDKClient", "build_notion_client"]
+__all__ = [
+    "NotionSDKClient",
+    "NotionSDKValidator",
+    "NotionValidator",
+    "build_notion_client",
+    "build_notion_validator",
+]
 
 _NOTION_VERSION = "2022-06-28"
 
@@ -57,3 +65,50 @@ class NotionSDKClient:
 def build_notion_client(*, token: str) -> NotionClientProtocol:
     """Build the real Notion client for the given integration token."""
     return NotionSDKClient(token=token)
+
+
+class NotionValidator(Protocol):
+    """Validate Notion credentials live so the config wizard can reject bad input before storing."""
+
+    def verify_token(self) -> None:
+        """Raise :class:`PromptDiaryError` if the integration token is not accepted."""
+        ...
+
+    def verify_database(self, database_id: str) -> None:
+        """Raise :class:`PromptDiaryError` if the database is missing or not shared."""
+        ...
+
+
+class NotionSDKValidator:
+    """Validate credentials by calling the SDK; failures become token-free domain errors."""
+
+    def __init__(self, *, token: str) -> None:
+        self._client = Client(auth=token, notion_version=_NOTION_VERSION)
+
+    def verify_token(self) -> None:
+        try:
+            self._client.users.me()
+        except Exception as exc:
+            raise PromptDiaryError(_invalid_token_message()) from exc
+
+    def verify_database(self, database_id: str) -> None:
+        try:
+            self._client.databases.retrieve(database_id=database_id)
+        except Exception as exc:
+            raise PromptDiaryError(_invalid_database_message(database_id)) from exc
+
+
+def build_notion_validator(*, token: str) -> NotionValidator:
+    """Build the real Notion credential validator for the given integration token."""
+    return NotionSDKValidator(token=token)
+
+
+def _invalid_token_message() -> str:
+    return "the Notion integration token was rejected; check the token and try again."
+
+
+def _invalid_database_message(database_id: str) -> str:
+    return (
+        f"could not open Notion database {database_id}; check the id and that the database is "
+        "shared with the integration."
+    )
