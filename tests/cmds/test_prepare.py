@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def test_prepare_accepts_quiet_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PROMPT_DIARY_HOME", str(tmp_path / ".reports"))
     monkeypatch.setenv("PROMPT_DIARY_CODEX_SESSIONS", "")
     monkeypatch.setenv("PROMPT_DIARY_CLAUDE_PROJECTS", "")
     result = CliRunner().invoke(

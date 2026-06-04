@@ -13,6 +13,7 @@ from prompt_diary.cli import app
 from prompt_diary.generate.pipeline import PhaseRunner, TaskKind, TaskResult, TaskSpec
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow
 from prompt_diary.models import JsonObject, SourceSpec
+from prompt_diary.paths import REPORTS_HOME_ENV
 from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
 from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.targeting.resolve import resolve_report_target
@@ -61,7 +62,8 @@ def test_cli_generate_reuses_existing_workspace_from_env_roots(
     phase_runner = WritingPhaseRunner()
     factory = FakeAgentSessionFactory(script=_no_agent_turns)
     runner = CliRunner()
-    workspace = _prepare_existing_workspace(reports_root=tmp_path / ".reports", sources=sources)
+    reports_root = tmp_path / ".reports"
+    workspace = _prepare_existing_workspace(reports_root=reports_root, sources=sources)
     monkeypatch.setattr(
         generate_cmd,
         "build_generation_workflow",
@@ -70,17 +72,16 @@ def test_cli_generate_reuses_existing_workspace_from_env_roots(
             build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
         ),
     )
-    monkeypatch.chdir(tmp_path)
 
     generate_result = runner.invoke(
         app,
         ["generate", "--date", TARGET_DATE, "--timezone", TARGET_TIMEZONE],
-        env=_source_env(sources),
+        env={**_source_env(sources), REPORTS_HOME_ENV: str(reports_root)},
     )
     assert generate_result.exit_code == 0, generate_result.output
-    assert "Reusing existing workspace .reports/work/2020-01-02" in generate_result.stdout
+    assert f"Reusing existing workspace {workspace}" in generate_result.stdout
     assert "prepare --force" in generate_result.stdout
-    assert "Wrote rendered report .reports/work/2020-01-02/report.md" in generate_result.stdout
+    assert f"Wrote rendered report {workspace / 'report.md'}" in generate_result.stdout
     assert (workspace / "daily-report.json").exists()
     assert (workspace / "report.md").exists()
     assert phase_runner.events[-1] == "daily"
@@ -97,6 +98,7 @@ def test_cli_generate_prepares_missing_workspace_from_env_roots(
     phase_runner = WritingPhaseRunner()
     factory = FakeAgentSessionFactory(script=_no_agent_turns)
     runner = CliRunner()
+    reports_root = tmp_path / ".reports"
     monkeypatch.setattr(
         generate_cmd,
         "build_generation_workflow",
@@ -105,18 +107,17 @@ def test_cli_generate_prepares_missing_workspace_from_env_roots(
             build_phase_runners=lambda _factory: _all_phase_runners(phase_runner),
         ),
     )
-    monkeypatch.chdir(tmp_path)
 
     generate_result = runner.invoke(
         app,
         ["generate", "--date", TARGET_DATE, "--timezone", TARGET_TIMEZONE],
-        env=_source_env(sources),
+        env={**_source_env(sources), REPORTS_HOME_ENV: str(reports_root)},
     )
 
+    workspace = reports_root / "work" / TARGET_DATE
     assert generate_result.exit_code == 0, generate_result.output
-    assert "Prepared workspace .reports/work/2020-01-02" in generate_result.stdout
-    assert "Wrote rendered report .reports/work/2020-01-02/report.md" in generate_result.stdout
-    workspace = tmp_path / ".reports" / "work" / TARGET_DATE
+    assert f"Prepared workspace {workspace}" in generate_result.stdout
+    assert f"Wrote rendered report {workspace / 'report.md'}" in generate_result.stdout
     assert workspace.exists()
     assert (workspace / "daily-report.json").exists()
     assert (workspace / "report.md").exists()

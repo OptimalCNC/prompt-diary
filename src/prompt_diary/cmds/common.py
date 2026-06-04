@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
@@ -23,6 +24,15 @@ TimezoneOption = Annotated[
     typer.Option(help="IANA timezone name, e.g. Asia/Shanghai."),
 ]
 QuietOption = Annotated[bool, typer.Option(help="Suppress progress; print only the final summary.")]
+ReportsRootOption = Annotated[
+    Path | None,
+    typer.Option(
+        help=(
+            "Directory for report workspaces. Defaults to the per-user data directory "
+            "(override with $PROMPT_DIARY_HOME)."
+        ),
+    ),
+]
 
 
 def build_cli_reporter(*, quiet: bool) -> ProgressReporter:

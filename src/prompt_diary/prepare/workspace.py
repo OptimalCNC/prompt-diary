@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 CODEX_SOURCE_ENV = "PROMPT_DIARY_CODEX_SESSIONS"
 CLAUDE_SOURCE_ENV = "PROMPT_DIARY_CLAUDE_PROJECTS"
-REPORTS_DIRNAME = ".reports"
 SCHEMA_VERSION = 2
 
 _UNSAFE_DISPLAY_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
@@ -270,7 +269,7 @@ def default_source_specs(
 def prepare_workspace(
     target: ReportTarget,
     *,
-    reports_root: Path = Path(REPORTS_DIRNAME),
+    reports_root: Path,
     source_specs: tuple[SourceSpec, ...] | None = None,
     force: bool = False,
     prepared_at: datetime | None = None,
@@ -328,7 +327,7 @@ def prepare_workspace(
 def workspace_path_for_target(
     target: ReportTarget,
     *,
-    reports_root: Path = Path(REPORTS_DIRNAME),
+    reports_root: Path,
 ) -> Path:
     """Return the prepared workspace path for a target."""
     return reports_root / "work" / target.workspace_name
@@ -337,7 +336,7 @@ def workspace_path_for_target(
 def audit_path_for_target(
     target: ReportTarget,
     *,
-    reports_root: Path = Path(REPORTS_DIRNAME),
+    reports_root: Path,
 ) -> Path:
     """Return the private audit manifest path for a target."""
     return reports_root / "private" / target.workspace_name / "audit.manifest.json"

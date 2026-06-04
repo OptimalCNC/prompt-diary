@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 import prompt_diary.cmds.prepare as prepare_cmd
 from prompt_diary.cli import app
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec, TimeWindow
+from prompt_diary.paths import REPORTS_HOME_ENV
 from prompt_diary.prepare.workspace import CLAUDE_SOURCE_ENV, CODEX_SOURCE_ENV, prepare_workspace
 from prompt_diary.targeting.resolve import resolve_report_target
 
@@ -451,31 +452,31 @@ def test_cli_prepare_forwards_today_timezone_and_force(
 
 def test_cli_prepare_force_refreshes_workspace_from_env_roots(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _prepare_fixture("prepare-realistic")
     runner = CliRunner()
-    monkeypatch.chdir(tmp_path)
+    reports_root = tmp_path / ".reports"
+    env = {**_source_env(fixture), REPORTS_HOME_ENV: str(reports_root)}
 
     first = runner.invoke(
         app,
         ["prepare", "--date", TARGET_DATE, "--timezone", TARGET_TIMEZONE],
-        env=_source_env(fixture),
+        env=env,
     )
     assert first.exit_code == 0, first.output
 
-    workspace = tmp_path / ".reports" / "work" / TARGET_DATE
+    workspace = reports_root / "work" / TARGET_DATE
     stale_path = workspace / "stale.txt"
     stale_path.write_text("old", encoding="utf-8")
 
     refreshed = runner.invoke(
         app,
         ["prepare", "--date", TARGET_DATE, "--timezone", TARGET_TIMEZONE, "--force"],
-        env=_source_env(fixture),
+        env=env,
     )
 
     assert refreshed.exit_code == 0, refreshed.output
-    assert "Prepared workspace .reports/work/2026-05-12" in refreshed.stdout
+    assert f"Prepared workspace {workspace}" in refreshed.stdout
     assert not stale_path.exists()
     _assert_realistic_workspace(workspace, fixture)
 

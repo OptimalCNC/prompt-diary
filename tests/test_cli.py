@@ -238,6 +238,7 @@ def test_generate_phase_error_exits_with_stderr(
         date: str | None,
         today: bool,
         timezone_name: str | None,
+        **_kwargs: object,
     ) -> Path:
         del date, today, timezone_name
         return tmp_path
@@ -281,6 +282,7 @@ def test_generate_project_error_exits_with_stderr(
         date: str | None,
         today: bool,
         timezone_name: str | None,
+        **_kwargs: object,
     ) -> Path:
         del date, today, timezone_name
         return tmp_path
@@ -315,6 +317,7 @@ def test_generate_daily_error_exits_with_stderr(
         date: str | None,
         today: bool,
         timezone_name: str | None,
+        **_kwargs: object,
     ) -> Path:
         del date, today, timezone_name
         return tmp_path
@@ -369,6 +372,7 @@ def test_generate_phase_commands_delegate(
         date: str | None,
         today: bool,
         timezone_name: str | None,
+        **_kwargs: object,
     ) -> Path:
         del date, today, timezone_name
         return tmp_path
@@ -408,6 +412,90 @@ def test_generate_phase_commands_delegate(
         ("project", "Project-123", None),
         ("daily", None, None),
     ]
+
+
+def test_prepare_reports_root_flag_wins_over_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROMPT_DIARY_CODEX_SESSIONS", "")
+    monkeypatch.setenv("PROMPT_DIARY_CLAUDE_PROJECTS", "")
+    monkeypatch.setenv("PROMPT_DIARY_HOME", str(tmp_path / "env"))
+    flag_root = tmp_path / "flag"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "prepare",
+            "--date",
+            "2026-05-12",
+            "--timezone",
+            "UTC",
+            "--quiet",
+            "--reports-root",
+            str(flag_root),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (flag_root / "work" / "2026-05-12").exists()
+    assert not (tmp_path / "env").exists()
+
+
+def test_prepare_uses_reports_home_env_without_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROMPT_DIARY_CODEX_SESSIONS", "")
+    monkeypatch.setenv("PROMPT_DIARY_CLAUDE_PROJECTS", "")
+    env_root = tmp_path / "env"
+    monkeypatch.setenv("PROMPT_DIARY_HOME", str(env_root))
+
+    result = CliRunner().invoke(
+        app,
+        ["prepare", "--date", "2026-05-12", "--timezone", "UTC", "--quiet"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (env_root / "work" / "2026-05-12").exists()
+
+
+def test_generate_phase_reports_root_flag_positions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[Path] = []
+
+    def workspace_for_existing_target(*, reports_root: Path, **_kwargs: object) -> Path:
+        captured.append(reports_root)
+        return tmp_path
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_existing_target", workspace_for_existing_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_messages=("done",)),
+    )
+    # A competing PROMPT_DIARY_HOME must lose to an explicit --reports-root in either position.
+    monkeypatch.setenv("PROMPT_DIARY_HOME", str(tmp_path / "env"))
+    group_root = tmp_path / "group"
+    sub_root = tmp_path / "sub"
+    phase_args = ["--date", "2026-05-12", "--project-key", "Project-123", "--session-ref", "S0001"]
+
+    group_first = CliRunner().invoke(
+        app, ["generate", "--reports-root", str(group_root), "evidence", *phase_args]
+    )
+    sub_after = CliRunner().invoke(
+        app, ["generate", "evidence", *phase_args, "--reports-root", str(sub_root)]
+    )
+
+    assert group_first.exit_code == 0, group_first.output
+    assert sub_after.exit_code == 0, sub_after.output
+    # The group-level flag (before the subcommand) and the subcommand-level flag both reach the
+    # workspace resolver, beating the env default.
+    assert captured == [group_root, sub_root]
 
 
 def test_generate_existing_workspace_resolution(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ import typer
 from prompt_diary.cmds.common import (
     DateOption,
     QuietOption,
+    ReportsRootOption,
     TimezoneOption,
     TodayOption,
     build_cli_reporter,
@@ -31,6 +32,7 @@ from prompt_diary.mcp.codex_config import (
     default_codex_home,
     prompt_diary_mcp_overrides,
 )
+from prompt_diary.paths import resolve_reports_root
 from prompt_diary.prepare.workspace import (
     prepare_workspace,
     validate_workspace_matches_target,
@@ -123,19 +125,25 @@ def generate(
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
     notion: NotionOption = False,
+    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run the full generation pipeline."""
+    # Phase subcommands inherit this group-level --reports-root via the context (see
+    # _group_reports_root), so it is honored whether it precedes or follows the subcommand.
+    ctx.obj = reports_root
     if ctx.invoked_subcommand is not None:
         return
     try:
         # With --notion, fail fast on missing configuration before the expensive pipeline runs.
         if notion:
             _notion_credentials()
+        root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
             workspace_path, messages = workspace_for_generate_target(
                 date=date,
                 today=today,
                 timezone_name=timezone,
+                reports_root=root,
                 reporter=reporter,
             )
             workflow = build_generation_workflow()
@@ -186,6 +194,7 @@ def _notion_credentials() -> tuple[str, str]:
 
 
 def generate_evidence(
+    ctx: typer.Context,
     *,
     project_key: GenerateProjectKeyOption,
     session_ref: GenerateSessionRefOption,
@@ -193,6 +202,7 @@ def generate_evidence(
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
+    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run one evidence extraction task."""
     _run_phase_command(
@@ -203,16 +213,19 @@ def generate_evidence(
         project_key=project_key,
         session_ref=session_ref,
         quiet=quiet,
+        reports_root=_group_reports_root(ctx, reports_root),
     )
 
 
 def generate_project(
+    ctx: typer.Context,
     *,
     project_key: GenerateProjectKeyOption,
     date: DateOption = None,
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
+    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run one project synthesis task."""
     _run_phase_command(
@@ -222,15 +235,18 @@ def generate_project(
         timezone_name=timezone,
         project_key=project_key,
         quiet=quiet,
+        reports_root=_group_reports_root(ctx, reports_root),
     )
 
 
 def generate_daily(
+    ctx: typer.Context,
     *,
     date: DateOption = None,
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
+    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run daily report synthesis."""
     _run_phase_command(
@@ -239,6 +255,7 @@ def generate_daily(
         today=today,
         timezone_name=timezone,
         quiet=quiet,
+        reports_root=_group_reports_root(ctx, reports_root),
     )
 
 
@@ -247,7 +264,7 @@ def workspace_for_generate_target(
     date: str | None,
     today: bool,
     timezone_name: str | None,
-    reports_root: Path = Path(".reports"),
+    reports_root: Path,
     source_specs: tuple[SourceSpec, ...] | None = None,
     now: datetime | None = None,
     reporter: ProgressReporter = NULL_REPORTER,
@@ -281,7 +298,7 @@ def workspace_for_existing_target(
     date: str | None,
     today: bool,
     timezone_name: str | None,
-    reports_root: Path = Path(".reports"),
+    reports_root: Path,
     now: datetime | None = None,
 ) -> Path:
     """Resolve a CLI target and return its existing prepared workspace."""
@@ -293,6 +310,19 @@ def workspace_for_existing_target(
     return workspace_path
 
 
+def _group_reports_root(ctx: typer.Context, reports_root: Path | None) -> Path | None:
+    """Return the phase command's own --reports-root, else the generate group's value.
+
+    The ``generate`` group callback stores its --reports-root in ``ctx.obj``, so the flag is
+    honored whether it precedes or follows the phase subcommand; a value passed on the subcommand
+    itself takes precedence over the group's.
+    """
+    if reports_root is not None:
+        return reports_root
+    group_value = ctx.obj
+    return group_value if isinstance(group_value, Path) else None
+
+
 def _run_phase_command(
     *,
     phase: PhaseName,
@@ -302,12 +332,15 @@ def _run_phase_command(
     project_key: str | None = None,
     session_ref: str | None = None,
     quiet: bool = False,
+    reports_root: Path | None = None,
 ) -> None:
     try:
+        root = resolve_reports_root(reports_root)
         workspace_path = workspace_for_existing_target(
             date=date,
             today=today,
             timezone_name=timezone_name,
+            reports_root=root,
         )
         workflow = build_generation_workflow()
         with build_cli_reporter(quiet=quiet) as reporter:

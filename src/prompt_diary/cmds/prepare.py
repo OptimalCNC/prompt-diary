@@ -9,6 +9,7 @@ import typer
 from prompt_diary.cmds.common import (
     DateOption,
     QuietOption,
+    ReportsRootOption,
     TimezoneOption,
     TodayOption,
     build_cli_reporter,
@@ -16,6 +17,7 @@ from prompt_diary.cmds.common import (
     exit_with_error,
 )
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.paths import resolve_reports_root
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.targeting.resolve import resolve_report_target
 
@@ -34,12 +36,14 @@ def prepare(
     timezone: TimezoneOption = None,
     force: ForceOption = False,
     quiet: QuietOption = False,
+    reports_root: ReportsRootOption = None,
 ) -> None:
     """Prepare a prompt diary workspace."""
     try:
         target = resolve_report_target(date=date, today=today, timezone_name=timezone)
+        root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
-            result = prepare_workspace(target, force=force, reporter=reporter)
+            result = prepare_workspace(target, reports_root=root, force=force, reporter=reporter)
     except PromptDiaryError as exc:
         exit_with_error(exc)
     echo_messages(result.messages)
