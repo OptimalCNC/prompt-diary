@@ -16,8 +16,8 @@ from prompt_diary.cmds.common import (
     echo_messages,
     exit_with_error,
 )
+from prompt_diary.config import resolve_reports_root
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.paths import resolve_reports_root
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.targeting.resolve import resolve_report_target
 

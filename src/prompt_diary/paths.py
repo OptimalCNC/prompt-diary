@@ -1,12 +1,12 @@
-"""Resolution of the reports root directory.
+"""The per-user platform data directory for report workspaces.
 
-The reports root is where ``prepare``/``generate`` read and write report workspaces. It is
-resolved once at each CLI boundary; everything downstream receives an explicit ``Path``.
+The reports root — where ``prepare``/``generate`` read and write workspaces — is resolved in
+:mod:`prompt_diary.config` from an explicit flag, the ``PROMPT_DIARY_HOME`` env var, the stored
+config, and, as the built-in default, the per-user data directory returned here.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import platformdirs
@@ -23,24 +23,15 @@ def _relative_data_dir_message(data_dir: Path) -> str:
     )
 
 
-def default_reports_root() -> Path:
-    """Return the reports root from ``PROMPT_DIARY_HOME``, else the per-user data dir.
+def platform_data_dir() -> Path:
+    """Return the absolute per-user data directory for report workspaces.
 
-    An explicit ``PROMPT_DIARY_HOME`` may be relative (an opt-in cwd-relative root). The
-    platform default must be absolute, so a misconfigured relative ``XDG_DATA_HOME`` fails
-    loud rather than silently scattering workspaces under the current directory.
+    This is the built-in default reports root. It must be absolute, so a misconfigured relative
+    ``XDG_DATA_HOME`` fails loud rather than silently scattering workspaces under the current
+    directory. (An explicit ``--reports-root``/``PROMPT_DIARY_HOME``/config value may be relative —
+    that is an opt-in cwd-relative root, handled by the resolver in :mod:`prompt_diary.config`.)
     """
-    override = os.environ.get(REPORTS_HOME_ENV)
-    if override and (stripped := override.strip()):
-        return Path(stripped).expanduser()
     data_dir = Path(platformdirs.user_data_dir("prompt-diary", appauthor=False)).expanduser()
     if not data_dir.is_absolute():
         raise PromptDiaryError(_relative_data_dir_message(data_dir))
     return data_dir
-
-
-def resolve_reports_root(explicit: Path | None) -> Path:
-    """Resolve the reports root: an explicit ``--reports-root`` wins, else env/default."""
-    if explicit is not None:
-        return explicit.expanduser()
-    return default_reports_root()
