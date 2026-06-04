@@ -46,6 +46,13 @@ synthesis, then daily report synthesis — through the Codex CLI, producing `dai
 rendered `report.md`, and `report.notion.json`. It requires the `codex` CLI to be installed and
 authenticated; the subcommands above run each phase standalone against an already-prepared workspace.
 
+Prepared workspaces and generated reports are written under a per-user data directory by default
+(`~/.local/share/prompt-diary/` on Linux; the platform equivalent on macOS and Windows), organized
+by date as `<reports-root>/work/<YYYY-MM-DD>/`. Override the location with `--reports-root <path>`
+on `prepare` and `generate`, or by setting `PROMPT_DIARY_HOME`; precedence is `--reports-root` over
+`PROMPT_DIARY_HOME` over the default data directory. (Earlier versions wrote to `./.reports` in the
+current directory — pass `--reports-root .reports` to keep using an existing local directory.)
+
 Both `prepare` and `generate` show a live progress dashboard when running on a TTY and write
 append-only log lines when output is piped, redirected, or running in CI. Pass `--quiet` to either
 command to suppress the live output and print only the final summary.

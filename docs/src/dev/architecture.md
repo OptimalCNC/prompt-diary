@@ -28,6 +28,7 @@ modules and other details that may change as the implementation evolves.
 | `src/prompt_diary/models.py` | Shared cross-workflow result models and value types. |
 | `src/prompt_diary/agent.py` | Neutral agent execution contract (port): `AgentRunner`/`AgentSessionFactory` protocols and shared agent value types (`AgentConfig`, `AgentTurnEvent`, `AgentTurnResult`), depended on by generation phases and runner adapters. |
 | `src/prompt_diary/errors.py` | Shared user-facing exception hierarchy. |
+| `src/prompt_diary/paths.py` | Reports-root resolution: maps `--reports-root` / `PROMPT_DIARY_HOME` / the per-user data directory to the reports root (the parent of `work/` and `private/`; a prepared workspace is `<reports-root>/work/<date>`), resolved once at the CLI boundary; fails loud if the platform default is non-absolute and no override is set. |
 | `src/prompt_diary/targeting/` | Date and timezone resolution into typed report targets used by both workflows. |
 | `src/prompt_diary/prepare/` | Preparation workflow implementation: source session ingestion and prepared workspace construction. |
 | `src/prompt_diary/generate/` | Generation workflow implementation: phase orchestration, generation artifacts, prompt assets, and report output behavior. |

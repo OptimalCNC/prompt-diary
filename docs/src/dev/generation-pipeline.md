@@ -30,9 +30,11 @@ only on that project's evidence tasks. Daily synthesis depends on all project sy
 and expected outputs. `GenerationPlan` is the immutable task graph built from the prepared
 workspace indexes.
 
-Generation workflow APIs take a prepared workspace path. CLI and preparation code own date
-resolution and the mapping from a target date to `.reports/work/<YYYY-MM-DD>`; the generation
-package only inspects the workspace and its durable artifacts.
+Generation workflow APIs take a prepared workspace path. CLI and preparation code own date and
+reports-root resolution and the mapping to `<reports-root>/work/<YYYY-MM-DD>`; the generation
+package only inspects the workspace and its durable artifacts. The reports root is resolved once at
+the CLI boundary by `prompt_diary.paths.resolve_reports_root` (`--reports-root` over
+`PROMPT_DIARY_HOME` over the per-user data directory).
 
 Dependencies normally require successful prerequisite tasks. Project synthesis is the exception:
 it waits for all evidence extraction attempts in that project to finish, but checks that each

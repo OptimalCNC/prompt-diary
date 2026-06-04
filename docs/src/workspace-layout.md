@@ -22,10 +22,11 @@ Preparation owns data discovery, date-window handling, session copying, and inde
 keeps report inputs stable and reviewable; the detailed contracts below define how sources are
 selected, grouped, copied, and indexed.
 
-For report date `2026-05-12`, the tool creates a prepared report workspace like this:
+For report date `2026-05-12`, the tool creates a prepared report workspace under the reports root
+like this:
 
 ```text
-.reports/
+<reports-root>/
 ├── work/
 │   └── 2026-05-12/
 │       ├── metadata.json
@@ -45,6 +46,12 @@ For report date `2026-05-12`, the tool creates a prepared report workspace like 
 │               │           └── 3e1dcfb6-32e7-4059-9d1c-5fddc8b8d0c3/
 │               │               └── agent-a9636c61b58788670.jsonl
 ```
+
+The reports root defaults to a per-user data directory (`~/.local/share/prompt-diary/` on Linux;
+the platform equivalent on macOS and Windows). Override it with `--reports-root <path>` or
+`PROMPT_DIARY_HOME`; precedence is `--reports-root` over `PROMPT_DIARY_HOME` over the default data
+directory. The private audit manifest for the same date lives beside `work/` at
+`<reports-root>/private/<YYYY-MM-DD>/audit.manifest.json`.
 
 Copied session files keep their source filenames. The examples above use UUID-based filenames
 because both Codex and Claude Code identify local session transcript files by session id rather
