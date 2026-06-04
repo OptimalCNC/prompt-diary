@@ -20,9 +20,17 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from notion_client import Client
 
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.daily_synthesis.notion_validate import (
+    parse_database_info,
+    parse_identity,
+)
 
 if TYPE_CHECKING:
     from prompt_diary.generate.daily_synthesis.notion_publish import NotionClientProtocol
+    from prompt_diary.generate.daily_synthesis.notion_validate import (
+        NotionDatabaseInfo,
+        NotionIdentity,
+    )
 
 __all__ = [
     "NotionSDKClient",
@@ -70,12 +78,12 @@ def build_notion_client(*, token: str) -> NotionClientProtocol:
 class NotionValidator(Protocol):
     """Validate Notion credentials live so the config wizard can reject bad input before storing."""
 
-    def verify_token(self) -> None:
-        """Raise :class:`PromptDiaryError` if the integration token is not accepted."""
+    def verify_token(self) -> NotionIdentity:
+        """Return the integration identity; raise :class:`PromptDiaryError` if not accepted."""
         ...
 
-    def verify_database(self, database_id: str) -> None:
-        """Raise :class:`PromptDiaryError` if the database is missing or not shared."""
+    def verify_database(self, database_id: str) -> NotionDatabaseInfo:
+        """Return the reachable database; raise :class:`PromptDiaryError` if missing or unshared."""
         ...
 
 
@@ -85,17 +93,19 @@ class NotionSDKValidator:
     def __init__(self, *, token: str) -> None:
         self._client = Client(auth=token, notion_version=_NOTION_VERSION)
 
-    def verify_token(self) -> None:
+    def verify_token(self) -> NotionIdentity:
         try:
-            self._client.users.me()
+            response = self._client.users.me()
         except Exception as exc:
             raise PromptDiaryError(_invalid_token_message()) from exc
+        return parse_identity(response)
 
-    def verify_database(self, database_id: str) -> None:
+    def verify_database(self, database_id: str) -> NotionDatabaseInfo:
         try:
-            self._client.databases.retrieve(database_id=database_id)
+            response = self._client.databases.retrieve(database_id=database_id)
         except Exception as exc:
             raise PromptDiaryError(_invalid_database_message(database_id)) from exc
+        return parse_database_info(response, database_id=database_id)
 
 
 def build_notion_validator(*, token: str) -> NotionValidator:

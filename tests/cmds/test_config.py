@@ -18,6 +18,10 @@ from prompt_diary.config import (
     save_config,
 )
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.daily_synthesis.notion_validate import (
+    NotionDatabaseInfo,
+    NotionIdentity,
+)
 from prompt_diary.paths import REPORTS_HOME_ENV
 
 if TYPE_CHECKING:
@@ -29,21 +33,28 @@ if TYPE_CHECKING:
 
 _TOKEN_REJECTED = "token rejected"
 _DATABASE_REJECTED = "database rejected"
+_VALID_TOKENS = frozenset({"good-token", "rotated-token"})
 
 
 class _FakeValidator:
-    """Accepts only the token ``good-token`` and the database ``good-db``."""
+    """Accepts the tokens in ``_VALID_TOKENS`` and only the database ``good-db``."""
 
     def __init__(self, *, token: str) -> None:
         self._token = token
 
-    def verify_token(self) -> None:
-        if self._token != "good-token":
+    def verify_token(self) -> NotionIdentity:
+        if self._token not in _VALID_TOKENS:
             raise PromptDiaryError(_TOKEN_REJECTED)
+        return NotionIdentity(
+            integration_name="Prompt Diary Bot",
+            workspace_name="Acme HQ",
+            owner_type="workspace",
+        )
 
-    def verify_database(self, database_id: str) -> None:
+    def verify_database(self, database_id: str) -> NotionDatabaseInfo:
         if database_id != "good-db":
             raise PromptDiaryError(_DATABASE_REJECTED)
+        return NotionDatabaseInfo(database_id=database_id, title="Daily Report")
 
 
 def _fake_factory(*, token: str) -> _FakeValidator:
@@ -68,9 +79,50 @@ def test_config_init_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
     assert result.exit_code == 0, result.output
     assert "Saved configuration to" in result.stdout
+    assert 'Notion integration "Prompt Diary Bot"' in result.stdout  # issue 3: who authenticated
+    assert 'workspace "Acme HQ"' in result.stdout
+    assert "owner type workspace" in result.stdout
+    assert 'Connected to "Daily Report"' in result.stdout  # issue 4: the connected database name
     stored = load_config()
     assert stored.notion_api_key == "good-token"
     assert stored.notion_page_id == "good-db"
+    assert stored.reports_root == custom
+
+
+def test_config_init_persists_verified_token_before_database_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
+    monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
+    custom = str(tmp_path / "r")
+
+    # Verify a token and a data folder, then send EOF at the database prompt to abort the wizard.
+    result = CliRunner().invoke(app, ["config", "init"], input=f"good-token\n{custom}\n")
+
+    assert result.exit_code != 0  # aborted before the database step completed
+    stored = load_config()
+    assert stored.notion_api_key == "good-token"  # the verified token was saved immediately
+    assert stored.reports_root == custom  # as was the accepted data folder
+    assert stored.notion_page_id is None  # the interrupted database step stored nothing
+
+
+def test_config_init_clears_stale_database_when_token_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
+    monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
+    save_config(StoredConfig(notion_api_key="good-token", notion_page_id="good-db"))
+    custom = str(tmp_path / "r")
+
+    # Rotate to a different valid token, then abort (EOF) at the database step.
+    result = CliRunner().invoke(app, ["config", "init"], input=f"rotated-token\n{custom}\n")
+
+    assert result.exit_code != 0
+    stored = load_config()
+    assert stored.notion_api_key == "rotated-token"  # the new token was saved
+    # The database verified against the OLD token must not survive a token change + abort, so a
+    # later publish cannot use the new token against a stale (possibly unintended) database.
+    assert stored.notion_page_id is None
     assert stored.reports_root == custom
 
 
@@ -152,6 +204,7 @@ def test_config_show_masks_token(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_config_show_notes_env_override_and_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
     monkeypatch.setenv(NOTION_TOKEN_ENV, "envtok")
     monkeypatch.delenv(NOTION_DATABASE_ENV, raising=False)
     monkeypatch.delenv(REPORTS_HOME_ENV, raising=False)
@@ -160,7 +213,7 @@ def test_config_show_notes_env_override_and_unset(monkeypatch: pytest.MonkeyPatc
 
     assert result.exit_code == 0, result.output
     assert "(unset)" in result.stdout
-    assert "default: per-user data dir" in result.stdout
+    assert "/stub/data (default; not configured)" in result.stdout  # resolved folder, not a label
     assert f"override the stored config: {NOTION_TOKEN_ENV}" in result.stdout
 
 

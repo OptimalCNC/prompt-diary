@@ -61,10 +61,12 @@ command to suppress the live output and print only the final summary.
 ## Configuration
 
 Run `prompt-diary config init` once to set up credentials and settings interactively. It prompts for
-the Notion integration token (validated live against the Notion API before it is stored), an optional
-data folder, and the Notion database id (also validated), then writes them to a single config file
-with `0600` permissions. The token is read only from that file or the environment — never passed on
-the command line, and never printed (`config show` masks it).
+the Notion integration token, an optional data folder, and the Notion database id. Each credential is
+validated live against the Notion API and saved the moment it passes — the token check reports the
+authenticated integration and workspace, and the database check reports the connected database's name
+— so an interrupted run keeps whatever was already verified. Everything is written to a single config
+file with `0600` permissions. The token is read only from that file or the environment — never passed
+on the command line, and never printed (`config show` masks it).
 
 ```bash
 prompt-diary config init   # interactive setup; validates the token and database live
