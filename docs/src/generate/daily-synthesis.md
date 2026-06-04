@@ -445,9 +445,10 @@ the payload (each `text.content` ≤ 2000 chars; each block's rich-text array �
 pathologically long single string with a fixed marker).
 
 Publishing (`report generate --notion`): the publisher reads the integration token and target
-database id from `NOTION_API_KEY` and `NOTION_PAGE_ID` (so credentials never pass on the command
-line) and creates a **new row** per report — re-publishing never edits or deletes an existing row, so
-the user prunes stale rows by hand. Property mapping is schema-driven: the database's single
+database id from the stored config (`prompt-diary config init`) or the `NOTION_API_KEY` /
+`NOTION_PAGE_ID` env vars (so credentials never pass on the command line) and creates a **new row**
+per report — re-publishing never edits or deletes an existing row, so the user prunes stale rows by
+hand. Property mapping is schema-driven: the database's single
 title-typed property gets the page title, every date-typed property gets the report date, and other
 types are left for the user. Metadata the database has no column for (status, window, overall
 confidence) is surfaced in a banner callout at the top of the page body, so the report is

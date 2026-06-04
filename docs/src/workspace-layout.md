@@ -48,9 +48,10 @@ like this:
 ```
 
 The reports root defaults to a per-user data directory (`~/.local/share/prompt-diary/` on Linux;
-the platform equivalent on macOS and Windows). Override it with `--reports-root <path>` or
-`PROMPT_DIARY_HOME`; precedence is `--reports-root` over `PROMPT_DIARY_HOME` over the default data
-directory. The private audit manifest for the same date lives beside `work/` at
+the platform equivalent on macOS and Windows). Override it with `--reports-root <path>`,
+`PROMPT_DIARY_HOME`, or the stored config (`prompt-diary config init`); precedence is `--reports-root`
+over `PROMPT_DIARY_HOME` over the stored config over the default data directory. The private audit
+manifest for the same date lives beside `work/` at
 `<reports-root>/private/<YYYY-MM-DD>/audit.manifest.json`.
 
 Copied session files keep their source filenames. The examples above use UUID-based filenames

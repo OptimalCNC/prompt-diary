@@ -33,8 +33,9 @@ workspace indexes.
 Generation workflow APIs take a prepared workspace path. CLI and preparation code own date and
 reports-root resolution and the mapping to `<reports-root>/work/<YYYY-MM-DD>`; the generation
 package only inspects the workspace and its durable artifacts. The reports root is resolved once at
-the CLI boundary by `prompt_diary.paths.resolve_reports_root` (`--reports-root` over
-`PROMPT_DIARY_HOME` over the per-user data directory).
+the CLI boundary by `prompt_diary.config.resolve_reports_root` (`--reports-root` over
+`PROMPT_DIARY_HOME` over the stored config over the per-user data directory, the last supplied by
+`prompt_diary.paths.platform_data_dir`).
 
 Dependencies normally require successful prerequisite tasks. Project synthesis is the exception:
 it waits for all evidence extraction attempts in that project to finish, but checks that each

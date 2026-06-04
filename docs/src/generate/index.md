@@ -38,8 +38,9 @@ shape, and phase-local checks.
 ## Pipeline
 
 All generation agents run with their process current working directory set to the prepared report
-workspace for the target date: `<reports-root>/work/<YYYY-MM-DD>`. The reports root defaults to the
-per-user data directory and can be overridden with `--reports-root` or `PROMPT_DIARY_HOME`. Data
+workspace for the target date: `<reports-root>/work/<YYYY-MM-DD>`. The reports root resolves from
+`--reports-root`, then `PROMPT_DIARY_HOME`, then the stored config, then the per-user data directory
+default. Data
 artifacts shown in the diagram are read from or written to that workspace unless the artifact
 description says otherwise.
 Project-scoped phases receive an explicit `project_key` and session references; they do not change
