@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from prompt_diary.progress.events import PrepareFinished
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted, PrepareFinished
 from prompt_diary.progress.reporter import (
     NULL_REPORTER,
     NullProgressReporter,
+    RecordingProgressReporter,
     select_reporter_mode,
 )
 
@@ -22,3 +23,15 @@ def test_select_reporter_mode() -> None:
     assert select_reporter_mode(quiet=True, isatty=False) == "quiet"
     assert select_reporter_mode(quiet=False, isatty=True) == "live"
     assert select_reporter_mode(quiet=False, isatty=False) == "log"
+
+
+def test_recording_reporter_formats_timing_summary() -> None:
+    reporter = RecordingProgressReporter(inner=NULL_REPORTER)
+
+    reporter.emit(PhaseStarted(at=0.0, phase_id="prepare", label="prepare"))
+    reporter.emit(PhaseFinished(at=2.25, phase_id="prepare", status="success"))
+    reporter.emit(PhaseStarted(at=3.0, phase_id="evidence", label="evidence"))
+    reporter.emit(PhaseFinished(at=68.0, phase_id="evidence", status="success"))
+
+    assert reporter.state.phases["prepare"].status == "success"
+    assert reporter.timing_summary_message() == ("Spent 2.2s preparing workspace; 1m05s evidence.")

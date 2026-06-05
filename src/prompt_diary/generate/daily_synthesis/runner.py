@@ -18,6 +18,7 @@ the Empty fallbacks.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -40,6 +41,7 @@ from prompt_diary.generate.prompts import (
     project_summary_prompt,
     team_learning_prompt,
 )
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
@@ -79,7 +81,6 @@ class DailySynthesisRunner:
         reporter: ProgressReporter = NULL_REPORTER,
     ) -> TaskResult:
         """Run the daily synthesis task: Build, the agent passes, Finalize, and render."""
-        del reporter
         # The rendered reports (report.md, report.notion.json) must exist only after a successful
         # render, so clear stale ones from a previous run before anything else — including before
         # Build. A run that now fails (Build raises on a corrupt envelope, a pass writes nothing, or
@@ -110,13 +111,19 @@ class DailySynthesisRunner:
         # report behind (the pipeline turns the propagated error into a failed task), so a failed
         # run never leaves a fresh report.md without its report.notion.json, or vice versa.
         rendered = False
+        render_status = "failed"
+        reporter.emit(PhaseStarted(at=time.monotonic(), phase_id="rendering", label="rendering"))
         try:
             render_report(workspace_path=workspace_path)
             render_notion_artifact(workspace_path=workspace_path)
             rendered = True
+            render_status = "success"
         finally:
             if not rendered:
                 _reset_rendered_report(workspace_path)
+            reporter.emit(
+                PhaseFinished(at=time.monotonic(), phase_id="rendering", status=render_status)
+            )
         return TaskResult(
             task_id=task.task_id, status="success", output_artifacts=task.output_artifacts
         )

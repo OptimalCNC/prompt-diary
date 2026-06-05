@@ -6,6 +6,24 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class PhaseStarted:
+    """A named progress phase began or resumed."""
+
+    at: float
+    phase_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class PhaseFinished:
+    """A named progress phase completed its current segment."""
+
+    at: float
+    phase_id: str
+    status: str
+
+
+@dataclass(frozen=True)
 class PrepareStarted:
     """Preparation began for a target day."""
 
@@ -88,7 +106,9 @@ class RunFinished:
 
 
 ProgressEvent = (
-    PrepareStarted
+    PhaseStarted
+    | PhaseFinished
+    | PrepareStarted
     | PrepareStep
     | PrepareFinished
     | RunStarted

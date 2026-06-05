@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -15,11 +15,14 @@ from prompt_diary import __version__
 from prompt_diary.cli import app, main
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.prepare.workspace import prepare_workspace
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from prompt_diary.render.notion import NotionRenderResult
 from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from prompt_diary.progress.reporter import ProgressReporter
 
 PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
@@ -184,6 +187,46 @@ def test_generate_prints_pipeline_messages(
 
     assert result.exit_code == 0
     assert result.stdout == "prepared\ngenerated\n"
+
+
+def test_generate_prints_timing_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def workspace_for_generate_target(
+        *,
+        date: str | None,
+        today: bool,
+        timezone_name: str | None,
+        **_kwargs: object,
+    ) -> tuple[Path, tuple[str, ...]]:
+        del date, today, timezone_name
+        return tmp_path, ("prepared",)
+
+    class TimingWorkflow(_FakeWorkflow):
+        def run_pipeline(
+            self, *, workspace_path: Path, messages: tuple[str, ...] = (), **kwargs: object
+        ) -> _FakeWorkflowResult:
+            reporter = cast("ProgressReporter", kwargs["reporter"])
+            reporter.emit(PhaseStarted(at=1.0, phase_id="evidence", label="evidence"))
+            reporter.emit(PhaseFinished(at=3.25, phase_id="evidence", status="success"))
+            return super().run_pipeline(workspace_path=workspace_path, messages=messages, **kwargs)
+
+    monkeypatch.setattr(
+        generate_cmd,
+        "workspace_for_generate_target",
+        workspace_for_generate_target,
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: TimingWorkflow(pipeline_messages=("generated",)),
+    )
+
+    result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "prepared\ngenerated\nSpent 2.2s evidence.\n"
 
 
 def test_generate_notion_flag_appends_publish_message(

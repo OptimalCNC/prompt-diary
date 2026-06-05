@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from prompt_diary.models import SourceSpec
 from prompt_diary.prepare.workspace import prepare_workspace
-from prompt_diary.progress.events import PrepareStep
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted, PrepareStep
 from prompt_diary.targeting.resolve import resolve_report_target
 from tests.support.progress import RecordingReporter
 
@@ -24,7 +24,18 @@ def test_prepare_emits_full_event_sequence_with_zero_sessions(tmp_path: Path) ->
         reporter=reporter,
     )
     names = [type(event).__name__ for event in reporter.events]
-    assert names == ["PrepareStarted", "PrepareStep", "PrepareStep", "PrepareFinished"]
+    assert names == [
+        "PhaseStarted",
+        "PrepareStarted",
+        "PrepareStep",
+        "PrepareStep",
+        "PrepareFinished",
+        "PhaseFinished",
+    ]
+    assert isinstance(reporter.events[0], PhaseStarted)
+    assert reporter.events[0].phase_id == "prepare"
+    assert isinstance(reporter.events[-1], PhaseFinished)
+    assert reporter.events[-1].phase_id == "prepare"
     steps = [event for event in reporter.events if isinstance(event, PrepareStep)]
     assert [(step.name, step.done, step.total) for step in steps] == [
         ("discovering", 0, None),

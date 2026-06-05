@@ -12,11 +12,13 @@ on the reporter protocol, never on Rich.
 
 ## Seam: events -> state -> reporter
 
-- `events.py` — frozen event types (`PrepareStarted`, `PrepareStep`, `PrepareFinished`,
-  `RunStarted`, `TaskStarted`, `TurnAdvanced`, `TaskFinished`, `RunFinished`). Each carries only
-  deterministic identifiers and counts; never transcript or agent text.
+- `events.py` — frozen event types (`PhaseStarted`, `PhaseFinished`, `PrepareStarted`,
+  `PrepareStep`, `PrepareFinished`, `RunStarted`, `TaskStarted`, `TurnAdvanced`, `TaskFinished`,
+  `RunFinished`). Each carries only deterministic identifiers and counts; never transcript or agent
+  text.
 - `state.py` — `reduce(state, event) -> ProgressState`, a pure fold (per-kind counts, per-task
-  rows, `turn x/y`, finished-task elapsed). All the state that drives the display lives here and is unit-tested.
+  rows, `turn x/y`, task elapsed, and accumulated phase elapsed). All the state that drives the
+  display lives here and is unit-tested.
 - `reporter.py` — the `ProgressReporter` protocol, `NullProgressReporter` (the default), and
   `select_reporter_mode(quiet, isatty)`.
 - `log.py` — `LogReporter` for non-TTY/CI: one tested log line per event (`RunFinished` produces no line; the CLI prints the final summary separately).
@@ -24,15 +26,21 @@ on the reporter protocol, never on Rich.
 
 ## Emit sites
 
-- `prepare/workspace.py` — prepare stage steps.
-- `generate/pipeline.py` — `TaskStarted`/`TaskFinished` (including `blocked`), threading the
-  reporter to each phase runner's `run(..., reporter=...)`.
+- `prepare/workspace.py` — prepare phase timing and prepare stage steps.
+- `generate/pipeline.py` — aggregate evidence/project/daily phase timing,
+  `TaskStarted`/`TaskFinished` (including `blocked`), threading the reporter to each phase runner's
+  `run(..., reporter=...)`.
 - `generate/evidence_extraction/runner.py` — `TurnAdvanced` per committed turn.
-- `generate/workflow.py` — `RunStarted`/`RunFinished`.
+- `generate/daily_synthesis/runner.py` — local Markdown/Notion artifact render timing.
+- `render/notion.py` — Notion render-and-publish timing for `generate` publishing and
+  `render notion`.
+- `generate/workflow.py` — `RunStarted`/`RunFinished` and standalone phase timing.
 
 A phase runner that wants per-item progress emits via the `reporter` argument it receives; runners
 that do not still accept and ignore it. Every event carries a monotonic `at` timestamp supplied by
-the emitter; the reducer derives elapsed/durations from it and never reads a clock.
+the emitter; the reducer derives elapsed/durations from it and never reads a clock. Renderers may
+refresh active elapsed displays from the current monotonic clock, but that clock value stays at the
+rendering edge rather than entering pipeline logic.
 
 ## Mode selection
 

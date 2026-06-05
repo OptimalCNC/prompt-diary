@@ -26,7 +26,7 @@ from prompt_diary.generate.pipeline import (
     run_generation_task,
 )
 from prompt_diary.generate.workspace import IndexedSession, PreparedProject, load_prepared_workspace
-from prompt_diary.progress.events import TaskFinished
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted, TaskFinished
 from prompt_diary.progress.reporter import NULL_REPORTER
 from tests.agent_fakes import FakeAgentSessionFactory
 from tests.support.progress import RecordingReporter
@@ -300,6 +300,30 @@ def test_pipeline_emits_task_started_and_finished(tmp_path: Path) -> None:
     kinds = [type(event).__name__ for event in reporter.events]
     assert "TaskStarted" in kinds
     assert "TaskFinished" in kinds
+
+
+def test_pipeline_emits_phase_timing_events_for_task_kinds(tmp_path: Path) -> None:
+    workspace = _workspace_fixture(tmp_path, {"Alpha-111111111111": 1})
+    plan = build_generation_plan(workspace)
+    reporter = RecordingReporter()
+
+    asyncio.run(
+        GeneratePipelineRunner(
+            phase_runners=_all_phase_runners(WritingPhaseRunner()),
+            concurrency_limits={
+                "evidence_extraction": 1,
+                "project_synthesis": 1,
+                "daily_synthesis": 1,
+            },
+            reporter=reporter,
+        ).run(workspace_path=workspace, plan=plan)
+    )
+
+    started = [event for event in reporter.events if isinstance(event, PhaseStarted)]
+    finished = [event for event in reporter.events if isinstance(event, PhaseFinished)]
+    assert [event.phase_id for event in started] == ["evidence", "project", "daily"]
+    assert [event.phase_id for event in finished] == ["evidence", "project", "daily"]
+    assert {event.status for event in finished} == {"success"}
 
 
 def test_pipeline_emits_blocked_task_finished(tmp_path: Path) -> None:

@@ -44,6 +44,7 @@ def prepare(
         root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
             result = prepare_workspace(target, reports_root=root, force=force, reporter=reporter)
+            timing = reporter.timing_summary_message()
     except PromptDiaryError as exc:
         exit_with_error(exc)
-    echo_messages(result.messages)
+    echo_messages((*result.messages, *((timing,) if timing is not None else ())))

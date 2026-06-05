@@ -153,16 +153,22 @@ def generate(
             result = workflow.run_pipeline(
                 workspace_path=workspace_path, messages=messages, reporter=reporter
             )
-        # Publishing is an outward-facing step after a successful pipeline, so it runs outside the
-        # reporter context, with the target frozen before the run.
-        published = (
-            render_report_to_notion_messages(workspace_path, credentials=notion_target)
-            if notion_target is not None
-            else ()
-        )
+            # Publishing is an outward-facing step after a successful pipeline, with the target
+            # frozen before the run. It stays inside the reporter context so the rendering phase
+            # includes optional Notion publishing time.
+            published = (
+                render_report_to_notion_messages(
+                    workspace_path,
+                    credentials=notion_target,
+                    progress_reporter=reporter,
+                )
+                if notion_target is not None
+                else ()
+            )
+            timing = reporter.timing_summary_message()
     except PromptDiaryError as exc:
         exit_with_error(exc)
-    echo_messages((*result.messages, *published))
+    echo_messages((*result.messages, *published, *((timing,) if timing is not None else ())))
 
 
 def resolve_notion_publish(*, notion: bool | None) -> tuple[Secret, str] | None:
@@ -187,9 +193,14 @@ def render_report_to_notion_messages(
     workspace_path: Path,
     *,
     credentials: tuple[Secret, str],
+    progress_reporter: ProgressReporter = NULL_REPORTER,
 ) -> tuple[str, ...]:
     """Render and publish the workspace report to Notion using frozen credentials."""
-    result = render_workspace_report_to_notion(workspace_path, credentials=credentials)
+    result = render_workspace_report_to_notion(
+        workspace_path,
+        credentials=credentials,
+        progress_reporter=progress_reporter,
+    )
     for warning in result.warnings:
         typer.echo(f"Warning: {warning}", err=True)
     return (_notion_render_message(result),)
@@ -353,9 +364,10 @@ def _run_phase_command(
                 session_ref=session_ref,
                 reporter=reporter,
             )
+            timing = reporter.timing_summary_message()
     except PromptDiaryError as exc:
         exit_with_error(exc)
-    echo_messages(result.messages)
+    echo_messages((*result.messages, *((timing,) if timing is not None else ())))
 
 
 def _missing_workspace_message(workspace_path: Path) -> str:

@@ -10,12 +10,14 @@ import prompt_diary.render.notion as render_api
 from prompt_diary.config import ReporterTarget, StoredConfig, save_config
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.notion_publish import PublishResult
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from tests.support.daily_synthesis import (
     build_daily_report_via_api,
     copy_basic_daily_workspace,
     fill_synthesize_slots,
     finalize_daily_report_via_api,
 )
+from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -116,6 +118,35 @@ def test_render_workspace_report_to_notion_regenerates_payload_before_publishing
     assert result.artifact_path == stale
     assert result.page_id == "page-1"
     assert result.url == "https://notion.so/page-x"
+
+
+def test_render_workspace_report_to_notion_reports_rendering_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _complete_daily_workspace(tmp_path)
+    _configure_notion(monkeypatch, tmp_path)
+    reporter = RecordingReporter()
+
+    def factory(*, token: str) -> _FakeNotionClient:
+        del token
+        return _FakeNotionClient()
+
+    render_api.render_workspace_report_to_notion(
+        workspace,
+        client_factory=factory,
+        progress_reporter=reporter,
+    )
+
+    rendering_events = [
+        event
+        for event in reporter.events
+        if isinstance(event, PhaseStarted | PhaseFinished) and event.phase_id == "rendering"
+    ]
+    assert [type(event).__name__ for event in rendering_events] == [
+        "PhaseStarted",
+        "PhaseFinished",
+    ]
 
 
 def test_render_workspace_report_to_notion_requires_rendered_output_before_publishing(

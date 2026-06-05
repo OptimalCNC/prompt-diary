@@ -25,7 +25,13 @@ from prompt_diary.models import (
     SourceSpec,
     serialize_datetime,
 )
-from prompt_diary.progress.events import PrepareFinished, PrepareStarted, PrepareStep
+from prompt_diary.progress.events import (
+    PhaseFinished,
+    PhaseStarted,
+    PrepareFinished,
+    PrepareStarted,
+    PrepareStep,
+)
 from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
@@ -288,32 +294,46 @@ def prepare_workspace(
         _remove_existing_workspace(workspace_path, audit_dir)
 
     specs = default_source_specs() if source_specs is None else source_specs
-    reporter.emit(PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs)))
-    prepared_at_local = _timestamp_for_target(target, prepared_at)
-    parsed_sessions = tuple(_selected_sessions(specs, target, reporter=reporter))
-    reporter.emit(
-        PrepareStep(at=time.monotonic(), name="discovering", done=len(parsed_sessions), total=None)
-    )
-    project_count = len({session.project.key for session in parsed_sessions})
-    reporter.emit(
-        PrepareStep(at=time.monotonic(), name="assigning_projects", done=project_count, total=None)
-    )
-    _write_prepared_workspace(
-        target=target,
-        workspace_path=workspace_path,
-        audit_path=audit_path,
-        source_specs=specs,
-        sessions=parsed_sessions,
-        prepared_at=prepared_at_local,
-    )
+    reporter.emit(PhaseStarted(at=time.monotonic(), phase_id="prepare", label="prepare"))
+    try:
+        reporter.emit(
+            PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs))
+        )
+        prepared_at_local = _timestamp_for_target(target, prepared_at)
+        parsed_sessions = tuple(_selected_sessions(specs, target, reporter=reporter))
+        reporter.emit(
+            PrepareStep(
+                at=time.monotonic(), name="discovering", done=len(parsed_sessions), total=None
+            )
+        )
+        project_count = len({session.project.key for session in parsed_sessions})
+        reporter.emit(
+            PrepareStep(
+                at=time.monotonic(), name="assigning_projects", done=project_count, total=None
+            )
+        )
+        _write_prepared_workspace(
+            target=target,
+            workspace_path=workspace_path,
+            audit_path=audit_path,
+            source_specs=specs,
+            sessions=parsed_sessions,
+            prepared_at=prepared_at_local,
+        )
 
-    message = (
-        f"Prepared workspace {workspace_path} "
-        f"with {project_count} project(s) and {len(parsed_sessions)} session(s)."
-    )
-    reporter.emit(
-        PrepareFinished(at=time.monotonic(), projects=project_count, sessions=len(parsed_sessions))
-    )
+        message = (
+            f"Prepared workspace {workspace_path} "
+            f"with {project_count} project(s) and {len(parsed_sessions)} session(s)."
+        )
+        reporter.emit(
+            PrepareFinished(
+                at=time.monotonic(), projects=project_count, sessions=len(parsed_sessions)
+            )
+        )
+    except Exception:
+        reporter.emit(PhaseFinished(at=time.monotonic(), phase_id="prepare", status="failed"))
+        raise
+    reporter.emit(PhaseFinished(at=time.monotonic(), phase_id="prepare", status="success"))
     return PrepareResult(
         target=target,
         workspace_path=workspace_path,

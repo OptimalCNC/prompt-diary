@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from prompt_diary.progress.events import (
+    PhaseFinished,
+    PhaseStarted,
     PrepareFinished,
     PrepareStarted,
     PrepareStep,
@@ -67,6 +69,46 @@ def test_prepare_finished_records_totals() -> None:
     assert state.prepare_done is True
     assert state.prepare_projects == 2
     assert state.prepare_sessions == 9
+
+
+def test_phase_timing_tracks_running_and_finished_elapsed() -> None:
+    state = _reduce_all(
+        PhaseStarted(at=1.0, phase_id="evidence", label="evidence"),
+        PhaseFinished(at=4.5, phase_id="evidence", status="success"),
+        PhaseStarted(at=6.0, phase_id="rendering", label="rendering"),
+    )
+
+    evidence = state.phases["evidence"]
+    rendering = state.phases["rendering"]
+    assert evidence.status == "success"
+    assert evidence.elapsed_at(10.0) == 3.5
+    assert evidence.is_running is False
+    assert rendering.status == "running"
+    assert rendering.elapsed_at(8.0) == 2.0
+    assert rendering.is_running is True
+
+
+def test_phase_timing_accumulates_multiple_segments() -> None:
+    state = _reduce_all(
+        PhaseStarted(at=1.0, phase_id="rendering", label="rendering"),
+        PhaseFinished(at=2.25, phase_id="rendering", status="success"),
+        PhaseStarted(at=5.0, phase_id="rendering", label="rendering"),
+        PhaseFinished(at=7.0, phase_id="rendering", status="success"),
+    )
+
+    rendering = state.phases["rendering"]
+    assert rendering.elapsed_at(99.0) == 3.25
+    assert rendering.started_at == 1.0
+    assert rendering.finished_at == 7.0
+
+
+def test_phase_finished_without_prior_start_creates_finished_row() -> None:
+    state = _reduce_all(PhaseFinished(at=2.0, phase_id="rendering", status="failed"))
+
+    rendering = state.phases["rendering"]
+    assert rendering.label == "rendering"
+    assert rendering.status == "failed"
+    assert rendering.elapsed_at(9.0) == 0.0
 
 
 def test_run_tracks_kind_totals_and_running_count() -> None:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from prompt_diary.progress.events import (
+    PhaseFinished,
+    PhaseStarted,
     PrepareFinished,
     PrepareStarted,
     PrepareStep,
@@ -17,6 +19,7 @@ from prompt_diary.progress.reporter import (
     NULL_REPORTER,
     NullProgressReporter,
     ProgressReporter,
+    RecordingProgressReporter,
     ReporterMode,
     select_reporter_mode,
 )
@@ -24,11 +27,14 @@ from prompt_diary.progress.reporter import (
 __all__ = [
     "NULL_REPORTER",
     "NullProgressReporter",
+    "PhaseFinished",
+    "PhaseStarted",
     "PrepareFinished",
     "PrepareStarted",
     "PrepareStep",
     "ProgressEvent",
     "ProgressReporter",
+    "RecordingProgressReporter",
     "ReporterMode",
     "RunFinished",
     "RunStarted",

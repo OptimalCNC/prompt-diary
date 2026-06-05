@@ -24,6 +24,7 @@ from prompt_diary.generate.pipeline import (
     markdown_report_artifact,
     notion_report_artifact,
 )
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from tests.support.daily_synthesis import (
     PROJECT_KEY,
     TWO_PROJECTS_KEY_A,
@@ -36,6 +37,7 @@ from tests.support.daily_synthesis import (
     rewrite_envelope_gap_only,
 )
 from tests.support.daily_synthesis_agent import DailySynthesisAgentSessionFactory
+from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -114,6 +116,30 @@ def test_runner_renders_notion_payload(tmp_path: Path) -> None:
     payload = json.loads(_report_notion(workspace).read_text(encoding="utf-8"))
     assert payload["title"] == "Prompt Diary Report — 2026-05-28"
     assert payload["children"]
+
+
+def test_runner_reports_local_rendering_phase(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    factory = DailySynthesisAgentSessionFactory()
+    reporter = RecordingReporter()
+    runner = DailySynthesisRunner(agent_factory=factory)
+
+    async def run() -> TaskResult:
+        async with factory:
+            return await runner.run(workspace_path=workspace, task=_task(), reporter=reporter)
+
+    result = asyncio.run(run())
+
+    assert result.status == "success"
+    rendering_events = [
+        event
+        for event in reporter.events
+        if isinstance(event, PhaseStarted | PhaseFinished) and event.phase_id == "rendering"
+    ]
+    assert [type(event).__name__ for event in rendering_events] == [
+        "PhaseStarted",
+        "PhaseFinished",
+    ]
 
 
 def test_runner_clears_stale_notion_payload_when_run_fails(tmp_path: Path) -> None:

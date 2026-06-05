@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 
 from prompt_diary.progress.events import (
+    PhaseFinished,
+    PhaseStarted,
     PrepareFinished,
     PrepareStarted,
     PrepareStep,
@@ -38,6 +40,12 @@ def test_format_event_lines() -> None:
     )
     assert format_event(PrepareFinished(at=0.0, projects=2, sessions=9)) == (
         "prepare: ready (2 projects, 9 sessions)"
+    )
+    assert format_event(PhaseStarted(at=1.0, phase_id="prepare", label="prepare")) == (
+        "phase: start prepare"
+    )
+    assert format_event(PhaseFinished(at=4.25, phase_id="prepare", status="success")) == (
+        "phase: done prepare [success]"
     )
     assert (
         format_event(
@@ -104,6 +112,8 @@ def test_run_finished_has_no_log_line() -> None:
 def test_log_reporter_writes_lines_and_skips_none() -> None:
     stream = io.StringIO()
     with LogReporter(stream=stream) as reporter:
+        reporter.emit(PhaseStarted(at=1.0, phase_id="prepare", label="prepare"))
+        reporter.emit(PhaseFinished(at=3.25, phase_id="prepare", status="success"))
         reporter.emit(PrepareFinished(at=0.0, projects=1, sessions=1))
         reporter.emit(
             TaskStarted(
@@ -116,5 +126,8 @@ def test_log_reporter_writes_lines_and_skips_none() -> None:
         )
         reporter.emit(RunFinished(at=0.0, succeeded=1, failed=0, blocked=0))  # skipped (None)
     assert stream.getvalue() == (
-        "prepare: ready (1 projects, 1 sessions)\nevidence_extraction: start p/S1\n"
+        "phase: start prepare\n"
+        "phase: done prepare [success] 2.2s\n"
+        "prepare: ready (1 projects, 1 sessions)\n"
+        "evidence_extraction: start p/S1\n"
     )

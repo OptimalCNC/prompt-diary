@@ -273,11 +273,13 @@ def test_run_phase_emits_run_and_task_envelope(tmp_path: Path) -> None:
 
     names = [type(e).__name__ for e in reporter.events]
     assert names[0] == "RunStarted"
-    assert names[1] == "TaskStarted"
-    assert names[-2] == "TaskFinished"
+    assert names[1] == "PhaseStarted"
+    assert names[2] == "TaskStarted"
+    assert names[-3] == "TaskFinished"
+    assert names[-2] == "PhaseFinished"
     assert names[-1] == "RunFinished"
-    started = reporter.events[1]
-    finished = reporter.events[-2]
+    started = reporter.events[2]
+    finished = reporter.events[-3]
     assert isinstance(started, TaskStarted)
     assert isinstance(finished, TaskFinished)
     assert finished.status == "success"

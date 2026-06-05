@@ -7,6 +7,8 @@ import dataclasses
 import pytest
 
 from prompt_diary.progress.events import (
+    PhaseFinished,
+    PhaseStarted,
     PrepareFinished,
     PrepareStarted,
     PrepareStep,
@@ -37,17 +39,19 @@ def test_event_construction_covers_all_types() -> None:
         PrepareStarted(at=0.0, sources=("codex", "claude-code")),
         PrepareStep(at=0.1, name="assigning_projects", done=2, total=None),
         PrepareFinished(at=0.2, projects=2, sessions=9),
-        RunStarted(at=0.3, label="2026-05-30", kind_totals=(("evidence_extraction", 9),)),
+        PhaseStarted(at=0.3, phase_id="prepare", label="prepare"),
+        PhaseFinished(at=0.4, phase_id="prepare", status="success"),
+        RunStarted(at=0.5, label="2026-05-30", kind_totals=(("evidence_extraction", 9),)),
         TaskStarted(
-            at=0.4,
+            at=0.6,
             kind="evidence_extraction",
             task_id="t",
             project_key="p",
             session_ref="S1",
         ),
-        TurnAdvanced(at=0.5, task_id="t", turn_index=1, total_turns=5, turn_ref="T0001"),
+        TurnAdvanced(at=0.7, task_id="t", turn_index=1, total_turns=5, turn_ref="T0001"),
         TaskFinished(
-            at=0.6,
+            at=0.8,
             kind="evidence_extraction",
             task_id="t",
             project_key="p",
@@ -55,6 +59,6 @@ def test_event_construction_covers_all_types() -> None:
             status="success",
             error=None,
         ),
-        RunFinished(at=0.7, succeeded=8, failed=1, blocked=0),
+        RunFinished(at=0.9, succeeded=8, failed=1, blocked=0),
     ]
-    assert len(events) == 8
+    assert len(events) == 10

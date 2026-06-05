@@ -21,7 +21,14 @@ from prompt_diary.generate.pipeline import (
     project_synthesis_task_id,
     run_generation_task_with_lifecycle,
 )
-from prompt_diary.progress.events import RunFinished, RunStarted, TaskFinished, TaskStarted
+from prompt_diary.progress.events import (
+    PhaseFinished,
+    PhaseStarted,
+    RunFinished,
+    RunStarted,
+    TaskFinished,
+    TaskStarted,
+)
 from prompt_diary.progress.reporter import NULL_REPORTER, ProgressReporter
 
 if TYPE_CHECKING:
@@ -149,6 +156,13 @@ class GenerateWorkspaceWorkflow:
             )
         )
         reporter.emit(
+            PhaseStarted(
+                at=time.monotonic(),
+                phase_id=_phase_id_for_kind(task.kind),
+                label=_phase_label_for_kind(task.kind),
+            )
+        )
+        reporter.emit(
             TaskStarted(
                 at=time.monotonic(),
                 kind=task.kind,
@@ -175,6 +189,13 @@ class GenerateWorkspaceWorkflow:
                 session_ref=task.session_ref,
                 status=task_result.status,
                 error=task_result.errors[0] if task_result.errors else None,
+            )
+        )
+        reporter.emit(
+            PhaseFinished(
+                at=time.monotonic(),
+                phase_id=_phase_id_for_kind(task.kind),
+                status=task_result.status,
             )
         )
         reporter.emit(
@@ -294,3 +315,15 @@ def _evidence_scope_message() -> str:
 
 def _project_scope_message() -> str:
     return "project phase requires --project-key"
+
+
+def _phase_id_for_kind(kind: TaskKind) -> str:
+    if kind == "evidence_extraction":
+        return "evidence"
+    if kind == "project_synthesis":
+        return "project"
+    return "daily"
+
+
+def _phase_label_for_kind(kind: TaskKind) -> str:
+    return _phase_id_for_kind(kind)

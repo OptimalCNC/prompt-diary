@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeGuard
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.workspace import load_prepared_workspace
-from prompt_diary.progress.events import TaskFinished, TaskStarted
+from prompt_diary.progress.events import PhaseFinished, PhaseStarted, TaskFinished, TaskStarted
 from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
@@ -27,6 +27,12 @@ DEFAULT_CONCURRENCY_LIMITS: Mapping[TaskKind, int] = {
     "evidence_extraction": 4,
     "project_synthesis": 2,
     "daily_synthesis": 1,
+}
+
+_KIND_PHASES: Mapping[TaskKind, tuple[str, str]] = {
+    "evidence_extraction": ("evidence", "evidence"),
+    "project_synthesis": ("project", "project"),
+    "daily_synthesis": ("daily", "daily"),
 }
 
 
@@ -288,15 +294,22 @@ class GeneratePipelineRunner:
             kind: asyncio.Semaphore(self.concurrency_limits.get(kind, 1))
             for kind in DEFAULT_CONCURRENCY_LIMITS
         }
+        phase_progress = _PhaseProgress(
+            reporter=self.reporter,
+            totals=_task_kind_totals(tasks.values()),
+        )
 
         while remaining or in_flight:
-            self._block_tasks_with_failed_dependencies(remaining, completed, results)
+            self._block_tasks_with_failed_dependencies(
+                remaining, completed, results, phase_progress
+            )
             self._schedule_ready_tasks(
                 workspace_path=workspace_path,
                 remaining=remaining,
                 completed=completed,
                 in_flight=in_flight,
                 semaphores=semaphores,
+                phase_progress=phase_progress,
             )
             if not in_flight:
                 if remaining:
@@ -327,6 +340,7 @@ class GeneratePipelineRunner:
         completed: Mapping[str, TaskResult],
         in_flight: dict[asyncio.Task[TaskResult], str],
         semaphores: Mapping[TaskKind, asyncio.Semaphore],
+        phase_progress: _PhaseProgress,
     ) -> None:
         ready = [
             task
@@ -346,6 +360,7 @@ class GeneratePipelineRunner:
                     workspace_path=workspace_path,
                     task=task,
                     semaphore=semaphores[task.kind],
+                    phase_progress=phase_progress,
                 )
             )
             in_flight[scheduled] = task.task_id
@@ -355,6 +370,7 @@ class GeneratePipelineRunner:
         remaining: dict[str, TaskSpec],
         completed: dict[str, TaskResult],
         results: list[TaskResult],
+        phase_progress: _PhaseProgress,
     ) -> None:
         while True:
             blocked_ids = [
@@ -384,9 +400,11 @@ class GeneratePipelineRunner:
                         for dependency in failed_dependencies
                     ),
                 )
+                at = time.monotonic()
+                phase_progress.start(task.kind, at)
                 self.reporter.emit(
                     TaskFinished(
-                        at=time.monotonic(),
+                        at=at,
                         kind=task.kind,
                         task_id=task.task_id,
                         project_key=task.project_key,
@@ -395,6 +413,7 @@ class GeneratePipelineRunner:
                         error=result.errors[0] if result.errors else None,
                     )
                 )
+                phase_progress.finish(task.kind, result.status, at)
                 completed[task.task_id] = result
                 results.append(result)
 
@@ -404,11 +423,14 @@ class GeneratePipelineRunner:
         workspace_path: Path,
         task: TaskSpec,
         semaphore: asyncio.Semaphore,
+        phase_progress: _PhaseProgress,
     ) -> TaskResult:
         async with semaphore:
+            started_at = time.monotonic()
+            phase_progress.start(task.kind, started_at)
             self.reporter.emit(
                 TaskStarted(
-                    at=time.monotonic(),
+                    at=started_at,
                     kind=task.kind,
                     task_id=task.task_id,
                     project_key=task.project_key,
@@ -421,9 +443,10 @@ class GeneratePipelineRunner:
                 phase_runner=self.phase_runners[task.kind],
                 reporter=self.reporter,
             )
+            finished_at = time.monotonic()
             self.reporter.emit(
                 TaskFinished(
-                    at=time.monotonic(),
+                    at=finished_at,
                     kind=task.kind,
                     task_id=task.task_id,
                     project_key=task.project_key,
@@ -432,7 +455,49 @@ class GeneratePipelineRunner:
                     error=result.errors[0] if result.errors else None,
                 )
             )
+            phase_progress.finish(task.kind, result.status, finished_at)
             return result
+
+
+@dataclass
+class _PhaseProgress:
+    reporter: ProgressReporter
+    totals: Mapping[TaskKind, int]
+    started: set[TaskKind] = field(default_factory=set)
+    finished: dict[TaskKind, int] = field(default_factory=dict)
+    statuses: dict[TaskKind, TaskStatus] = field(default_factory=dict)
+
+    def start(self, kind: TaskKind, at: float) -> None:
+        if self.totals.get(kind, 0) == 0 or kind in self.started:
+            return
+        phase_id, label = _KIND_PHASES[kind]
+        self.started.add(kind)
+        self.reporter.emit(PhaseStarted(at=at, phase_id=phase_id, label=label))
+
+    def finish(self, kind: TaskKind, status: TaskStatus, at: float) -> None:
+        total = self.totals.get(kind, 0)
+        self.start(kind, at)
+        finished = self.finished.get(kind, 0) + 1
+        self.finished[kind] = finished
+        self.statuses[kind] = _combine_phase_status(self.statuses.get(kind), status)
+        if finished == total:
+            phase_id, _label = _KIND_PHASES[kind]
+            self.reporter.emit(PhaseFinished(at=at, phase_id=phase_id, status=self.statuses[kind]))
+
+
+def _combine_phase_status(current: TaskStatus | None, next_status: TaskStatus) -> TaskStatus:
+    if current == "failed" or next_status == "failed":
+        return "failed"
+    if current == "blocked" or next_status == "blocked":
+        return "blocked"
+    return "success"
+
+
+def _task_kind_totals(tasks: Iterable[TaskSpec]) -> dict[TaskKind, int]:
+    totals: dict[TaskKind, int] = {}
+    for task in tasks:
+        totals[task.kind] = totals.get(task.kind, 0) + 1
+    return totals
 
 
 def _evidence_tasks(project: PreparedProject) -> tuple[TaskSpec, ...]:
