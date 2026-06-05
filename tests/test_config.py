@@ -15,6 +15,7 @@ from prompt_diary.config import (
     StoredConfig,
     config_path,
     load_config,
+    notion_is_configured,
     resolve_notion_credentials,
     resolve_reports_root,
     save_config,
@@ -194,3 +195,28 @@ def test_resolve_notion_credentials_missing_database_raises(
     monkeypatch.delenv(NOTION_DATABASE_ENV, raising=False)
     with pytest.raises(PromptDiaryError, match="credentials"):
         resolve_notion_credentials()
+
+
+# --- notion_is_configured ------------------------------------------------------------------------
+
+
+def test_notion_is_configured_true_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
+    monkeypatch.setenv(NOTION_DATABASE_ENV, "env-db")
+    assert notion_is_configured() is True
+
+
+def test_notion_is_configured_true_from_stored_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(NOTION_TOKEN_ENV, raising=False)
+    monkeypatch.delenv(NOTION_DATABASE_ENV, raising=False)
+    save_config(StoredConfig(notion_api_key="cfg-tok", notion_page_id="cfg-db"))
+    assert notion_is_configured() is True
+
+
+def test_notion_is_configured_false_when_database_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(NOTION_TOKEN_ENV, raising=False)
+    monkeypatch.delenv(NOTION_DATABASE_ENV, raising=False)
+    save_config(StoredConfig(notion_api_key="cfg-tok"))  # token only, no database id
+    assert notion_is_configured() is False

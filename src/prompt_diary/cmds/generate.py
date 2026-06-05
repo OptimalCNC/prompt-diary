@@ -21,6 +21,7 @@ from prompt_diary.cmds.common import (
 from prompt_diary.config import (
     NOTION_DATABASE_ENV,
     NOTION_TOKEN_ENV,
+    notion_is_configured,
     resolve_notion_credentials,
     resolve_reports_root,
 )
@@ -56,11 +57,15 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 NotionOption = Annotated[
-    bool,
+    bool | None,
     typer.Option(
+        "--notion/--no-notion",
         help=(
-            "After generating, publish the report to the Notion database configured by "
-            f"`prompt-diary config init` (or ${NOTION_DATABASE_ENV} / ${NOTION_TOKEN_ENV})."
+            "Publish the finished report as a new row in the configured Notion database. "
+            "Defaults to publishing when Notion is configured and skipping otherwise; pass "
+            "--notion to require it (errors if unconfigured) or --no-notion to skip. "
+            f"Configure with `prompt-diary config init`, or ${NOTION_DATABASE_ENV} / "
+            f"${NOTION_TOKEN_ENV}."
         ),
     ),
 ]
@@ -123,7 +128,7 @@ def generate(
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
-    notion: NotionOption = False,
+    notion: NotionOption = None,
     reports_root: ReportsRootOption = None,
 ) -> None:
     """Run the full generation pipeline."""
@@ -133,9 +138,10 @@ def generate(
     if ctx.invoked_subcommand is not None:
         return
     try:
-        # With --notion, fail fast on missing configuration before the expensive pipeline runs.
-        if notion:
-            resolve_notion_credentials()
+        # Freeze the Notion publish target before the expensive pipeline: the default (unset)
+        # publishes only when configured, --notion requires configuration (fail-fast), --no-notion
+        # never publishes. Resolving the credentials here means the target cannot drift mid-run.
+        notion_target = resolve_notion_publish(notion=notion)
         root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
             workspace_path, messages = workspace_for_generate_target(
@@ -149,28 +155,52 @@ def generate(
             result = workflow.run_pipeline(
                 workspace_path=workspace_path, messages=messages, reporter=reporter
             )
-        # Publishing is an explicit, outward-facing step after a successful pipeline, so it runs
-        # outside the reporter context and only when --notion is set.
-        published = publish_report_to_notion(workspace_path) if notion else ()
+        # Publishing is an outward-facing step after a successful pipeline, so it runs outside the
+        # reporter context, with the target frozen before the run.
+        published = (
+            publish_report_to_notion(workspace_path, credentials=notion_target)
+            if notion_target is not None
+            else ()
+        )
     except PromptDiaryError as exc:
         exit_with_error(exc)
     echo_messages((*result.messages, *published))
 
 
+def resolve_notion_publish(*, notion: bool | None) -> tuple[str, str] | None:
+    """Resolve the frozen Notion ``(token, database_id)`` to publish with, or ``None`` to skip.
+
+    Resolving the credentials here, before the expensive pipeline, both fails fast and freezes the
+    publish target so it cannot drift if the stored config changes mid-run. ``None`` (flag unset)
+    publishes only when Notion is configured; ``True`` (``--notion``) requires configuration and
+    raises otherwise; ``False`` (``--no-notion``) never publishes.
+    """
+    if notion is False:
+        return None
+    configured = notion_is_configured()
+    if notion is None and not configured:
+        return None
+    if notion is True and not configured:
+        raise PromptDiaryError(_notion_unconfigured_message())
+    return resolve_notion_credentials()
+
+
 def publish_report_to_notion(
     workspace_path: Path,
     *,
+    credentials: tuple[str, str],
     client_factory: Callable[..., NotionClientProtocol] = build_notion_client,
 ) -> tuple[str, ...]:
-    """Publish the workspace's rendered Notion payload to the configured database.
+    """Publish the workspace's rendered Notion payload using the given frozen credentials.
 
-    Reads the integration token and target database id from the environment so credentials never
-    pass through the command line. ``client_factory`` is injected in tests; by default it builds the
-    real ``notion_client`` SDK adapter. Any non-:class:`PromptDiaryError` failure (a malformed
-    artifact, client construction, an unforeseen SDK/HTTP error) is converted into a structured,
+    ``credentials`` is the ``(token, database_id)`` pair resolved once before the pipeline by
+    :func:`resolve_notion_publish`, so the publish target cannot drift if the stored config changes
+    mid-run and the token never passes through the command line. ``client_factory`` is injected in
+    tests; by default it builds the real SDK adapter. Any non-:class:`PromptDiaryError` failure (a
+    malformed artifact, client construction, an unforeseen SDK/HTTP error) becomes a structured,
     token-free error so the publish path never crashes the CLI with a traceback.
     """
-    token, database_id = resolve_notion_credentials()
+    token, database_id = credentials
     try:
         client = client_factory(token=token)
         result = publish_workspace_report(
@@ -352,3 +382,10 @@ def _missing_workspace_message(workspace_path: Path) -> str:
 
 def _notion_publish_failed_message(cause: object) -> str:
     return f"failed to publish the report to Notion: {cause}"
+
+
+def _notion_unconfigured_message() -> str:
+    return (
+        "--notion was given but no Notion credentials are configured; run "
+        f"`prompt-diary config init` (or set ${NOTION_TOKEN_ENV} and ${NOTION_DATABASE_ENV})."
+    )

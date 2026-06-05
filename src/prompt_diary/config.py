@@ -101,13 +101,25 @@ def resolve_reports_root(explicit: Path | None) -> Path:
     return paths.platform_data_dir()
 
 
+def notion_is_configured() -> bool:
+    """Return whether both a Notion token and database id resolve (from env or stored config)."""
+    token, database_id = _notion_credentials()
+    return bool(token and database_id)
+
+
 def resolve_notion_credentials() -> tuple[str, str]:
     """Return the Notion ``(token, database_id)`` from env, then config; raise if missing."""
+    token, database_id = _notion_credentials()
+    if not token or not database_id:
+        raise PromptDiaryError(_missing_notion_credentials_message())
+    return token, database_id
+
+
+def _notion_credentials() -> tuple[str | None, str | None]:
+    """Resolve the Notion token and database id (env, then config); either may be None."""
     config = load_config()
     token = _env(NOTION_TOKEN_ENV) or config.notion_api_key
     database_id = _env(NOTION_DATABASE_ENV) or config.notion_page_id
-    if not token or not database_id:
-        raise PromptDiaryError(_missing_notion_credentials_message())
     return token, database_id
 
 

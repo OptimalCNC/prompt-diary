@@ -37,10 +37,11 @@ report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key
 report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
-给 `report generate` 加上 `--notion` 后，生成完成时还会把报告作为新记录发布到 Notion
-数据库。同时，无论是否发布，都会在 `report.md` 旁边写出结构稳定、可复现的 `report.notion.json`。先用
-`prompt-diary config init` 配置 Notion 集成令牌和目标数据库 ID（见[配置](#配置)）；
-凭据不会出现在命令行里。每次发布都会追加一条新的日期记录；重复发布不会改写或删除已有记录。
+配置好 Notion 后，`report generate` 默认会把生成完成的报告作为新记录发布到 Notion 数据库；用
+`--no-notion` 可跳过发布，用 `--notion` 可强制发布（若 Notion 未配置则报错）。无论是否发布，都会在
+`report.md` 旁边写出结构稳定、可复现的 `report.notion.json`。先用 `prompt-diary config init` 配置
+Notion 集成令牌和目标数据库 ID（见[配置](#配置)）；凭据不会出现在命令行里。每次发布都会追加一条新的
+日期记录；重复发布不会改写或删除已有记录。
 
 实际生成由 Codex CLI 驱动，流程分为证据抽取、项目汇总和日报汇总三个阶段。最终会产出
 `daily-report.json`、渲染后的 `report.md` 和 `report.notion.json`。运行前需要安装并认证
@@ -72,7 +73,7 @@ prompt-diary config path   # 打印配置文件位置
 配置文件默认放在当前用户的配置目录下（Linux 上是 `~/.config/prompt-diary/config.json`；macOS 和 Windows 使用各自的平台目录），
 也可以用 `PROMPT_DIARY_CONFIG` 指定其他位置。每项设置都会按以下顺序取第一个可用值：CLI 参数（如果有）、环境变量、已保存的配置、内置默认值（如果有）。
 因此，`NOTION_API_KEY` / `NOTION_PAGE_ID` 和 `--reports-root` / `PROMPT_DIARY_HOME` 仍然可以覆盖已保存的配置，这在 CI 中很有用。
-配置完成后，直接运行 `report generate --notion` 即可发布，不需要再传额外参数。
+配置完成后（包括通过上述环境变量配置），直接运行 `report generate` 就会默认发布到 Notion；在不应发布的 CI 或其他流水线中，请传入 `--no-notion`。
 
 ## 开发
 

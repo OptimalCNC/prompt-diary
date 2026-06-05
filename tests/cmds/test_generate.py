@@ -5,7 +5,11 @@ from typing import TYPE_CHECKING, Protocol, cast
 import pytest
 
 import prompt_diary.cmds.generate as generate_cmd
-from prompt_diary.cmds.generate import build_generation_workflow, publish_report_to_notion
+from prompt_diary.cmds.generate import (
+    build_generation_workflow,
+    publish_report_to_notion,
+    resolve_notion_publish,
+)
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.notion_publish import PublishResult
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
@@ -65,11 +69,9 @@ def _stub_factory(*, token: str) -> _StubNotionClient:
     return _StubNotionClient()
 
 
-def test_publish_report_to_notion_reads_env_and_returns_message(
+def test_publish_report_to_notion_uses_frozen_credentials_and_returns_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("NOTION_API_KEY", "tok-123")
-    monkeypatch.setenv("NOTION_PAGE_ID", "db-456")
     seen: dict[str, object] = {}
 
     def fake_publish(*, workspace_path: Path, client: object, database_id: str) -> PublishResult:
@@ -85,34 +87,20 @@ def test_publish_report_to_notion_reads_env_and_returns_message(
         tokens.append(token)
         return _StubNotionClient()
 
-    messages = publish_report_to_notion(tmp_path, client_factory=fake_factory)
+    # The token and database id are the frozen pair resolved before the pipeline, not re-read here.
+    messages = publish_report_to_notion(
+        tmp_path, credentials=("tok-123", "db-456"), client_factory=fake_factory
+    )
 
-    # The token and database id come from the environment, never the command line.
     assert tokens == ["tok-123"]
     assert seen["database_id"] == "db-456"
     assert seen["workspace_path"] == tmp_path
     assert messages == ("Published report to Notion: https://notion.so/page-x",)
 
 
-def test_publish_report_to_notion_missing_env_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("NOTION_API_KEY", raising=False)
-    monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
-
-    def unused_factory(*, token: str) -> _StubNotionClient:
-        del token
-        raise AssertionError  # the missing-env guard must fire before any client is built
-
-    with pytest.raises(PromptDiaryError, match="NOTION_API_KEY"):
-        publish_report_to_notion(tmp_path, client_factory=unused_factory)
-
-
 def test_publish_report_to_notion_passes_through_structured_publish_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("NOTION_API_KEY", "tok")
-    monkeypatch.setenv("NOTION_PAGE_ID", "db")
     structured = "a partial row may exist"
 
     def raises_structured(
@@ -125,15 +113,12 @@ def test_publish_report_to_notion_passes_through_structured_publish_errors(
 
     # A structured publisher error (e.g. partial-page) passes through with its actionable message.
     with pytest.raises(PromptDiaryError, match=structured):
-        publish_report_to_notion(tmp_path, client_factory=_stub_factory)
+        publish_report_to_notion(tmp_path, credentials=("tok", "db"), client_factory=_stub_factory)
 
 
 def test_publish_report_to_notion_wraps_unexpected_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("NOTION_API_KEY", "tok")
-    monkeypatch.setenv("NOTION_PAGE_ID", "db")
-
     def raises_value_error(
         *, workspace_path: Path, client: object, database_id: str
     ) -> PublishResult:
@@ -144,7 +129,36 @@ def test_publish_report_to_notion_wraps_unexpected_failures(
 
     # An unexpected (non-structured) failure becomes a clean, token-free PromptDiaryError.
     with pytest.raises(PromptDiaryError, match="failed to publish the report to Notion"):
-        publish_report_to_notion(tmp_path, client_factory=_stub_factory)
+        publish_report_to_notion(tmp_path, credentials=("tok", "db"), client_factory=_stub_factory)
 
 
 _MALFORMED = "malformed artifact"
+
+
+def test_resolve_notion_publish_no_notion_never_publishes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+    assert resolve_notion_publish(notion=False) is None  # --no-notion skips even when configured
+
+
+def test_resolve_notion_publish_default_follows_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOTION_API_KEY", raising=False)
+    monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
+    assert resolve_notion_publish(notion=None) is None  # unset + unconfigured -> skip
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+    assert resolve_notion_publish(notion=None) == ("tok", "db")  # unset + configured -> publish
+
+
+def test_resolve_notion_publish_explicit_notion_requires_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+    assert resolve_notion_publish(notion=True) == ("tok", "db")  # configured -> publish
+    monkeypatch.delenv("NOTION_API_KEY", raising=False)
+    monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
+    with pytest.raises(PromptDiaryError, match="config init"):
+        resolve_notion_publish(notion=True)  # --notion + unconfigured -> fail fast

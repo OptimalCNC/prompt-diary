@@ -37,9 +37,10 @@ report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key
 report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
-Pass `--notion` to `report generate` to also publish the finished report as a new row in a Notion
-database (the deterministic `report.notion.json` payload is always written beside `report.md`
-regardless). Configure the Notion integration token and target database id once with
+Once Notion is configured, `report generate` publishes the finished report as a new row in the Notion
+database by default; pass `--no-notion` to skip publishing, or `--notion` to require it (which errors
+if Notion is not configured). The deterministic `report.notion.json` payload is always written beside
+`report.md` regardless. Configure the Notion integration token and target database id once with
 `prompt-diary config init` (see [Configuration](#configuration)); credentials never pass on the
 command line. Each run appends a new dated row; re-publishing never edits or deletes existing rows.
 
@@ -81,7 +82,8 @@ Linux; the platform equivalent on macOS and Windows), overridable with `PROMPT_D
 setting is resolved from the first source that provides it: a CLI flag (where one exists), then the
 environment, then the stored config, then a built-in default (where one exists). So `NOTION_API_KEY`
 / `NOTION_PAGE_ID` and `--reports-root` / `PROMPT_DIARY_HOME` still override the stored config (useful
-in CI), and `report generate --notion` works with no flags once configured.
+in CI). Once Notion is configured — including via those environment variables — a bare `report
+generate` publishes by default; pass `--no-notion` in CI or any pipeline that should not publish.
 
 ## Development
 

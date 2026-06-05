@@ -229,6 +229,43 @@ def test_generate_notion_flag_fails_fast_when_env_missing(
     assert "NOTION_API_KEY" in result.stderr
 
 
+def test_generate_publishes_by_default_when_notion_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # With Notion configured and no flag, the default is to publish (the headline new behavior).
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+
+    def workspace_for_generate_target(
+        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+    ) -> tuple[Path, tuple[str, ...]]:
+        del date, today, timezone_name
+        return tmp_path, ("prepared",)
+
+    published_for: list[Path] = []
+
+    def publish_report_to_notion(workspace_path: Path, **_kwargs: object) -> tuple[str, ...]:
+        published_for.append(workspace_path)
+        return ("Published report to Notion: https://notion.so/x",)
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(pipeline_messages=("generated",)),
+    )
+    monkeypatch.setattr(generate_cmd, "publish_report_to_notion", publish_report_to_notion)
+
+    result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12"])  # no --notion flag
+
+    assert result.exit_code == 0
+    assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
+    assert published_for == [tmp_path]
+
+
 def test_generate_phase_error_exits_with_stderr(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

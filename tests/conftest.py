@@ -28,8 +28,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def _isolate_prompt_diary_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Point PROMPT_DIARY_CONFIG at a unique temp path so tests never touch the real config."""
+    """Isolate Prompt Diary config so tests never read the real config or ambient credentials.
+
+    Points PROMPT_DIARY_CONFIG at a unique temp path and clears the Notion credential env vars so a
+    test must opt in to configuration. Without the env clearing, an ambient NOTION_API_KEY /
+    NOTION_PAGE_ID in the developer's shell would make ``report generate``'s config-aware default
+    publish — even firing a real network publish from the end-to-end tests.
+    """
     config_dir = tmp_path_factory.mktemp("prompt-diary-config")
     # The directory exists but config.json does not, so load_config() defaults to empty until a
-    # test writes it; a test's own monkeypatch.setenv overrides this default.
+    # test writes it; a test's own monkeypatch.setenv overrides these defaults.
     monkeypatch.setenv("PROMPT_DIARY_CONFIG", str(config_dir / "config.json"))
+    monkeypatch.delenv("NOTION_API_KEY", raising=False)
+    monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
