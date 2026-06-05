@@ -173,7 +173,7 @@ class _SourceSubagentIndex:
 @dataclass(frozen=True)
 class _SourceProbe:
     candidate_root_paths: frozenset[Path]
-    subagent_index: _SourceSubagentIndex
+    subagents: tuple[_SourceSubagent, ...]
 
 
 @dataclass
@@ -203,6 +203,7 @@ class _ProbePayload(msgspec.Struct):
     role: str | None = None
     id: str | None = None
     thread_source: str | None = None
+    originator: str | None = None
     agent_role: str | None = None
     source: object | None = None
 
@@ -465,6 +466,7 @@ def _selected_sessions(
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> Iterable[ParsedSession]:
     per_source = [(spec, _jsonl_source_files(spec.root)) for spec in source_specs]
+    probed_sources: list[tuple[SourceSpec, tuple[Path, ...], _SourceProbe]] = []
     for spec, source_paths in per_source:
         scope = _source_scope(spec)
         progress = _ScanProgress(
@@ -480,6 +482,13 @@ def _selected_sessions(
             target=target,
             progress=progress,
         )
+        probed_sources.append((spec, source_paths, probe))
+
+    subagent_index = _source_subagent_index_from_items(
+        subagent for _, _, probe in probed_sources for subagent in probe.subagents
+    )
+    for spec, source_paths, probe in probed_sources:
+        scope = _source_scope(spec)
         selected_count = 0
         for source_path in source_paths:
             if source_path not in probe.candidate_root_paths:
@@ -487,7 +496,7 @@ def _selected_sessions(
             parsed = _parse_session_file(source_path=source_path, spec=spec, target=target)
             if parsed is not None:
                 selected_count += 1
-                yield _with_target_subagents(parsed, probe.subagent_index)
+                yield _with_target_subagents(parsed, subagent_index)
         reporter.emit(
             PrepareStep(
                 at=time.monotonic(),
@@ -544,7 +553,7 @@ def _probe_source_files(
             subagents.append(subagent)
     return _SourceProbe(
         candidate_root_paths=frozenset(candidate_root_paths),
-        subagent_index=_source_subagent_index_from_items(subagents),
+        subagents=tuple(subagents),
     )
 
 
@@ -685,8 +694,7 @@ def _record_probe_codex_subagent_metadata(
         state.source_session_id = payload.id
     if payload.agent_role is not None:
         state.agent_role = payload.agent_role
-    if payload.thread_source == "subagent":
-        state.is_subagent = True
+    _record_probe_codex_direct_subagent_metadata(state, payload)
     subagent = _probe_object_value(payload.source, "subagent")
     if subagent is None:
         return
@@ -700,6 +708,19 @@ def _record_probe_codex_subagent_metadata(
     agent_role = _probe_string_value(_probe_object_value(thread_spawn, "agent_role"))
     if agent_role is not None and state.agent_role is None:
         state.agent_role = agent_role
+
+
+def _record_probe_codex_direct_subagent_metadata(
+    state: _SubagentMetadata,
+    payload: _ProbePayload,
+) -> None:
+    if payload.thread_source == "subagent":
+        state.is_subagent = True
+    if payload.originator != _CODEX_CLAUDE_ORIGINATOR:
+        return
+    state.is_subagent = True
+    if state.agent_role is None:
+        state.agent_role = "codex"
 
 
 def _record_probe_claude_subagent_metadata(
@@ -850,6 +871,8 @@ _CODEX_SOURCE_CONTEXT_PREFIXES = (
     "<subagent_notification>",
     "<INSTRUCTIONS>",
 )
+_CODEX_CLAUDE_ORIGINATOR = "Claude Code"
+_CLAUDE_CODEX_THREAD_READY = re.compile(r"\[codex\]\s+Thread ready \(([0-9A-Fa-f-]{36})\)")
 
 
 def _is_human_trigger(record: JsonObject, source: SourceName) -> bool:
@@ -983,8 +1006,7 @@ def _record_codex_metadata(state: _ParseState, record: JsonObject) -> None:
         source_session_id = _string_value(payload, "id")
         if source_session_id is not None:
             state.source_session_id = source_session_id
-        if _string_value(payload, "thread_source") == "subagent":  # pragma: no cover
-            state.is_subagent = True
+        _record_codex_direct_subagent_metadata(state, payload)
         source = _object_value(payload, "source")
         if source is not None:  # pragma: no cover
             subagent = _object_value(source, "subagent")
@@ -999,6 +1021,13 @@ def _record_codex_metadata(state: _ParseState, record: JsonObject) -> None:
         cwd = _string_value(payload, "cwd")
         if cwd is not None and state.codex_turn_context_cwd is None:
             state.codex_turn_context_cwd = cwd
+
+
+def _record_codex_direct_subagent_metadata(state: _ParseState, payload: JsonObject) -> None:
+    if _string_value(payload, "thread_source") == "subagent":  # pragma: no cover
+        state.is_subagent = True
+    if _string_value(payload, "originator") == _CODEX_CLAUDE_ORIGINATOR:  # pragma: no cover
+        state.is_subagent = True
 
 
 def _source_session_id_for_state(state: _ParseState) -> str:
@@ -1274,6 +1303,7 @@ def _claude_parent_subagent_references(
     task-notification attachments containing the same agent id.
     """
     pending_by_tool_use_id: dict[str, _PendingSubagentSpawn] = {}
+    pending_codex_by_tool_use_id: dict[str, _PendingSubagentSpawn] = {}
     references: dict[str, _MutableParentSubagentReference] = {}
     for line_number, line in enumerate(
         session.source_path.read_text(encoding="utf-8", errors="replace").splitlines(),
@@ -1283,9 +1313,20 @@ def _claude_parent_subagent_references(
         if record is None:
             continue
         _record_claude_agent_tool_uses(pending_by_tool_use_id, record, line_number=line_number)
+        _record_claude_codex_tool_uses(
+            pending_codex_by_tool_use_id,
+            record,
+            line_number=line_number,
+        )
         _record_claude_tool_result(
             references,
             pending_by_tool_use_id,
+            record,
+            line_number=line_number,
+        )
+        _record_claude_codex_tool_result(
+            references,
+            pending_codex_by_tool_use_id,
             record,
             line_number=line_number,
         )
@@ -1319,6 +1360,33 @@ def _record_claude_agent_tool_uses(
         )
 
 
+def _record_claude_codex_tool_uses(
+    pending_by_tool_use_id: dict[str, _PendingSubagentSpawn],
+    record: JsonObject,
+    *,
+    line_number: int,
+) -> None:
+    message = _object_value(record, "message")
+    if message is None:
+        return
+    for content_item in _object_list_value(message, "content"):
+        if _string_value(content_item, "type") != "tool_use":
+            continue
+        if _string_value(content_item, "name") != "Bash":
+            continue
+        tool_use_id = _string_value(content_item, "id")
+        if tool_use_id is None:
+            continue
+        tool_input = _object_value(content_item, "input")
+        command = _string_value(tool_input, "command") if tool_input is not None else None
+        if command is None or "codex-companion.mjs" not in command:
+            continue
+        pending_by_tool_use_id[tool_use_id] = _PendingSubagentSpawn(
+            line_number=line_number,
+            agent_role="codex",
+        )
+
+
 def _record_claude_tool_result(
     references: dict[str, _MutableParentSubagentReference],
     pending_by_tool_use_id: dict[str, _PendingSubagentSpawn],
@@ -1347,6 +1415,35 @@ def _record_claude_tool_result(
         reference.parent_result_line = line_number
 
 
+def _record_claude_codex_tool_result(
+    references: dict[str, _MutableParentSubagentReference],
+    pending_by_tool_use_id: dict[str, _PendingSubagentSpawn],
+    record: JsonObject,
+    *,
+    line_number: int,
+) -> None:
+    if _string_value(record, "sourceToolAssistantUUID") is None:
+        return
+    tool_use_id = _claude_tool_result_id(record)
+    text = _claude_codex_result_text(record)
+    if text is None:
+        return
+    for source_session_id in _codex_thread_ids(text):
+        reference = references.setdefault(
+            source_session_id,
+            _MutableParentSubagentReference(source_session_id=source_session_id),
+        )
+        if tool_use_id is not None:
+            pending_spawn = pending_by_tool_use_id.get(tool_use_id)
+            if pending_spawn is not None:
+                reference.parent_spawn_line = pending_spawn.line_number
+                if pending_spawn.agent_role is not None:
+                    reference.agent_role = pending_spawn.agent_role
+        if reference.agent_role is None:
+            reference.agent_role = "codex"
+        reference.parent_result_line = line_number
+
+
 def _record_claude_task_notification(
     references: dict[str, _MutableParentSubagentReference],
     record: JsonObject,
@@ -1364,6 +1461,22 @@ def _record_claude_task_notification(
         _MutableParentSubagentReference(source_session_id=agent_id),
     )
     reference.parent_result_line = line_number
+
+
+def _claude_codex_result_text(record: JsonObject) -> str | None:
+    fragments: list[str] = []
+    tool_use_result = _object_value(record, "toolUseResult")
+    if tool_use_result is not None:
+        fragments.extend(_json_string_fragments(tool_use_result))
+    message = _object_value(record, "message")
+    if message is not None:
+        fragments.extend(_json_string_fragments(message))
+    text = "\n".join(fragments)
+    return text if text.strip() else None
+
+
+def _codex_thread_ids(text: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(_CLAUDE_CODEX_THREAD_READY.findall(text)))
 
 
 def _claude_tool_result_id(record: JsonObject) -> str | None:

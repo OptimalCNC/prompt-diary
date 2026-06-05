@@ -167,10 +167,10 @@ belong in `project.json`.
 
 Adapters parse source-specific JSONL records enough to identify human-authored triggers, copy
 sessions, and create the session index. Session discovery targets only root/main assistant
-sessions. Source-native subagent sessions are skipped during initial discovery and are not copied
-merely because they contain target-window timestamps. A subagent session is copied only when an
-indexed parent session references it through a spawn/result association inside that parent
-session's target span.
+sessions. Source-native subagent sessions and agent-invoked child sessions are skipped during
+initial discovery and are not copied merely because they contain target-window timestamps. A child
+session is copied only when an indexed parent session references it through a spawn/result
+association inside that parent session's target span.
 
 A human-authored trigger is an externally authored user message, correction, approval, resume
 action, or explicit human-supplied context that asks or directs the agent to act.
@@ -265,10 +265,10 @@ Each `turns` item records one trigger-owned work unit inside the target span:
 - `target_subagents` lists subagent transcripts associated with this turn. Each item has the fields
   described below. If no subagents are associated with this turn, `target_subagents` is `[]`.
 
-Each `target_subagents` item records one copied subagent transcript associated with its parent turn:
+Each `target_subagents` item records one copied child transcript associated with its parent turn:
 
-- `session_file` is the copied source-native filename under `subagent_path`.
-- `source_session_id` is the source-native subagent session id when available; otherwise use the
+- `session_file` is the copied source transcript filename under `subagent_path`.
+- `source_session_id` is the source-native child session id when available; otherwise use the
   filename stem.
 - `agent_role` is the source-normalized role when available, such as `explorer` or `reviewer`;
   otherwise it is `null`.

@@ -83,7 +83,10 @@ exclude them from the previous trigger's owned range.
 
 Codex subagent sessions are identified by `session_meta.payload.thread_source == "subagent"` or by
 the presence of `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`. Subagent
-sessions are not scanned for human triggers during root session discovery.
+sessions are not scanned for human triggers during root session discovery. Codex sessions launched
+from Claude Code through the Codex companion are identified by
+`session_meta.payload.originator == "Claude Code"` and are treated the same way: their prompt is an
+agent-owned delegation, not a human-authored root trigger.
 
 ## Claude Code Session Structure
 
@@ -123,6 +126,9 @@ field, but the four fields above are sufficient for detection.
 Records with `type=user` and `sourceToolAssistantUUID` present are tool results — the assistant
 invoked a tool, and the result is delivered as a `role=user` message. These are agent reactions, not
 human triggers.
+
+Claude Code tool results from the Codex companion include a `[codex] Thread ready (<thread-id>)`
+line. That thread id associates the launched Codex transcript with the Claude turn that invoked it.
 
 ### Claude Code Turn Boundaries
 

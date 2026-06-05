@@ -70,6 +70,256 @@ def test_prepare_workspace_skips_direct_claude_subagent_discovery(
     assert not any((result.workspace_path / "projects").iterdir())
 
 
+def test_prepare_workspace_indexes_claude_invoked_codex_as_claude_context(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "ReportGenerator"
+    project_root.mkdir()
+    codex_root = tmp_path / "codex-sessions"
+    claude_root = tmp_path / "claude-projects"
+    parent_id = "00000000-0000-4000-8000-000000000222"
+    parent_tool_uuid = "00000000-0000-4000-8000-000000000223"
+    codex_id = "019e973a-7efe-7220-806d-7069fda6e5a0"
+    returned_codex_id = "019e973a-7efe-7220-806d-7069fda6e5a1"
+    codex_filename = f"rollout-2026-05-12T08-01-00-{codex_id}.jsonl"
+    returned_codex_filename = f"rollout-2026-05-12T08-02-00-{returned_codex_id}.jsonl"
+    _write_jsonl(
+        codex_root / "2026" / "05" / "12" / codex_filename,
+        [
+            {
+                "payload": {
+                    "cwd": str(project_root),
+                    "id": codex_id,
+                    "originator": "Claude Code",
+                    "timestamp": "2026-05-12T00:01:00Z",
+                },
+                "timestamp": "2026-05-12T00:01:00Z",
+                "type": "session_meta",
+            },
+            {
+                "payload": {
+                    "collaboration_mode_kind": "default",
+                    "type": "task_started",
+                },
+                "timestamp": "2026-05-12T00:01:01Z",
+                "type": "event_msg",
+            },
+            {
+                "payload": {
+                    "content": [
+                        {
+                            "text": "Review this implementation for Claude.",
+                            "type": "input_text",
+                        }
+                    ],
+                    "role": "user",
+                    "type": "message",
+                },
+                "timestamp": "2026-05-12T00:01:02Z",
+                "type": "response_item",
+            },
+            {
+                "payload": {
+                    "content": [{"text": "Reviewed.", "type": "output_text"}],
+                    "role": "assistant",
+                    "type": "message",
+                },
+                "timestamp": "2026-05-12T00:01:03Z",
+                "type": "response_item",
+            },
+        ],
+    )
+    _write_jsonl(
+        codex_root / "2026" / "05" / "12" / returned_codex_filename,
+        [
+            {
+                "payload": {
+                    "cwd": str(project_root),
+                    "id": returned_codex_id,
+                    "originator": "Claude Code",
+                    "timestamp": "2026-05-12T00:02:00Z",
+                },
+                "timestamp": "2026-05-12T00:02:00Z",
+                "type": "session_meta",
+            },
+            {
+                "payload": {
+                    "content": [
+                        {
+                            "text": "Summarize the review for Claude.",
+                            "type": "input_text",
+                        }
+                    ],
+                    "role": "user",
+                    "type": "message",
+                },
+                "timestamp": "2026-05-12T00:02:01Z",
+                "type": "response_item",
+            },
+        ],
+    )
+    _write_jsonl(
+        claude_root / "-tmp-ReportGenerator" / f"{parent_id}.jsonl",
+        [
+            {
+                "cwd": str(project_root),
+                "isSidechain": False,
+                "message": {"content": "Ask Codex to review this.", "role": "user"},
+                "sessionId": parent_id,
+                "timestamp": "2026-05-12T00:00:00Z",
+                "type": "user",
+            },
+            {
+                "cwd": str(project_root),
+                "isSidechain": False,
+                "message": {
+                    "content": [
+                        {
+                            "id": "toolu_other",
+                            "input": {"command": "echo not codex"},
+                            "name": "Bash",
+                            "type": "tool_use",
+                        },
+                        {
+                            "input": {"command": 'node "/fake/codex-companion.mjs" task "review"'},
+                            "name": "Bash",
+                            "type": "tool_use",
+                        },
+                        {
+                            "id": "toolu_codex",
+                            "input": {
+                                "command": (
+                                    'node "/fake/openai-codex/codex/scripts/'
+                                    'codex-companion.mjs" task "review"'
+                                ),
+                                "description": "Ask Codex to review",
+                            },
+                            "name": "Bash",
+                            "type": "tool_use",
+                        },
+                    ],
+                    "role": "assistant",
+                },
+                "sessionId": parent_id,
+                "timestamp": "2026-05-12T00:00:10Z",
+                "type": "assistant",
+                "uuid": parent_tool_uuid,
+            },
+            {
+                "cwd": str(project_root),
+                "isSidechain": False,
+                "message": {
+                    "content": [
+                        {
+                            "content": (
+                                "[codex] Starting Codex task thread.\n"
+                                f"[codex] Thread ready ({codex_id}).\n"
+                                "[codex] Turn completed."
+                            ),
+                            "tool_use_id": "toolu_codex",
+                            "type": "tool_result",
+                        }
+                    ],
+                    "role": "user",
+                },
+                "sessionId": parent_id,
+                "sourceToolAssistantUUID": parent_tool_uuid,
+                "timestamp": "2026-05-12T00:00:20Z",
+                "toolUseResult": {
+                    "stdout": (
+                        "[codex] Starting Codex task thread.\n"
+                        f"[codex] Thread ready ({codex_id}).\n"
+                        "[codex] Turn completed."
+                    )
+                },
+                "type": "user",
+            },
+            {
+                "cwd": str(project_root),
+                "isSidechain": False,
+                "sessionId": parent_id,
+                "sourceToolAssistantUUID": parent_tool_uuid,
+                "timestamp": "2026-05-12T00:00:25Z",
+                "type": "user",
+            },
+            {
+                "cwd": str(project_root),
+                "isSidechain": False,
+                "message": {
+                    "content": [
+                        {
+                            "content": f"[codex] Thread ready ({returned_codex_id}).",
+                            "type": "tool_result",
+                        }
+                    ],
+                    "role": "user",
+                },
+                "sessionId": parent_id,
+                "sourceToolAssistantUUID": parent_tool_uuid,
+                "timestamp": "2026-05-12T00:00:26Z",
+                "type": "user",
+            },
+            {
+                "cwd": str(project_root),
+                "isSidechain": False,
+                "message": {"content": "Codex review returned.", "role": "assistant"},
+                "sessionId": parent_id,
+                "timestamp": "2026-05-12T00:00:30Z",
+                "type": "assistant",
+            },
+        ],
+    )
+
+    result = prepare_workspace(
+        _target(),
+        reports_root=tmp_path / ".reports",
+        source_specs=(
+            SourceSpec(source="codex", root=codex_root),
+            SourceSpec(source="claude-code", root=claude_root),
+        ),
+    )
+
+    project_dir = _single_directory(result.workspace_path / "projects")
+    rows = _load_jsonl(project_dir / "sessions.index.jsonl")
+    assert len(rows) == 1
+    assert rows[0]["source"] == "claude-code"
+    assert rows[0]["source_session_id"] == parent_id
+    assert rows[0]["subagent_path"] == f"sessions/claude-code/subagents/{parent_id}"
+    turns = cast("list[dict[str, object]]", rows[0]["turns"])
+    assert turns == [
+        {
+            "turn_ref": "T0001",
+            "turn_start_line": 1,
+            "turn_end_line": 6,
+            "target_subagents": [
+                {
+                    "agent_role": "codex",
+                    "association": "spawned_or_returned_in_target_span",
+                    "parent_result_line": 3,
+                    "parent_spawn_line": 2,
+                    "session_file": codex_filename,
+                    "source_session_id": codex_id,
+                },
+                {
+                    "agent_role": "codex",
+                    "association": "spawned_or_returned_in_target_span",
+                    "parent_result_line": 5,
+                    "parent_spawn_line": None,
+                    "session_file": returned_codex_filename,
+                    "source_session_id": returned_codex_id,
+                },
+            ],
+        }
+    ]
+    copied_codex = project_dir / f"sessions/claude-code/subagents/{parent_id}" / codex_filename
+    assert copied_codex.exists()
+    copied_returned_codex = (
+        project_dir / f"sessions/claude-code/subagents/{parent_id}" / returned_codex_filename
+    )
+    assert copied_returned_codex.exists()
+    assert not (project_dir / "sessions" / "codex" / codex_filename).exists()
+
+
 def test_default_source_specs_handles_defaults_blank_env_and_audit_path(tmp_path: Path) -> None:
     home = tmp_path / "home"
     default_specs = default_source_specs(home=home, env={})
