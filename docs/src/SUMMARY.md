@@ -21,5 +21,6 @@
   - [Generation Pipeline Framework](./dev/generation-pipeline.md)
   - [MCP Tool Architecture](./dev/mcp-tool-architecture.md)
   - [Codex Agent Runner](./dev/codex-agent-runner.md)
+  - [Progress Reporting](./dev/progress-reporting.md)
   - [Development Guide](./dev/guide.md)
   - [Prompt System](./dev/prompt-system.md)

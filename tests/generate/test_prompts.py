@@ -172,6 +172,10 @@ def test_team_learning_prompt() -> None:
     assert "promote" in result
     assert "productivity" in result
     assert "W0001" in result
+    assert "acceptance criteria" in result
+    assert "examples or counterexamples" in result
+    assert "verification or tests" in result
+    assert "pattern -> evidence -> why it mattered -> how teammates can reuse or avoid it" in result
 
 
 def test_cli_prompts_evidence_extractor() -> None:
