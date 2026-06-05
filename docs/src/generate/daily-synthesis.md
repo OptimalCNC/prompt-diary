@@ -4,7 +4,7 @@ Daily report synthesis is the final report-producing generation phase. It turns 
 into a semantic daily report model, `daily-report.json`, where the three
 [product purposes](../product.md#purposes) must converge from one evidence base: work
 communication, engagement review, and team learning — each honest about its evidence. Reader-facing views —
-`report.md` and any future view — are rendered from that model by a deterministic step; the
+`report.md`, `report.notion.json`, and any future view — are rendered from that model by a deterministic step; the
 synthesizer that builds the model is view-agnostic.
 
 Daily report synthesis starts from the prepared workspace and generation artifacts. It must not
@@ -26,13 +26,16 @@ Outputs:
 
 - `daily-report.json` in the prepared workspace root — built by the synthesizer agent
 - `report.md` in the prepared workspace root — rendered from `daily-report.json`
+- `report.notion.json` in the prepared workspace root — the deterministic Notion page payload
+  rendered from `daily-report.json`
 
 `daily-report.json` is the authoritative report artifact and the synthesizer agent's only output.
-`report.md` is a deterministic view rendered from that model (see [Rendering](#rendering)). The
-phase returns both, but the responsibilities are separate: synthesis builds the model, rendering
-projects it into views. A model that misses required fields, uses invalid citations, hides required
-evidence-quality limits, or includes forbidden high-risk content is a synthesis bug; a view that
-adds, drops, or alters a claim relative to the model is a rendering bug.
+`report.md` and `report.notion.json` are deterministic views rendered from that model (see
+[Rendering](#rendering)). The phase returns them, but the responsibilities are separate: synthesis
+builds the model, rendering projects it into views. A model that misses required fields, uses
+invalid citations, hides required evidence-quality limits, or includes forbidden high-risk content
+is a synthesis bug; a view that adds, drops, or alters a claim relative to the model is a rendering
+bug.
 
 ## Report Contract
 
@@ -414,13 +417,14 @@ claim-bearing prose absent from `daily-report.json`.
 
 ### Notion Rendering
 
-Notion rendering serializes the same abstract layout into a Notion page payload and publishes it as
-a row in a Notion database. Like Markdown rendering it is deterministic, read-only over the model,
-and adds no claim-bearing content. It is split in two: a pure renderer
+Notion rendering serializes the same abstract layout into a Notion page payload. Like Markdown
+rendering it is deterministic, read-only over the model, and adds no claim-bearing content. It is
+split in two: a pure renderer
 (`daily_synthesis/render_notion.py`) that walks the layout into Notion block JSON and writes it to
 `report.notion.json`, and a publisher (`daily_synthesis/notion_publish.py`, with the real SDK behind
 `notion_client_adapter.py`) that pushes that payload. `report.notion.json` is a deterministic
-artifact emitted on every run beside `report.md`; publishing is opt-in (see below).
+artifact emitted on every run beside `report.md`; `report render notion` also regenerates it from
+`daily-report.json` immediately before publishing.
 
 Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
 
@@ -444,11 +448,14 @@ needed and a session-derived string cannot forge structure. Notion's content lim
 the payload (each `text.content` ≤ 2000 chars; each block's rich-text array ≤ 100 runs, truncating a
 pathologically long single string with a fixed marker).
 
-Publishing (`report generate --notion`): the publisher reads the integration token and target
-database id from the stored config (`prompt-diary config init`) or the `NOTION_API_KEY` /
-`NOTION_PAGE_ID` env vars (so credentials never pass on the command line) and creates a **new row**
-per report — re-publishing never edits or deletes an existing row, so the user prunes stale rows by
-hand. Property mapping is schema-driven: the database's single
+Publishing (`report render notion`): the render command resolves an existing workspace, requires
+`daily-report.json`, regenerates `report.notion.json`, then invokes the publisher. The publisher
+reads the integration token and target database id from the stored config (`prompt-diary config
+init`) or the `NOTION_API_KEY` / `NOTION_PAGE_ID` env vars (so credentials never pass on the command
+line) and creates a **new row** per report — re-publishing never edits or deletes an existing row,
+so the user prunes stale rows by hand. `report generate` delegates to this same render-owned path
+after a successful pipeline when Notion publishing is active (`--notion`, or default configured
+publishing without `--no-notion`). Property mapping is schema-driven: the database's single
 title-typed property gets the page title, every date-typed property gets the report date, and other
 types are left for the user. Metadata the database has no column for (status, window, overall
 confidence) is surfaced in a banner callout at the top of the page body, so the report is

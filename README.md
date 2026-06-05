@@ -27,6 +27,7 @@ report --help
 prompt-diary --help
 report prepare --date 2026-05-12 --timezone Asia/Shanghai
 report generate --date 2026-05-12 --timezone Asia/Shanghai
+report render notion --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
 Generation is an artifact-first pipeline with standalone phase commands:
@@ -37,12 +38,15 @@ report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key
 report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
-Once Notion is configured, `report generate` publishes the finished report as a new row in the Notion
-database by default; pass `--no-notion` to skip publishing, or `--notion` to require it (which errors
-if Notion is not configured). The deterministic `report.notion.json` payload is always written beside
-`report.md` regardless. Configure the Notion integration token and target database id once with
-`prompt-diary config init` (see [Configuration](#configuration)); credentials never pass on the
-command line. Each run appends a new dated row; re-publishing never edits or deletes existing rows.
+Once Notion is configured, `report render notion` can publish an already-generated report as a new
+row in the Notion database. It resolves the existing workspace, requires `daily-report.json`,
+regenerates the deterministic `report.notion.json` payload beside `report.md`, and publishes that
+payload. `report generate` delegates to the same render path after a successful pipeline: by default
+it publishes when Notion is configured; pass `--no-notion` to skip publishing, or `--notion` to
+require it (which errors if Notion is not configured). Configure the Notion integration token and
+target database id once with `prompt-diary config init` (see [Configuration](#configuration));
+credentials never pass on the command line. Each run appends a new dated row; re-publishing never
+edits or deletes existing rows.
 
 Generation drives a three-phase, artifact-first pipeline — evidence extraction, then project
 synthesis, then daily report synthesis — through the Codex CLI, producing `daily-report.json`, the
@@ -52,9 +56,9 @@ authenticated; the subcommands above run each phase standalone against an alread
 Prepared workspaces and generated reports are written under a per-user data directory by default
 (`~/.local/share/prompt-diary/` on Linux; the platform equivalent on macOS and Windows), organized
 by date as `<reports-root>/work/<YYYY-MM-DD>/`. Override the location with `--reports-root <path>` on
-`prepare` and `generate`, `PROMPT_DIARY_HOME`, or the stored config (see [Configuration](#configuration));
-precedence is `--reports-root` over `PROMPT_DIARY_HOME` over the stored config over the default data
-directory. (Earlier versions wrote to `./.reports` in the current directory — pass
+`prepare`, `generate`, and `render notion`, `PROMPT_DIARY_HOME`, or the stored config (see
+[Configuration](#configuration)); precedence is `--reports-root` over `PROMPT_DIARY_HOME` over the
+stored config over the default data directory. (Earlier versions wrote to `./.reports` in the current directory — pass
 `--reports-root .reports` to keep using an existing local directory.)
 
 Both `prepare` and `generate` show a live progress dashboard when running on a TTY and write

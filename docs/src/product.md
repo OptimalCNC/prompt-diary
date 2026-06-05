@@ -97,6 +97,7 @@ The user-facing CLI surface should stay thin and map directly to the workflow:
 ```text
 prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force] [--quiet]
 prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City] [--quiet]
+prompt-diary render notion [--date YYYY-MM-DD] [--timezone Area/City] [--reports-root PATH]
 prompt-diary mcp serve
 ```
 
@@ -117,6 +118,11 @@ generation workflow in that workspace, writes `report.md`, and validates it befo
 success. If the workspace is missing, generation internally runs preparation first. If the
 workspace already exists, generation should print an informational message that the existing
 workspace is being reused and that `prepare --force` can refresh it after session updates.
+
+`render notion` resolves an existing workspace for the target date, requires the semantic
+`daily-report.json` artifact, regenerates `report.notion.json`, and publishes it as a new row in the
+configured Notion database. When Notion publishing is active for `generate`, generation delegates
+that post-pipeline publishing step to this render path.
 
 `mcp serve` starts the package MCP server over stdio for integration work. The server exposes
 `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and `write_work_item`.

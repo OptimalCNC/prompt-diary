@@ -2,11 +2,10 @@
 
 Read and comply with `README.md` before changing this repository.
 
-In particular:
+Before changing this repository:
 
-- Use `uv` for dependency management, project commands, builds, and release-related workflows.
-- Keep the package compatible with Python 3.10 and newer.
-- Run `uv run basedpyright` for strict type checking on package code.
-- Run `uv run ruff check` and `uv run ruff format --check` for linting and formatting checks.
-- Update `README.md` whenever development commands, tooling, or supported Python versions change.
-- Read `docs/src/product.md` before designing new features, changing report content, or modifying the generation pipeline. It defines the tool's purposes and principles that downstream design must satisfy.
+- Read `docs/src/dev/guide.md` for development commands, tooling, supported Python versions, and
+  pre-submit checks.
+- Read `docs/src/product.md` before designing new features, changing report content, or modifying
+  the generation pipeline. It defines the tool's purposes and principles that downstream design must
+  satisfy.

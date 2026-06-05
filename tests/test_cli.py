@@ -10,10 +10,12 @@ import prompt_diary.cli as cli_module
 import prompt_diary.cmds.generate as generate_cmd
 import prompt_diary.cmds.mcp as mcp_cmd
 import prompt_diary.cmds.prepare as prepare_cmd
+import prompt_diary.cmds.render as render_cmd
 from prompt_diary import __version__
 from prompt_diary.cli import app, main
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.prepare.workspace import prepare_workspace
+from prompt_diary.render.notion import NotionRenderResult
 from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
 PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
 PHASE_FAILED = "phase failed"
+NO_NOTION_RENDER_FAILED = "render notion must not run with --no-notion"
 
 
 @dataclass
@@ -67,6 +70,7 @@ def test_report_help_lists_commands() -> None:
     assert result.exit_code == 0
     assert "prepare" in result.stdout
     assert "generate" in result.stdout
+    assert "render" in result.stdout
     assert "mcp" in result.stdout
 
 
@@ -79,6 +83,15 @@ def test_generate_help_lists_phase_commands() -> None:
     assert "evidence" in result.stdout
     assert "project" in result.stdout
     assert "daily" in result.stdout
+
+
+def test_render_help_lists_targets() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["render", "--help"])
+
+    assert result.exit_code == 0
+    assert "notion" in result.stdout
 
 
 def test_report_version() -> None:
@@ -189,9 +202,15 @@ def test_generate_notion_flag_appends_publish_message(
 
     published_for: list[Path] = []
 
-    def publish_report_to_notion(workspace_path: Path, **_kwargs: object) -> tuple[str, ...]:
+    def render_workspace_report_to_notion(
+        workspace_path: Path, **_kwargs: object
+    ) -> NotionRenderResult:
         published_for.append(workspace_path)
-        return ("Published report to Notion: https://notion.so/x",)
+        return NotionRenderResult(
+            artifact_path=workspace_path / "report.notion.json",
+            page_id="page-x",
+            url="https://notion.so/x",
+        )
 
     monkeypatch.setattr(
         generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
@@ -201,7 +220,9 @@ def test_generate_notion_flag_appends_publish_message(
         "build_generation_workflow",
         lambda: _FakeWorkflow(pipeline_messages=("generated",)),
     )
-    monkeypatch.setattr(generate_cmd, "publish_report_to_notion", publish_report_to_notion)
+    monkeypatch.setattr(
+        generate_cmd, "render_workspace_report_to_notion", render_workspace_report_to_notion
+    )
 
     result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12", "--notion"])
 
@@ -245,9 +266,15 @@ def test_generate_publishes_by_default_when_notion_configured(
 
     published_for: list[Path] = []
 
-    def publish_report_to_notion(workspace_path: Path, **_kwargs: object) -> tuple[str, ...]:
+    def render_workspace_report_to_notion(
+        workspace_path: Path, **_kwargs: object
+    ) -> NotionRenderResult:
         published_for.append(workspace_path)
-        return ("Published report to Notion: https://notion.so/x",)
+        return NotionRenderResult(
+            artifact_path=workspace_path / "report.notion.json",
+            page_id="page-x",
+            url="https://notion.so/x",
+        )
 
     monkeypatch.setattr(
         generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
@@ -257,13 +284,113 @@ def test_generate_publishes_by_default_when_notion_configured(
         "build_generation_workflow",
         lambda: _FakeWorkflow(pipeline_messages=("generated",)),
     )
-    monkeypatch.setattr(generate_cmd, "publish_report_to_notion", publish_report_to_notion)
+    monkeypatch.setattr(
+        generate_cmd, "render_workspace_report_to_notion", render_workspace_report_to_notion
+    )
 
     result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12"])  # no --notion flag
 
     assert result.exit_code == 0
     assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
     assert published_for == [tmp_path]
+
+
+def test_generate_no_notion_skips_publish_even_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+
+    def workspace_for_generate_target(
+        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+    ) -> tuple[Path, tuple[str, ...]]:
+        del date, today, timezone_name
+        return tmp_path, ("prepared",)
+
+    def render_must_not_run(workspace_path: Path, **_kwargs: object) -> NotionRenderResult:
+        del workspace_path
+        raise AssertionError(NO_NOTION_RENDER_FAILED)
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(pipeline_messages=("generated",)),
+    )
+    monkeypatch.setattr(generate_cmd, "render_workspace_report_to_notion", render_must_not_run)
+
+    result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12", "--no-notion"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "prepared\ngenerated\n"
+
+
+def test_render_notion_publishes_existing_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    reports_root = tmp_path / ".reports"
+    target = resolve_report_target(
+        date="2026-05-12",
+        today=False,
+        timezone_name="UTC",
+    )
+    prepared = prepare_workspace(target, reports_root=reports_root, source_specs=())
+    rendered_for: list[Path] = []
+
+    def render_workspace_report_to_notion(
+        workspace_path: Path, **_kwargs: object
+    ) -> NotionRenderResult:
+        rendered_for.append(workspace_path)
+        return NotionRenderResult(
+            artifact_path=workspace_path / "report.notion.json",
+            page_id="page-1",
+            url="https://notion.so/page-x",
+        )
+
+    monkeypatch.setattr(
+        render_cmd, "render_workspace_report_to_notion", render_workspace_report_to_notion
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "render",
+            "notion",
+            "--date",
+            "2026-05-12",
+            "--timezone",
+            "UTC",
+            "--reports-root",
+            str(reports_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "Published report to Notion: https://notion.so/page-x\n"
+    assert rendered_for == [prepared.workspace_path]
+
+
+def test_render_notion_requires_existing_workspace(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "render",
+            "notion",
+            "--date",
+            "2026-05-12",
+            "--timezone",
+            "UTC",
+            "--reports-root",
+            str(tmp_path / ".reports"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "prepared workspace is missing" in result.stderr
 
 
 def test_generate_phase_error_exits_with_stderr(

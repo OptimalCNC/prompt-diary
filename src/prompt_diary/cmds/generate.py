@@ -27,8 +27,6 @@ from prompt_diary.config import (
 )
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
-from prompt_diary.generate.daily_synthesis.notion_client_adapter import build_notion_client
-from prompt_diary.generate.daily_synthesis.notion_publish import publish_workspace_report
 from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
@@ -44,14 +42,13 @@ from prompt_diary.prepare.workspace import (
     workspace_path_for_target,
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
+from prompt_diary.render.notion import NotionRenderResult, render_workspace_report_to_notion
 from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from datetime import datetime
 
     from prompt_diary.agent import AgentSessionFactory
-    from prompt_diary.generate.daily_synthesis.notion_publish import NotionClientProtocol
     from prompt_diary.generate.pipeline import PhaseRunner, TaskKind
     from prompt_diary.models import SourceSpec
     from prompt_diary.progress.reporter import ProgressReporter
@@ -158,7 +155,7 @@ def generate(
         # Publishing is an outward-facing step after a successful pipeline, so it runs outside the
         # reporter context, with the target frozen before the run.
         published = (
-            publish_report_to_notion(workspace_path, credentials=notion_target)
+            render_report_to_notion_messages(workspace_path, credentials=notion_target)
             if notion_target is not None
             else ()
         )
@@ -185,32 +182,14 @@ def resolve_notion_publish(*, notion: bool | None) -> tuple[str, str] | None:
     return resolve_notion_credentials()
 
 
-def publish_report_to_notion(
+def render_report_to_notion_messages(
     workspace_path: Path,
     *,
     credentials: tuple[str, str],
-    client_factory: Callable[..., NotionClientProtocol] = build_notion_client,
 ) -> tuple[str, ...]:
-    """Publish the workspace's rendered Notion payload using the given frozen credentials.
-
-    ``credentials`` is the ``(token, database_id)`` pair resolved once before the pipeline by
-    :func:`resolve_notion_publish`, so the publish target cannot drift if the stored config changes
-    mid-run and the token never passes through the command line. ``client_factory`` is injected in
-    tests; by default it builds the real SDK adapter. Any non-:class:`PromptDiaryError` failure (a
-    malformed artifact, client construction, an unforeseen SDK/HTTP error) becomes a structured,
-    token-free error so the publish path never crashes the CLI with a traceback.
-    """
-    token, database_id = credentials
-    try:
-        client = client_factory(token=token)
-        result = publish_workspace_report(
-            workspace_path=workspace_path, client=client, database_id=database_id
-        )
-    except PromptDiaryError:
-        raise
-    except Exception as exc:
-        raise PromptDiaryError(_notion_publish_failed_message(exc)) from exc
-    return (f"Published report to Notion: {result.url or result.page_id}",)
+    """Render and publish the workspace report to Notion using frozen credentials."""
+    result = render_workspace_report_to_notion(workspace_path, credentials=credentials)
+    return (_notion_render_message(result),)
 
 
 def generate_evidence(
@@ -380,8 +359,8 @@ def _missing_workspace_message(workspace_path: Path) -> str:
     return f"prepared workspace is missing: {workspace_path}; run prepare first"
 
 
-def _notion_publish_failed_message(cause: object) -> str:
-    return f"failed to publish the report to Notion: {cause}"
+def _notion_render_message(result: NotionRenderResult) -> str:
+    return f"Published report to Notion: {result.url or result.page_id}"
 
 
 def _notion_unconfigured_message() -> str:
