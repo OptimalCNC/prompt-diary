@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from prompt_diary.config import ReporterTarget
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.notion_publish import (
     publish_report,
@@ -137,35 +138,95 @@ def test_publish_maps_title_and_date_but_leaves_managed_and_text_columns() -> No
 def test_publish_writes_reporter_into_the_named_text_column() -> None:
     client = _FakeNotionClient(_schema())
 
-    publish_report(
-        client=client, database_id="db", payload=_payload([]), reporter=("Wei Hu", "Reporter")
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([]),
+        reporter=ReporterTarget(column="Reporter", name="Wei Hu"),
     )
 
     properties = next(call for call in client.calls if call[0] == "create")[2]
     assert properties["Reporter"] == {"rich_text": [_run("Wei Hu")]}
+    assert result.warnings == ()  # a clean write carries no warning
 
 
-def test_publish_skips_reporter_when_the_named_column_is_absent() -> None:
+def test_publish_warns_when_a_column_exists_but_no_reporter_name_is_configured() -> None:
+    # The common case the user hit: the database HAS the column, but no name is set, so it was left
+    # empty. That must be flagged, not silently skipped.
     client = _FakeNotionClient(_schema())
 
-    publish_report(
-        client=client, database_id="db", payload=_payload([]), reporter=("Wei Hu", "Nope")
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([]),
+        reporter=ReporterTarget(column="Reporter", name=None),
     )
 
     properties = next(call for call in client.calls if call[0] == "create")[2]
-    assert "Nope" not in properties  # a misnamed column never fails an otherwise-good publish
+    assert "Reporter" not in properties  # nothing written...
+    assert any("Reporter" in warning for warning in result.warnings)  # ...but the gap is reported
 
 
-def test_publish_skips_reporter_when_the_named_column_is_not_text() -> None:
+def test_publish_warns_when_the_named_column_is_absent() -> None:
     client = _FakeNotionClient(_schema())
 
-    publish_report(
-        client=client, database_id="db", payload=_payload([]), reporter=("Wei Hu", "Date")
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([]),
+        reporter=ReporterTarget(column="Nope", name="Wei Hu"),
+    )
+
+    properties = next(call for call in client.calls if call[0] == "create")[2]
+    assert "Nope" not in properties  # a misnamed column never fails an otherwise-good publish...
+    assert any("Nope" in warning for warning in result.warnings)  # ...but it is no longer silent
+
+
+def test_publish_warns_when_the_named_column_is_not_text() -> None:
+    client = _FakeNotionClient(_schema())
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([]),
+        reporter=ReporterTarget(column="Date", name="Wei Hu"),
     )
 
     properties = next(call for call in client.calls if call[0] == "create")[2]
     # Targeting a non-text column never clobbers it: Date keeps its report-date mapping.
     assert properties["Date"] == {"date": {"start": "2026-05-28"}}
+    assert any("Date" in warning for warning in result.warnings)
+
+
+def test_publish_warns_when_a_wrong_type_column_exists_and_no_name_is_configured() -> None:
+    # An existing reporter-named column of the wrong type, with no name, must still be flagged: it
+    # cannot be filled, so it is NOT the same as "this database has no reporter column at all".
+    client = _FakeNotionClient(_schema())
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([]),
+        reporter=ReporterTarget(column="Date", name=None),
+    )
+
+    properties = next(call for call in client.calls if call[0] == "create")[2]
+    assert properties["Date"] == {"date": {"start": "2026-05-28"}}  # the date mapping is untouched
+    assert any("Date" in warning for warning in result.warnings)  # the wrong-type column is flagged
+
+
+def test_publish_is_silent_when_there_is_no_reporter_column_and_no_name() -> None:
+    # A database that simply has no reporter column is never nagged about a missing reporter.
+    client = _FakeNotionClient(_schema())
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([]),
+        reporter=ReporterTarget(column="Nope", name=None),
+    )
+
+    assert result.warnings == ()
 
 
 def test_publish_creates_under_the_target_database() -> None:

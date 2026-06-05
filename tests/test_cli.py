@@ -210,6 +210,7 @@ def test_generate_notion_flag_appends_publish_message(
             artifact_path=workspace_path / "report.notion.json",
             page_id="page-x",
             url="https://notion.so/x",
+            warnings=("汇报人 was left empty",),
         )
 
     monkeypatch.setattr(
@@ -230,6 +231,8 @@ def test_generate_notion_flag_appends_publish_message(
     # The publish message is appended after the pipeline messages, and it published the workspace.
     assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
     assert published_for == [tmp_path]
+    # A non-fatal publish warning is surfaced on stderr, without disturbing the stdout messages.
+    assert "Warning: 汇报人 was left empty" in result.stderr
 
 
 def test_generate_notion_flag_fails_fast_when_env_missing(
@@ -349,6 +352,7 @@ def test_render_notion_publishes_existing_workspace(
             artifact_path=workspace_path / "report.notion.json",
             page_id="page-1",
             url="https://notion.so/page-x",
+            warnings=("汇报人 was left empty",),
         )
 
     monkeypatch.setattr(
@@ -372,6 +376,8 @@ def test_render_notion_publishes_existing_workspace(
     assert result.exit_code == 0
     assert result.stdout == "Published report to Notion: https://notion.so/page-x\n"
     assert rendered_for == [prepared.workspace_path]
+    # The publish warning is surfaced on stderr, separate from the stdout publish message.
+    assert "Warning: 汇报人 was left empty" in result.stderr
 
 
 def test_render_notion_requires_existing_workspace(tmp_path: Path) -> None:

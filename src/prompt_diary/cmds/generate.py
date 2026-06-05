@@ -190,6 +190,8 @@ def render_report_to_notion_messages(
 ) -> tuple[str, ...]:
     """Render and publish the workspace report to Notion using frozen credentials."""
     result = render_workspace_report_to_notion(workspace_path, credentials=credentials)
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}", err=True)
     return (_notion_render_message(result),)
 
 

@@ -42,6 +42,8 @@ def render_notion(
     except PromptDiaryError as exc:
         exit_with_error(exc)
     typer.echo(_notion_render_message(result))
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}", err=True)
 
 
 def _notion_render_message(result: NotionRenderResult) -> str:

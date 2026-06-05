@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import msgspec
@@ -174,18 +175,30 @@ def _notion_credentials() -> tuple[Secret | None, str | None]:
     return (Secret(raw_token) if raw_token else None), database_id
 
 
-def resolve_notion_reporter() -> tuple[str, str] | None:
-    """Return the reporter ``(name, column)`` to write, or ``None`` when no name is configured.
+@dataclass(frozen=True)
+class ReporterTarget:
+    """The reporter to write at publish time: the target column, and the configured name (or None).
+
+    The column is resolved unconditionally (defaulting to the 汇报人 column) so the publisher can
+    distinguish "the database has a reporter column but no name is configured" (worth a warning)
+    from "this database has no reporter column at all" (nothing to do, stay silent).
+    """
+
+    column: str
+    name: str | None
+
+
+def resolve_notion_reporter() -> ReporterTarget:
+    """Resolve the reporter column and the optional name to write into it, from the stored config.
 
     The reporter is a free-form display name (like ``git config user.name``), not a credential, so
-    it is read only from the stored config (no environment layer). The target column defaults to
-    :data:`_DEFAULT_REPORTER_PROPERTY` unless ``notion_reporter_property`` is set.
+    it is read only from the stored config (no environment layer). The column defaults to
+    :data:`_DEFAULT_REPORTER_PROPERTY` unless ``notion_reporter_property`` is set; ``name`` is
+    ``None`` when unset, which the publisher surfaces as a warning rather than silently skipping.
     """
     config = load_config()
-    name = config.notion_reporter
-    if not name:
-        return None
-    return name, config.notion_reporter_property or _DEFAULT_REPORTER_PROPERTY
+    column = config.notion_reporter_property or _DEFAULT_REPORTER_PROPERTY
+    return ReporterTarget(column=column, name=config.notion_reporter or None)
 
 
 def _corrupt_config_message(path: Path) -> str:

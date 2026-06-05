@@ -458,8 +458,11 @@ after a successful pipeline when Notion publishing is active (`--notion`, or def
 publishing without `--no-notion`). Property mapping is schema-driven: the database's single
 title-typed property gets the page title, every date-typed property gets the report date, the
 configured reporter name (from `config init` — the `汇报人` column by default, retargetable via
-`notion_reporter_property`) is written into that one text property when it exists, and all other
-types are left untouched. A creation timestamp should use Notion's native **Created time** property
+`notion_reporter_property`) is written into that one text property when it exists. Whenever the
+reporter cannot be written — the column is missing, is present but not a text property, or no name is
+configured — the publish still succeeds but prints a `Warning:` to stderr rather than silently
+leaving the column empty (a database with no reporter column at all is not flagged). All other
+property types are left untouched. A creation timestamp should use Notion's native **Created time** property
 type (with *Include time* enabled), which Notion auto-fills with the upload instant; because the
 publisher writes only `date`-typed columns, it never overwrites a `created_time` column. Metadata the
 database has no column for (status, window, overall confidence) is surfaced in a status-colored

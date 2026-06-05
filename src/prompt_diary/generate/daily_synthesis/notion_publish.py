@@ -16,7 +16,9 @@ names:
 - the single ``title``-typed property (whatever it is named) gets the page title;
 - every ``date``-typed property gets the report date;
 - the configured reporter name is written into one named ``rich_text`` column (the 汇报人 column),
-  when a reporter is set and that column exists and is a text property;
+  when a reporter is set and that column exists and is a text property; a mismatch (the column
+  exists but no name is configured, or a name is configured with no such text column) is reported
+  as a ``warning`` rather than silently producing an empty column;
 - other property types — including Notion-managed ``created_time`` / ``last_edited_time`` (the
   recommended type for a creation timestamp, which Notion auto-fills with time) — are left alone.
 
@@ -44,6 +46,8 @@ from prompt_diary.generate.daily_synthesis.render_notion import NotionPagePayloa
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from prompt_diary.config import ReporterTarget
 
 __all__ = [
     "NotionClientProtocol",
@@ -83,10 +87,15 @@ class NotionClientProtocol(Protocol):
 
 @dataclass(frozen=True)
 class PublishResult:
-    """The outcome of publishing one report: the created page's id and URL."""
+    """The outcome of publishing one report: the created page's id and URL, and any warnings.
+
+    ``warnings`` are non-fatal notes the caller should surface (e.g. the reporter column could not
+    be filled); they never block a publish that otherwise succeeded.
+    """
 
     page_id: str
     url: str
+    warnings: tuple[str, ...] = ()
 
 
 def publish_workspace_report(
@@ -94,7 +103,7 @@ def publish_workspace_report(
     workspace_path: Path,
     client: NotionClientProtocol,
     database_id: str,
-    reporter: tuple[str, str] | None = None,
+    reporter: ReporterTarget | None = None,
 ) -> PublishResult:
     """Load a workspace's ``report.notion.json`` and publish it as a new row in ``database_id``."""
     path = workspace_path / _REPORT_NOTION_NAME
@@ -111,12 +120,13 @@ def publish_report(
     client: NotionClientProtocol,
     database_id: str,
     payload: NotionPagePayload,
-    reporter: tuple[str, str] | None = None,
+    reporter: ReporterTarget | None = None,
 ) -> PublishResult:
     """Create a new database row for ``payload`` and append its body block tree.
 
-    ``reporter`` is an optional ``(name, column)`` pair: the free-form reporter name and the
-    ``rich_text`` column to write it into (the 汇报人 column).
+    ``reporter`` is the resolved reporter target (a column plus an optional name). When it cannot be
+    written cleanly (the column is missing/mistyped, or no name is configured) the publish still
+    succeeds and the reason is returned in :attr:`PublishResult.warnings`.
     """
     # Refuse to publish an undated row before any network call: report_date is the row's only
     # reliable sort/filter key (the banner omits it).
@@ -126,7 +136,8 @@ def publish_report(
     # an uncaught traceback. Our own structured errors (e.g. no title property) pass through as-is.
     try:
         schema = _database_properties(client, database_id)
-        properties = _page_properties(schema, payload.title, report_date, reporter)
+        properties = _page_properties(schema, payload.title, report_date)
+        reporter_warning = _apply_reporter(properties, schema, reporter)
         page = client.create_page(parent={"database_id": database_id}, properties=properties)
     except PromptDiaryError:
         raise
@@ -150,7 +161,8 @@ def publish_report(
         _append_tree(client, page_id, body)
     except Exception as exc:
         raise PromptDiaryError(_partial_page_message(page_id, url, exc)) from exc
-    return PublishResult(page_id=page_id, url=url)
+    warnings = (reporter_warning,) if reporter_warning else ()
+    return PublishResult(page_id=page_id, url=url, warnings=warnings)
 
 
 def _database_properties(client: NotionClientProtocol, database_id: str) -> dict[str, Any]:
@@ -165,27 +177,41 @@ def _required_report_date(payload: NotionPagePayload) -> str:
     return report_date
 
 
-def _page_properties(
-    schema: dict[str, Any], title: str, report_date: str, reporter: tuple[str, str] | None
-) -> dict[str, Any]:
+def _page_properties(schema: dict[str, Any], title: str, report_date: str) -> dict[str, Any]:
     properties: dict[str, Any] = {_title_property_name(schema): {"title": [_text_run(title)]}}
     for name, spec in schema.items():
         if _mapping(spec).get("type") == "date":
             properties[name] = {"date": {"start": report_date}}
-    if reporter is not None:
-        _set_reporter(properties, schema, reporter)
     return properties
 
 
-def _set_reporter(
-    properties: dict[str, Any], schema: dict[str, Any], reporter: tuple[str, str]
-) -> None:
-    # Write the reporter name into its configured column, but only if that column exists and is a
-    # text property: a missing or mistyped column must never fail (or clobber) an otherwise-good
-    # publish, so a misconfiguration is silently skipped rather than raised.
-    name, column = reporter
-    if _mapping(schema.get(column)).get("type") == "rich_text":
-        properties[column] = {"rich_text": [_text_run(name)]}
+def _apply_reporter(
+    properties: dict[str, Any], schema: dict[str, Any], reporter: ReporterTarget | None
+) -> str | None:
+    # Write the reporter name into its column when it can be done cleanly; otherwise RETURN a
+    # warning (never raise — a reporter mismatch must not fail an otherwise-good publish, but it
+    # also must not silently produce an empty column). Column *existence* and *writability* are
+    # distinct, so an existing-but-mistyped column is flagged even with no name configured:
+    #   • name + text column        → write it, no warning;
+    #   • text column, no name       → warn (left empty — the common "forgot to set my name" case);
+    #   • column exists, not text    → warn (wrong type, can't hold the reporter — name or not);
+    #   • no such column, name set   → warn (the name has nowhere to go);
+    #   • no such column, no name    → silent (this database simply has no reporter column).
+    if reporter is None:
+        return None
+    column = reporter.column
+    column_exists = column in schema
+    is_text_column = _mapping(schema.get(column)).get("type") == "rich_text"
+    if is_text_column and reporter.name:
+        properties[column] = {"rich_text": [_text_run(reporter.name)]}
+        return None
+    if is_text_column:
+        return _reporter_unset_message(column)
+    if column_exists:
+        return _reporter_wrong_type_message(column)
+    if reporter.name:
+        return _reporter_uncolumned_message(column)
+    return None
 
 
 def _title_property_name(schema: dict[str, Any]) -> str:
@@ -306,6 +332,27 @@ def _missing_artifact_message(path: Path) -> str:
 
 def _no_title_property_message() -> str:
     return "target Notion database has no title property; cannot create a report row"
+
+
+def _reporter_unset_message(column: str) -> str:
+    return (
+        f"no reporter name is configured, so the '{column}' column was left empty; "
+        "set one with `prompt-diary config init`."
+    )
+
+
+def _reporter_wrong_type_message(column: str) -> str:
+    return (
+        f"the '{column}' column is not a text property, so the reporter could not be written; "
+        "make it a text column to record the reporter."
+    )
+
+
+def _reporter_uncolumned_message(column: str) -> str:
+    return (
+        f"a reporter name is configured but the target database has no '{column}' column, "
+        "so it was not written."
+    )
 
 
 def _missing_report_date_message() -> str:

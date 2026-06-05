@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 import prompt_diary.render.notion as render_api
-from prompt_diary.config import StoredConfig, save_config
+from prompt_diary.config import ReporterTarget, StoredConfig, save_config
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.notion_publish import PublishResult
 from tests.support.daily_synthesis import (
@@ -290,7 +290,34 @@ def test_render_workspace_report_to_notion_passes_the_configured_reporter(
     render_api.render_workspace_report_to_notion(workspace, client_factory=factory)
 
     # The reporter resolves from config (name + default column) and is handed to the publisher.
-    assert captured["reporter"] == ("Wei Hu", "汇报人")
+    assert captured["reporter"] == ReporterTarget(column="汇报人", name="Wei Hu")
+
+
+def test_render_workspace_report_to_notion_surfaces_publish_warnings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _complete_daily_workspace(tmp_path)
+    _configure_notion(monkeypatch, tmp_path)
+
+    def warn(
+        *, workspace_path: Path, client: object, database_id: str, reporter: object
+    ) -> PublishResult:
+        del workspace_path, client, database_id, reporter
+        return PublishResult(
+            page_id="page-1", url="https://notion.so/x", warnings=("汇报人 was left empty",)
+        )
+
+    monkeypatch.setattr(render_api, "publish_workspace_report", warn)
+
+    def factory(*, token: str) -> _FakeNotionClient:
+        del token
+        return _FakeNotionClient()
+
+    result = render_api.render_workspace_report_to_notion(workspace, client_factory=factory)
+
+    # A publish warning (e.g. the reporter column could not be filled) reaches the caller to echo.
+    assert result.warnings == ("汇报人 was left empty",)
 
 
 def test_render_workspace_report_to_notion_redacts_the_token_from_publish_errors(

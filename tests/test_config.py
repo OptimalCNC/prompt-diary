@@ -13,6 +13,7 @@ from prompt_diary.config import (
     CONFIG_PATH_ENV,
     NOTION_DATABASE_ENV,
     NOTION_TOKEN_ENV,
+    ReporterTarget,
     StoredConfig,
     config_path,
     load_config,
@@ -371,20 +372,21 @@ def test_notion_is_configured_false_when_database_missing(
 def test_resolve_notion_reporter_defaults_column_to_huibaoren() -> None:
     # A name alone resolves against the default 汇报人 column (what the wizard sets up).
     save_config(StoredConfig(notion_reporter="Wei Hu"))
-    assert resolve_notion_reporter() == ("Wei Hu", "汇报人")
+    assert resolve_notion_reporter() == ReporterTarget(column="汇报人", name="Wei Hu")
 
 
 def test_resolve_notion_reporter_uses_configured_column() -> None:
     # A power user can retarget the column (e.g. an English database) by hand.
     save_config(StoredConfig(notion_reporter="Wei Hu", notion_reporter_property="Reporter"))
-    assert resolve_notion_reporter() == ("Wei Hu", "Reporter")
+    assert resolve_notion_reporter() == ReporterTarget(column="Reporter", name="Wei Hu")
 
 
-def test_resolve_notion_reporter_none_without_a_name() -> None:
-    # A column with no name is not a reporter: there is nothing to write.
+def test_resolve_notion_reporter_keeps_the_column_when_no_name_is_set() -> None:
+    # The column resolves even without a name, so the publisher can warn it was left empty.
     save_config(StoredConfig(notion_reporter_property="Reporter"))
-    assert resolve_notion_reporter() is None
+    assert resolve_notion_reporter() == ReporterTarget(column="Reporter", name=None)
 
 
-def test_resolve_notion_reporter_none_when_unset() -> None:
-    assert resolve_notion_reporter() is None
+def test_resolve_notion_reporter_defaults_to_the_huibaoren_column_when_unset() -> None:
+    # Nothing configured: the default column with no name (the publisher decides whether to warn).
+    assert resolve_notion_reporter() == ReporterTarget(column="汇报人", name=None)

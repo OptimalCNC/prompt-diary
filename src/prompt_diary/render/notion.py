@@ -27,11 +27,12 @@ _NOTION_REPORT_NAME = "report.notion.json"
 
 @dataclass(frozen=True)
 class NotionRenderResult:
-    """Rendered Notion artifact and the newly-created Notion page location."""
+    """Rendered Notion artifact and the newly-created Notion page location, plus any warnings."""
 
     artifact_path: Path
     page_id: str
     url: str
+    warnings: tuple[str, ...] = ()
 
 
 def render_workspace_report_to_notion(
@@ -85,6 +86,7 @@ def render_workspace_report_to_notion(
             artifact_path=output_path,
             page_id=publish_result.page_id,
             url=publish_result.url,
+            warnings=publish_result.warnings,
         )
     raise PromptDiaryError(redacted)
 
