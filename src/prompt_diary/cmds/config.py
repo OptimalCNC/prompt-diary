@@ -21,6 +21,7 @@ from prompt_diary.config import (
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.notion_client_adapter import build_notion_validator
 from prompt_diary.paths import REPORTS_HOME_ENV, platform_data_dir
+from prompt_diary.secret import Secret
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,21 +53,15 @@ def config_init() -> None:
     try:
         config = load_config()
 
-        def _verify_token(token: str) -> NotionIdentity:
-            return build_notion_validator(token=token).verify_token()
-
-        token, identity = _prompt_until_valid(
-            "Notion integration token (NOTION_API_KEY)",
-            hide_input=True,
-            current=config.notion_api_key,
-            validate=_verify_token,
-        )
+        token, identity = _prompt_token(config.notion_api_key)
         typer.echo(_describe_identity(identity))
         # A changed token invalidates any database id verified against the previous token: drop it
         # so an interrupted wizard cannot leave the new token paired with a stale, un-re-verified
         # (possibly unintended) database. It is restored only after verify_database passes below.
-        carried_page_id = config.notion_page_id if token == config.notion_api_key else None
-        config = structs.replace(config, notion_api_key=token, notion_page_id=carried_page_id)
+        carried_page_id = config.notion_page_id if token.reveal() == config.notion_api_key else None
+        config = structs.replace(
+            config, notion_api_key=token.reveal(), notion_page_id=carried_page_id
+        )
         save_config(config)
 
         reports_root = _prompt_reports_root(config)
@@ -74,7 +69,7 @@ def config_init() -> None:
         save_config(config)
 
         # Rebuild the validator with the accepted token so the database check authenticates with it.
-        validator = build_notion_validator(token=token)
+        validator = build_notion_validator(token=token.reveal())
         page_id, database = _prompt_until_valid(
             "Notion database id (NOTION_PAGE_ID)",
             hide_input=False,
@@ -83,6 +78,9 @@ def config_init() -> None:
         )
         typer.echo(_describe_database(database))
         config = structs.replace(config, notion_page_id=page_id)
+        save_config(config)
+
+        config = structs.replace(config, notion_reporter=_prompt_reporter(config))
         path = save_config(config)
     except PromptDiaryError as exc:
         exit_with_error(exc)
@@ -100,6 +98,7 @@ def config_show() -> None:
     typer.echo(f"Config file: {config_path()}")
     typer.echo(f"Notion integration token (NOTION_API_KEY): {_mask(config.notion_api_key)}")
     typer.echo(f"Notion database id (NOTION_PAGE_ID): {config.notion_page_id or '(unset)'}")
+    typer.echo(f"Reporter name (汇报人 column): {config.notion_reporter or '(unset)'}")
     typer.echo(f"Data folder: {data_folder}")
     overrides = [
         env
@@ -115,6 +114,27 @@ def config_show() -> None:
 def config_path_command() -> None:
     """Print the config file path."""
     typer.echo(str(config_path()))
+
+
+def _prompt_token(current: str | None) -> tuple[Secret, NotionIdentity]:
+    """Prompt for and verify the Notion token, returning it wrapped so no bare token outlives this.
+
+    The raw string is bound only inside this helper and ``_prompt_until_valid`` (where it is typed
+    and verified); wrapping it before returning keeps ``config_init`` — whose frame lives across the
+    later, fallible database and reporter prompts — free of a bare-token local that a
+    locals-capturing traceback could surface. Reveal it only at the transient points of use there.
+    """
+
+    def _verify(token: str) -> NotionIdentity:
+        return build_notion_validator(token=token).verify_token()
+
+    raw, identity = _prompt_until_valid(
+        "Notion integration token (NOTION_API_KEY)",
+        hide_input=True,
+        current=current,
+        validate=_verify,
+    )
+    return Secret(raw), identity
 
 
 def _prompt_until_valid(
@@ -147,6 +167,22 @@ def _prompt_reports_root(current: StoredConfig) -> str | None:
     if Path(entered).expanduser() == default_dir:
         return None
     return entered
+
+
+def _prompt_reporter(current: StoredConfig) -> str | None:
+    """Prompt for the free-form reporter name written into the 汇报人 column; optional.
+
+    The name is a personal label (like ``git config user.name``), not a credential, so it is not
+    validated and not hidden. It is written into the 汇报人 text column at publish time. Pressing
+    enter keeps the current value, or skips when none is stored.
+    """
+    hint = f" [keep {current.notion_reporter}]" if current.notion_reporter else " (enter to skip)"
+    entered = typer.prompt(
+        f"Reporter name for the 汇报人 column{hint}",
+        default=current.notion_reporter or "",
+        show_default=False,
+    ).strip()
+    return entered or None
 
 
 def _describe_identity(identity: NotionIdentity) -> str:

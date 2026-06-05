@@ -15,11 +15,15 @@ names:
 
 - the single ``title``-typed property (whatever it is named) gets the page title;
 - every ``date``-typed property gets the report date;
-- other property types (people, etc.) are left for the user to fill.
+- the configured reporter name is written into one named ``rich_text`` column (the 汇报人 column),
+  when a reporter is set and that column exists and is a text property;
+- other property types — including Notion-managed ``created_time`` / ``last_edited_time`` (the
+  recommended type for a creation timestamp, which Notion auto-fills with time) — are left alone.
 
 Report metadata that has no column — status, window, overall confidence — would otherwise be lost,
-so it is rendered into a **banner callout prepended to the page body**. (The report date is already
-in the title and a date column, so it is not repeated in the banner.)
+so it is rendered into a **status-colored banner callout prepended to the page body** (final green,
+partial yellow), immediately followed by a **table of contents** for navigation. (The report date is
+already in the title and a date column, so it is not repeated in the banner.)
 
 Request shaping honors Notion's limits without the caller thinking about them: the page is created
 empty (properties only), then its block tree is appended level by level — each request carries ≤100
@@ -57,6 +61,9 @@ _MAX_CHILDREN_PER_REQUEST = 100
 # emoji (U+1F4CB clipboard).
 _BANNER_ICON = "\U0001f4cb"
 
+# Banner background color by report status (Notion callout colors); the fallback is neutral gray.
+_STATUS_COLORS = {"final": "green_background", "partial": "yellow_background"}
+
 
 class NotionClientProtocol(Protocol):
     """The minimal Notion client surface the publisher needs (a seam over the SDK)."""
@@ -83,20 +90,34 @@ class PublishResult:
 
 
 def publish_workspace_report(
-    *, workspace_path: Path, client: NotionClientProtocol, database_id: str
+    *,
+    workspace_path: Path,
+    client: NotionClientProtocol,
+    database_id: str,
+    reporter: tuple[str, str] | None = None,
 ) -> PublishResult:
     """Load a workspace's ``report.notion.json`` and publish it as a new row in ``database_id``."""
     path = workspace_path / _REPORT_NOTION_NAME
     if not path.exists():
         raise PromptDiaryError(_missing_artifact_message(path))
     payload = _payload_from_json(path)
-    return publish_report(client=client, database_id=database_id, payload=payload)
+    return publish_report(
+        client=client, database_id=database_id, payload=payload, reporter=reporter
+    )
 
 
 def publish_report(
-    *, client: NotionClientProtocol, database_id: str, payload: NotionPagePayload
+    *,
+    client: NotionClientProtocol,
+    database_id: str,
+    payload: NotionPagePayload,
+    reporter: tuple[str, str] | None = None,
 ) -> PublishResult:
-    """Create a new database row for ``payload`` and append its body block tree."""
+    """Create a new database row for ``payload`` and append its body block tree.
+
+    ``reporter`` is an optional ``(name, column)`` pair: the free-form reporter name and the
+    ``rich_text`` column to write it into (the 汇报人 column).
+    """
     # Refuse to publish an undated row before any network call: report_date is the row's only
     # reliable sort/filter key (the banner omits it).
     report_date = _required_report_date(payload)
@@ -105,7 +126,7 @@ def publish_report(
     # an uncaught traceback. Our own structured errors (e.g. no title property) pass through as-is.
     try:
         schema = _database_properties(client, database_id)
-        properties = _page_properties(schema, payload.title, report_date)
+        properties = _page_properties(schema, payload.title, report_date, reporter)
         page = client.create_page(parent={"database_id": database_id}, properties=properties)
     except PromptDiaryError:
         raise
@@ -117,7 +138,11 @@ def publish_report(
     url = _str(page.get("url"))
     if not page_id:
         raise PromptDiaryError(_create_missing_id_message())
-    body: list[dict[str, Any]] = [_banner_block(payload.properties), *payload.children]
+    body: list[dict[str, Any]] = [
+        _banner_block(payload.properties),
+        _table_of_contents_block(),
+        *payload.children,
+    ]
     # The row is created before its body is appended, so an append failure leaves a partial row.
     # Surface the created page's id/url in the error so it can be found and deleted (re-publishing
     # always makes a fresh row), instead of letting a raw SDK error hide which page was left behind.
@@ -140,12 +165,27 @@ def _required_report_date(payload: NotionPagePayload) -> str:
     return report_date
 
 
-def _page_properties(schema: dict[str, Any], title: str, report_date: str) -> dict[str, Any]:
+def _page_properties(
+    schema: dict[str, Any], title: str, report_date: str, reporter: tuple[str, str] | None
+) -> dict[str, Any]:
     properties: dict[str, Any] = {_title_property_name(schema): {"title": [_text_run(title)]}}
     for name, spec in schema.items():
         if _mapping(spec).get("type") == "date":
             properties[name] = {"date": {"start": report_date}}
+    if reporter is not None:
+        _set_reporter(properties, schema, reporter)
     return properties
+
+
+def _set_reporter(
+    properties: dict[str, Any], schema: dict[str, Any], reporter: tuple[str, str]
+) -> None:
+    # Write the reporter name into its configured column, but only if that column exists and is a
+    # text property: a missing or mistyped column must never fail (or clobber) an otherwise-good
+    # publish, so a misconfiguration is silently skipped rather than raised.
+    name, column = reporter
+    if _mapping(schema.get(column)).get("type") == "rich_text":
+        properties[column] = {"rich_text": [_text_run(name)]}
 
 
 def _title_property_name(schema: dict[str, Any]) -> str:
@@ -158,6 +198,7 @@ def _title_property_name(schema: dict[str, Any]) -> str:
 def _banner_block(properties: dict[str, str]) -> dict[str, Any]:
     # Surface the metadata that has no database column (status / window / overall confidence) in a
     # banner at the top of the page body, so the report stays self-describing against any schema.
+    # The callout is colored by status so an incomplete (partial) report stands out at a glance.
     text = (
         f"Status: {properties.get('status', '')} · "
         f"Window: {properties.get('window', '')} · "
@@ -166,7 +207,25 @@ def _banner_block(properties: dict[str, str]) -> dict[str, Any]:
     return {
         "object": "block",
         "type": "callout",
-        "callout": {"rich_text": [_text_run(text)], "icon": {"emoji": _BANNER_ICON}},
+        "callout": {
+            "rich_text": [_text_run(text)],
+            "icon": {"emoji": _BANNER_ICON},
+            "color": _status_color(properties.get("status", "")),
+        },
+    }
+
+
+def _status_color(status: str) -> str:
+    # final → green, partial → yellow (caution), anything else → neutral gray.
+    return _STATUS_COLORS.get(status, "gray_background")
+
+
+def _table_of_contents_block() -> dict[str, Any]:
+    # A native Notion ToC auto-links the report's headings for quick navigation at the top.
+    return {
+        "object": "block",
+        "type": "table_of_contents",
+        "table_of_contents": {"color": "default"},
     }
 
 

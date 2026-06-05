@@ -1,9 +1,10 @@
 """Tests for the Notion publisher logic against a fake client.
 
 The publisher pushes a rendered ``report.notion.json`` payload into a Notion database as a new row.
-These tests pin the schema-driven property mapping (title by type, date columns ← report date, other
-types left alone), the metadata banner prepended to the body, the always-create-new behaviour (one
-create, never an edit/delete), and the request shaping that keeps every append within Notion's
+These tests pin the schema-driven property mapping (title by type, date column ← report date, a
+reporter into its text column, others left alone), the status-colored banner and table of contents
+prepended to the body, the always-create-new behaviour (one create, never an
+edit/delete), and the request shaping that keeps every append within Notion's
 ≤100-children / single-nesting-level limits while still uploading an arbitrarily deep tree. The real
 SDK is exercised only behind the thin adapter; here a fake client records calls and returns ids.
 """
@@ -62,13 +63,14 @@ class _FakeNotionClient:
 
 
 def _schema() -> dict[str, Any]:
-    # Mirrors the live "daily report" database shape (a title, two date columns, a people column),
-    # but with ASCII names — the mapping is driven by property *type*, not name.
+    # Mirrors the live "daily report" database shape after the user's schema change: a title, a date
+    # column (日期), a Notion-managed created-time column (创建时间), and a text column for the
+    # reporter (汇报人). ASCII names — the mapping is driven by property *type*, not name.
     return {
         "Name": {"type": "title"},
         "Date": {"type": "date"},
-        "Created": {"type": "date"},
-        "Reporter": {"type": "people"},
+        "Created": {"type": "created_time"},
+        "Reporter": {"type": "rich_text"},
     }
 
 
@@ -117,7 +119,7 @@ def _appended_text(client: _FakeNotionClient) -> str:
 # --- property mapping --------------------------------------------------------------------------
 
 
-def test_publish_maps_title_by_type_and_date_columns_to_report_date() -> None:
+def test_publish_maps_title_and_date_but_leaves_managed_and_text_columns() -> None:
     client = _FakeNotionClient(_schema())
 
     publish_report(client=client, database_id="db", payload=_payload([]))
@@ -125,10 +127,45 @@ def test_publish_maps_title_by_type_and_date_columns_to_report_date() -> None:
     create = next(call for call in client.calls if call[0] == "create")
     properties = create[2]
     assert properties["Name"] == {"title": [_run("Prompt Diary Report — 2026-05-28")]}
-    # Both date-typed columns receive the report date; the people column is left for the user.
+    # The date column gets the report date. The Notion-managed created_time column is left alone
+    # (Notion auto-fills it, with time). The text column stays empty without a reporter.
     assert properties["Date"] == {"date": {"start": "2026-05-28"}}
-    assert properties["Created"] == {"date": {"start": "2026-05-28"}}
+    assert "Created" not in properties
     assert "Reporter" not in properties
+
+
+def test_publish_writes_reporter_into_the_named_text_column() -> None:
+    client = _FakeNotionClient(_schema())
+
+    publish_report(
+        client=client, database_id="db", payload=_payload([]), reporter=("Wei Hu", "Reporter")
+    )
+
+    properties = next(call for call in client.calls if call[0] == "create")[2]
+    assert properties["Reporter"] == {"rich_text": [_run("Wei Hu")]}
+
+
+def test_publish_skips_reporter_when_the_named_column_is_absent() -> None:
+    client = _FakeNotionClient(_schema())
+
+    publish_report(
+        client=client, database_id="db", payload=_payload([]), reporter=("Wei Hu", "Nope")
+    )
+
+    properties = next(call for call in client.calls if call[0] == "create")[2]
+    assert "Nope" not in properties  # a misnamed column never fails an otherwise-good publish
+
+
+def test_publish_skips_reporter_when_the_named_column_is_not_text() -> None:
+    client = _FakeNotionClient(_schema())
+
+    publish_report(
+        client=client, database_id="db", payload=_payload([]), reporter=("Wei Hu", "Date")
+    )
+
+    properties = next(call for call in client.calls if call[0] == "create")[2]
+    # Targeting a non-text column never clobbers it: Date keeps its report-date mapping.
+    assert properties["Date"] == {"date": {"start": "2026-05-28"}}
 
 
 def test_publish_creates_under_the_target_database() -> None:
@@ -162,6 +199,39 @@ def test_publish_prepends_a_metadata_banner_callout() -> None:
     assert "Status: final" in text
     assert "Window: 2026-05-28, Asia/Shanghai" in text
     assert "Overall confidence: medium" in text
+
+
+def test_publish_colors_the_banner_by_status() -> None:
+    final_client = _FakeNotionClient(_schema())
+    publish_report(client=final_client, database_id="db", payload=_payload([]))
+    final_banner = _appends(final_client)[0][1][0]
+    assert final_banner["callout"]["color"] == "green_background"
+
+    partial_client = _FakeNotionClient(_schema())
+    partial = NotionPagePayload(
+        title="t", properties={"report_date": "2026-05-28", "status": "partial"}, children=[]
+    )
+    publish_report(client=partial_client, database_id="db", payload=partial)
+    partial_banner = _appends(partial_client)[0][1][0]
+    assert partial_banner["callout"]["color"] == "yellow_background"
+
+    other_client = _FakeNotionClient(_schema())
+    other = NotionPagePayload(
+        title="t", properties={"report_date": "2026-05-28", "status": "draft"}, children=[]
+    )
+    publish_report(client=other_client, database_id="db", payload=other)
+    other_banner = _appends(other_client)[0][1][0]
+    assert other_banner["callout"]["color"] == "gray_background"  # neutral fallback
+
+
+def test_publish_inserts_a_table_of_contents_after_the_banner() -> None:
+    client = _FakeNotionClient(_schema())
+
+    publish_report(client=client, database_id="db", payload=_payload([_para("body")]))
+
+    body = _appends(client)[0][1]
+    assert body[0]["type"] == "callout"  # banner first
+    assert body[1]["type"] == "table_of_contents"  # then a navigable table of contents
 
 
 # --- always create new, never edit -------------------------------------------------------------
@@ -215,10 +285,10 @@ def test_publish_batches_more_than_100_top_level_blocks() -> None:
 
     publish_report(client=client, database_id="db", payload=_payload(many))
 
-    # The page body is banner + 150 paragraphs = 151 blocks, appended to the page in ≤100 batches.
+    # The page body is banner + ToC + 150 paragraphs = 152 blocks, appended in ≤100 batches.
     page_appends = [children for block_id, children in _appends(client) if block_id == "page-1"]
     sizes = [len(children) for children in page_appends]
-    expected_total = 151
+    expected_total = 152
     assert max(sizes) <= 100
     assert sum(sizes) == expected_total
 

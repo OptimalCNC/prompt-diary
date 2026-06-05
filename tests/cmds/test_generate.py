@@ -10,6 +10,7 @@ from prompt_diary.cmds.generate import (
 )
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
+from prompt_diary.secret import Secret
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +56,8 @@ def test_resolve_notion_publish_default_follows_configuration(
     assert resolve_notion_publish(notion=None) is None  # unset + unconfigured -> skip
     monkeypatch.setenv("NOTION_API_KEY", "tok")
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
-    assert resolve_notion_publish(notion=None) == ("tok", "db")  # unset + configured -> publish
+    # unset + configured -> publish (the token is wrapped in a redacting Secret)
+    assert resolve_notion_publish(notion=None) == (Secret("tok"), "db")
 
 
 def test_resolve_notion_publish_explicit_notion_requires_configuration(
@@ -63,7 +65,7 @@ def test_resolve_notion_publish_explicit_notion_requires_configuration(
 ) -> None:
     monkeypatch.setenv("NOTION_API_KEY", "tok")
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
-    assert resolve_notion_publish(notion=True) == ("tok", "db")  # configured -> publish
+    assert resolve_notion_publish(notion=True) == (Secret("tok"), "db")  # configured -> publish
     monkeypatch.delenv("NOTION_API_KEY", raising=False)
     monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
     with pytest.raises(PromptDiaryError, match="config init"):

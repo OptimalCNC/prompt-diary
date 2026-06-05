@@ -456,16 +456,23 @@ line) and creates a **new row** per report — re-publishing never edits or dele
 so the user prunes stale rows by hand. `report generate` delegates to this same render-owned path
 after a successful pipeline when Notion publishing is active (`--notion`, or default configured
 publishing without `--no-notion`). Property mapping is schema-driven: the database's single
-title-typed property gets the page title, every date-typed property gets the report date, and other
-types are left for the user. Metadata the database has no column for (status, window, overall
-confidence) is surfaced in a banner callout at the top of the page body, so the report is
-self-describing against any schema. The page is created empty and its block tree appended one nesting
-level at a time, keeping each request within Notion's per-request and create-nesting limits.
+title-typed property gets the page title, every date-typed property gets the report date, the
+configured reporter name (from `config init` — the `汇报人` column by default, retargetable via
+`notion_reporter_property`) is written into that one text property when it exists, and all other
+types are left untouched. A creation timestamp should use Notion's native **Created time** property
+type (with *Include time* enabled), which Notion auto-fills with the upload instant; because the
+publisher writes only `date`-typed columns, it never overwrites a `created_time` column. Metadata the
+database has no column for (status, window, overall confidence) is surfaced in a status-colored
+banner callout at the top of the page body (final → green, partial → yellow), followed by a table of
+contents, so the report is self-describing and navigable against any schema. The page is created
+empty and its block tree appended one nesting level at a time, keeping each request within Notion's
+per-request and create-nesting limits.
 
 The previously open questions are resolved: citations render as inline code (no link); a run always
-appends a new page (never in place); and `partial` versus `final` `status` shows in the metadata
-banner (and in the `status` column if the database has one). Deferred: setting `汇报人`-style people
-columns, find-or-create of the target database, and database-schema introspection beyond
+appends a new page (never in place); `partial` versus `final` `status` shows in the color-coded
+metadata banner (and in the `status` column if the database has one); and the `汇报人` reporter is a
+configured free-form name (like `git config user.name`, not a Notion user) written into a text
+column. Deferred: find-or-create of the target database, and database-schema introspection beyond
 property-type matching.
 
 ## AI Synthesis Workflow

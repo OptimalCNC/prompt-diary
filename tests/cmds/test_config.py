@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
@@ -75,7 +76,9 @@ def test_config_init_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
     custom = str(tmp_path / "myreports")
 
-    result = CliRunner().invoke(app, ["config", "init"], input=f"good-token\n{custom}\ngood-db\n")
+    result = CliRunner().invoke(
+        app, ["config", "init"], input=f"good-token\n{custom}\ngood-db\nWei Hu\n"
+    )
 
     assert result.exit_code == 0, result.output
     assert "Saved configuration to" in result.stdout
@@ -87,6 +90,7 @@ def test_config_init_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert stored.notion_api_key == "good-token"
     assert stored.notion_page_id == "good-db"
     assert stored.reports_root == custom
+    assert stored.notion_reporter == "Wei Hu"  # the free-form reporter name was captured
 
 
 def test_config_init_persists_verified_token_before_database_step(
@@ -130,9 +134,9 @@ def test_config_init_reprompts_on_invalid(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
     monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
 
-    # token: bad then good; data folder: accept the default (-> None); page: bad then good.
+    # token: bad then good; data folder: default (-> None); page: bad then good; reporter: skip.
     result = CliRunner().invoke(
-        app, ["config", "init"], input="bad\ngood-token\n/stub/data\nbad-db\ngood-db\n"
+        app, ["config", "init"], input="bad\ngood-token\n/stub/data\nbad-db\ngood-db\n\n"
     )
 
     assert result.exit_code == 0, result.output
@@ -142,6 +146,7 @@ def test_config_init_reprompts_on_invalid(monkeypatch: pytest.MonkeyPatch) -> No
     assert stored.notion_api_key == "good-token"
     assert stored.notion_page_id == "good-db"
     assert stored.reports_root is None  # the per-user data dir is not pinned into the config
+    assert stored.notion_reporter is None  # skipped reporter stays unset
 
 
 def test_config_init_rejects_empty_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -149,7 +154,9 @@ def test_config_init_rejects_empty_value(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
     custom = str(tmp_path / "r")
 
-    result = CliRunner().invoke(app, ["config", "init"], input=f"\ngood-token\n{custom}\ngood-db\n")
+    result = CliRunner().invoke(
+        app, ["config", "init"], input=f"\ngood-token\n{custom}\ngood-db\n\n"
+    )
 
     assert result.exit_code == 0, result.output
     assert "A value is required." in result.stderr
@@ -162,7 +169,7 @@ def test_config_init_keeps_current_on_enter(monkeypatch: pytest.MonkeyPatch) -> 
         StoredConfig(notion_api_key="good-token", notion_page_id="good-db", reports_root="/old")
     )
 
-    result = CliRunner().invoke(app, ["config", "init"], input="\n\n\n")  # keep every current value
+    result = CliRunner().invoke(app, ["config", "init"], input="\n\n\n\n")  # keep every value
 
     assert result.exit_code == 0, result.output
     assert "good-token" not in result.output  # the stored token is never echoed back in the prompt
@@ -170,6 +177,59 @@ def test_config_init_keeps_current_on_enter(monkeypatch: pytest.MonkeyPatch) -> 
     assert stored == StoredConfig(
         notion_api_key="good-token", notion_page_id="good-db", reports_root="/old"
     )
+
+
+def test_config_init_keeps_reporter_on_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
+    monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
+    save_config(
+        StoredConfig(
+            notion_api_key="good-token",
+            notion_page_id="good-db",
+            reports_root="/old",
+            notion_reporter="Wei Hu",
+        )
+    )
+
+    result = CliRunner().invoke(app, ["config", "init"], input="\n\n\n\n")  # keep every value
+
+    assert result.exit_code == 0, result.output
+    stored = load_config()
+    assert stored.notion_reporter == "Wei Hu"  # enter keeps the stored reporter name
+
+
+def test_config_init_keeps_the_token_out_of_traceback_locals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Should an unexpected error mid-wizard be rendered by a locals-capturing traceback, the
+    # just-entered token must not surface: config_init holds it only as a Secret and the config's
+    # repr is redacted. Fail the first save (right after the token is accepted) so that frame is on
+    # the stack with the token live.
+    monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
+
+    def explode(config: StoredConfig) -> Path:
+        del config
+        raise RuntimeError("boom")  # not a PromptDiaryError, so it escapes config_init's handler
+
+    monkeypatch.setattr(config_cmd, "save_config", explode)
+
+    result = CliRunner().invoke(app, ["config", "init"], input="good-token\n")
+
+    error = result.exception
+    assert error is not None
+    # Inspect the wizard's *own* frame, not the whole stack: the CliRunner harness deliberately
+    # retains the fed input string, which is a test artifact, whereas config_init's locals are the
+    # real concern — it must not hold a bare token across the later, fallible save/prompt steps.
+    summary = traceback.StackSummary.extract(
+        traceback.walk_tb(error.__traceback__), capture_locals=True
+    )
+    wizard_frames = [frame for frame in summary if frame.name == "config_init"]
+    assert wizard_frames  # the wizard frame is on the failing stack
+    assert all(
+        "good-token" not in value
+        for frame in wizard_frames
+        for value in (frame.locals or {}).values()
+    )  # token held as a Secret, config repr redacted: neither local renders the raw token
 
 
 def test_config_init_exits_on_corrupt_config(
@@ -201,6 +261,18 @@ def test_config_show_masks_token(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "db-1" in result.stdout
     assert "/data" in result.stdout
     assert "override" not in result.stdout
+
+
+def test_config_show_displays_reporter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(NOTION_TOKEN_ENV, raising=False)
+    monkeypatch.delenv(NOTION_DATABASE_ENV, raising=False)
+    monkeypatch.delenv(REPORTS_HOME_ENV, raising=False)
+    save_config(StoredConfig(notion_reporter="Wei Hu"))
+
+    result = CliRunner().invoke(app, ["config", "show"])
+
+    assert result.exit_code == 0, result.output
+    assert "Wei Hu" in result.stdout  # the reporter name is shown (it is not a secret)
 
 
 def test_config_show_notes_env_override_and_unset(monkeypatch: pytest.MonkeyPatch) -> None:

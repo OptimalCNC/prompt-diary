@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from prompt_diary.generate.pipeline import PhaseRunner, TaskKind
     from prompt_diary.models import SourceSpec
     from prompt_diary.progress.reporter import ProgressReporter
+    from prompt_diary.secret import Secret
 
 NotionOption = Annotated[
     bool | None,
@@ -164,7 +165,7 @@ def generate(
     echo_messages((*result.messages, *published))
 
 
-def resolve_notion_publish(*, notion: bool | None) -> tuple[str, str] | None:
+def resolve_notion_publish(*, notion: bool | None) -> tuple[Secret, str] | None:
     """Resolve the frozen Notion ``(token, database_id)`` to publish with, or ``None`` to skip.
 
     Resolving the credentials here, before the expensive pipeline, both fails fast and freezes the
@@ -185,7 +186,7 @@ def resolve_notion_publish(*, notion: bool | None) -> tuple[str, str] | None:
 def render_report_to_notion_messages(
     workspace_path: Path,
     *,
-    credentials: tuple[str, str],
+    credentials: tuple[Secret, str],
 ) -> tuple[str, ...]:
     """Render and publish the workspace report to Notion using frozen credentials."""
     result = render_workspace_report_to_notion(workspace_path, credentials=credentials)

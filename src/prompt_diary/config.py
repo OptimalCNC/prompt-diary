@@ -9,21 +9,29 @@ only from the environment or that file, never logged.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
 
 import msgspec
 import platformdirs
+from msgspec import structs
 
 from prompt_diary import paths
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.secret import REDACTED, Secret
 
 CONFIG_PATH_ENV = "PROMPT_DIARY_CONFIG"
 NOTION_TOKEN_ENV = "NOTION_API_KEY"  # noqa: S105 - env var name to read, not a credential
 NOTION_DATABASE_ENV = "NOTION_PAGE_ID"
 
 _CONFIG_FILE_MODE = 0o600
+
+# Default Notion text column the reporter name is written into. The wizard prompts only for the
+# name; this is the write target unless ``notion_reporter_property`` is overridden by hand. A
+# literal value is fine here (CJK is not a RUF-flagged confusable).
+_DEFAULT_REPORTER_PROPERTY = "汇报人"
 
 
 class StoredConfig(msgspec.Struct, omit_defaults=True):
@@ -32,6 +40,19 @@ class StoredConfig(msgspec.Struct, omit_defaults=True):
     reports_root: str | None = None
     notion_api_key: str | None = None
     notion_page_id: str | None = None
+    notion_reporter: str | None = None
+    notion_reporter_property: str | None = None
+
+    def __repr__(self) -> str:
+        # Redact the token in the *repr* so a loaded config can be logged or captured as a frame
+        # local (e.g. by a locals-capturing traceback renderer) without surfacing the stored secret;
+        # only this one field is sensitive. Built from asdict so new fields render automatically — a
+        # future *secret* field is the only thing that would need adding to the redaction set below.
+        fields = structs.asdict(self)
+        if fields["notion_api_key"] is not None:
+            fields["notion_api_key"] = REDACTED
+        rendered = ", ".join(f"{name}={value!r}" for name, value in fields.items())
+        return f"{type(self).__name__}({rendered})"
 
 
 _CONFIG_DECODER = msgspec.json.Decoder(StoredConfig)
@@ -57,34 +78,55 @@ def load_config() -> StoredConfig:
     """Load the stored config, returning an empty config when the file is absent."""
     path = config_path()
     try:
-        raw = path.read_bytes()
+        decoded = _decode_config(path.read_bytes())
     except FileNotFoundError:
         return StoredConfig()
+    if decoded is None:
+        raise PromptDiaryError(_corrupt_config_message(path))
+    return decoded
+
+
+def _decode_config(raw: bytes) -> StoredConfig | None:
+    """Decode config bytes, returning ``None`` when malformed (never raising).
+
+    Returning instead of raising keeps the token-bearing ``raw`` (and the decode error, which can
+    quote the input) out of every frame that survives a failure: ``load_config`` raises from a frame
+    holding only ``path``, so a locals-capturing traceback never sees the stored token.
+    """
     try:
         return _CONFIG_DECODER.decode(raw)
-    except msgspec.MsgspecError as exc:
-        raise PromptDiaryError(_corrupt_config_message(path, exc)) from exc
+    except msgspec.MsgspecError:
+        return None
 
 
 def save_config(config: StoredConfig) -> Path:
     """Write the config atomically with ``0600`` permissions and return its path."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = msgspec.json.encode(config)
     # Write to a 0600 temp file (mkstemp creates it owner-only), then atomically replace: the token
     # is never written to a looser-permissioned inode, and a crash cannot leave a partial config.
     descriptor, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".config-", suffix=".tmp")
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
+            # Encode inline so the token-bearing JSON bytes stay an anonymous argument to write(),
+            # never a named local that a locals-capturing traceback could surface if a later step
+            # fails. (The only surviving local, the StoredConfig, has a redacted repr, so even an
+            # mkstemp failure outside this try leaks nothing.)
+            handle.write(msgspec.json.encode(config))
             handle.flush()
             os.fsync(handle.fileno())
         tmp_path.chmod(_CONFIG_FILE_MODE)
         tmp_path.replace(path)
     except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
         raise PromptDiaryError(_save_failed_message(path, exc)) from exc
+    finally:
+        # Best-effort temp cleanup on any post-mkstemp failure (a successful replace already
+        # renamed it away). Suppress unlink errors so a failed cleanup can never mask the
+        # in-flight exception nor fail an otherwise-successful save — an orphaned temp file
+        # beats a hidden error.
+        with contextlib.suppress(OSError):
+            tmp_path.unlink(missing_ok=True)
     return path
 
 
@@ -107,24 +149,49 @@ def notion_is_configured() -> bool:
     return bool(token and database_id)
 
 
-def resolve_notion_credentials() -> tuple[str, str]:
-    """Return the Notion ``(token, database_id)`` from env, then config; raise if missing."""
+def resolve_notion_credentials() -> tuple[Secret, str]:
+    """Return the Notion ``(token, database_id)`` from env, then config; raise if missing.
+
+    The token arrives already wrapped in :class:`Secret`, so even this function's missing-credential
+    raise carries no bare token in its frame locals; reveal it only at the point of use.
+    """
     token, database_id = _notion_credentials()
-    if not token or not database_id:
+    if token is None or not database_id:
         raise PromptDiaryError(_missing_notion_credentials_message())
     return token, database_id
 
 
-def _notion_credentials() -> tuple[str | None, str | None]:
-    """Resolve the Notion token and database id (env, then config); either may be None."""
+def _notion_credentials() -> tuple[Secret | None, str | None]:
+    """Resolve the Notion token (wrapped) and database id (env, then config); either may be None.
+
+    The token is wrapped in :class:`Secret` *here*, in the one frame that binds the raw string and
+    that never raises, so no caller — including the resolvers that raise on missing credentials —
+    ever holds a bare token local that a locals-capturing traceback could surface.
+    """
     config = load_config()
-    token = _env(NOTION_TOKEN_ENV) or config.notion_api_key
+    raw_token = _env(NOTION_TOKEN_ENV) or config.notion_api_key
     database_id = _env(NOTION_DATABASE_ENV) or config.notion_page_id
-    return token, database_id
+    return (Secret(raw_token) if raw_token else None), database_id
 
 
-def _corrupt_config_message(path: Path, exc: msgspec.MsgspecError) -> str:
-    return f"the config file at {path} is invalid ({exc}); fix or remove it."
+def resolve_notion_reporter() -> tuple[str, str] | None:
+    """Return the reporter ``(name, column)`` to write, or ``None`` when no name is configured.
+
+    The reporter is a free-form display name (like ``git config user.name``), not a credential, so
+    it is read only from the stored config (no environment layer). The target column defaults to
+    :data:`_DEFAULT_REPORTER_PROPERTY` unless ``notion_reporter_property`` is set.
+    """
+    config = load_config()
+    name = config.notion_reporter
+    if not name:
+        return None
+    return name, config.notion_reporter_property or _DEFAULT_REPORTER_PROPERTY
+
+
+def _corrupt_config_message(path: Path) -> str:
+    # Deliberately omits the decoder's error detail: it can quote the malformed input, which may
+    # include the stored token. The path is enough to act on (fix or remove the file).
+    return f"the config file at {path} is invalid; fix or remove it."
 
 
 def _save_failed_message(path: Path, exc: OSError) -> str:
