@@ -32,6 +32,13 @@ def test_recording_reporter_formats_timing_summary() -> None:
     reporter.emit(PhaseFinished(at=2.25, phase_id="prepare", status="success"))
     reporter.emit(PhaseStarted(at=3.0, phase_id="evidence", label="evidence"))
     reporter.emit(PhaseFinished(at=68.0, phase_id="evidence", status="success"))
+    reporter.emit(PhaseStarted(at=68.0, phase_id="rendering", label="rendering"))
+    reporter.emit(PhaseFinished(at=68.5, phase_id="rendering", status="success"))
+    reporter.emit(PhaseStarted(at=69.0, phase_id="publish", label="publish"))
+    reporter.emit(PhaseFinished(at=70.5, phase_id="publish", status="success"))
 
     assert reporter.state.phases["prepare"].status == "success"
-    assert reporter.timing_summary_message() == ("Spent 2.2s preparing workspace; 1m05s evidence.")
+    # The summary lists every phase that ran, in pipeline order, including rendering and publish.
+    assert reporter.timing_summary_message() == (
+        "Spent 2.2s preparing workspace; 1m05s evidence; 0.5s rendering; 1.5s publish."
+    )

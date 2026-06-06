@@ -20,19 +20,21 @@ if TYPE_CHECKING:
     from prompt_diary.generate.workspace import PreparedProject, PreparedWorkspace
     from prompt_diary.progress.reporter import ProgressReporter
 
-TaskKind = Literal["evidence_extraction", "project_synthesis", "daily_synthesis"]
+TaskKind = Literal["evidence_extraction", "project_synthesis", "daily_synthesis", "rendering"]
 TaskStatus = Literal["success", "failed", "blocked"]
 
 DEFAULT_CONCURRENCY_LIMITS: Mapping[TaskKind, int] = {
     "evidence_extraction": 4,
     "project_synthesis": 2,
     "daily_synthesis": 1,
+    "rendering": 1,
 }
 
 _KIND_PHASES: Mapping[TaskKind, tuple[str, str]] = {
     "evidence_extraction": ("evidence", "evidence"),
     "project_synthesis": ("project", "project"),
     "daily_synthesis": ("daily", "daily"),
+    "rendering": ("rendering", "rendering"),
 }
 
 
@@ -148,6 +150,11 @@ def daily_synthesis_task_id() -> str:
     return "daily"
 
 
+def rendering_task_id() -> str:
+    """Return the stable task id for rendering."""
+    return "render"
+
+
 def evidence_card_artifact(project_key: str, session_ref: str) -> ArtifactSpec:
     """Return the canonical evidence-card artifact for one indexed session."""
     return ArtifactSpec(
@@ -189,6 +196,7 @@ def build_generation_plan(workspace_path: Path) -> GenerationPlan:
         tasks.extend(_evidence_tasks(project))
         tasks.append(_project_synthesis_task(project))
     tasks.append(_daily_synthesis_task(workspace))
+    tasks.append(_rendering_task())
     return GenerationPlan(tasks=tuple(tasks))
 
 
@@ -571,11 +579,17 @@ def _daily_synthesis_task(workspace: PreparedWorkspace) -> TaskSpec:
             ArtifactSpec(PurePosixPath("metadata.json"), "workspace metadata"),
             *project_artifacts,
         ),
-        output_artifacts=(
-            daily_report_model_artifact(),
-            markdown_report_artifact(),
-            notion_report_artifact(),
-        ),
+        output_artifacts=(daily_report_model_artifact(),),
+    )
+
+
+def _rendering_task() -> TaskSpec:
+    return TaskSpec(
+        task_id=rendering_task_id(),
+        kind="rendering",
+        depends_on=(daily_synthesis_task_id(),),
+        prerequisite_artifacts=(daily_report_model_artifact(),),
+        output_artifacts=(markdown_report_artifact(), notion_report_artifact()),
     )
 
 

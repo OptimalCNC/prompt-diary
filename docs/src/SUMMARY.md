@@ -12,6 +12,7 @@
     - [Project Summary Prompt](./generate/project-summary-prompt.md)
     - [Engagement Prompt](./generate/engagement-prompt.md)
     - [Team Learning Prompt](./generate/team-learning-prompt.md)
+  - [Rendering](./generate/rendering.md)
   - [MCP Tools](./generate/mcp-tools/index.md)
     - [Evidence Extraction Tools](./generate/mcp-tools/evidence-extraction.md)
     - [Project Synthesis Tools](./generate/mcp-tools/project-synthesis.md)

@@ -1,11 +1,11 @@
 """Serialize the abstract layout to a Notion page payload (``report.notion.json``).
 
 Notion is a second presentation engine for the daily report, beside Markdown. :func:`render_notion`
-walks the :mod:`~prompt_diary.generate.daily_synthesis.layout` tree and serializes each block into
+walks the :mod:`~prompt_diary.generate.rendering.layout` tree and serializes each block into
 Notion block objects per the doc's Block→Notion mapping; :func:`render_notion_artifact` reads the
 finalized ``daily-report.json``, builds the layout, renders it, and atomically writes the page
 payload to ``report.notion.json`` at the workspace root. A separate publisher
-(:mod:`~prompt_diary.generate.daily_synthesis.notion_publish`) pushes that payload to Notion.
+(:mod:`~prompt_diary.generate.rendering.notion_publish`) pushes that payload to Notion.
 
 Like the Markdown renderer it only reads model strings carried by the layout blocks and synthesizes
 no prose of its own. The injection-safety story is *structural and simpler than Markdown's*: every
@@ -47,7 +47,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from prompt_diary.generate.daily_synthesis.layout import (
+from prompt_diary.generate.rendering.layout import (
     Block,
     Callout,
     Citation,

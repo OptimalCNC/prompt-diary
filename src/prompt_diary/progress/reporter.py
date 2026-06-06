@@ -115,4 +115,5 @@ _SUMMARY_PHASES = (
     ("project", "project"),
     ("daily", "daily"),
     ("rendering", "rendering"),
+    ("publish", "publish"),
 )

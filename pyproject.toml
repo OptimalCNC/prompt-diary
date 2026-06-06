@@ -49,7 +49,7 @@ omit = [
     "src/prompt_diary/progress/console.py",
     # The real Notion SDK adapter is exercised by the live publish path, not the unit suite (the
     # publisher logic is fully tested against a fake), like codex_runner.py above.
-    "src/prompt_diary/generate/daily_synthesis/notion_client_adapter.py",
+    "src/prompt_diary/generate/rendering/notion_client_adapter.py",
 ]
 
 [tool.coverage.report]

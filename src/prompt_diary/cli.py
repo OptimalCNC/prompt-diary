@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from prompt_diary import __version__
-from prompt_diary.cmds import config, generate, mcp, prepare, prompts, render
+from prompt_diary.cmds import config, generate, mcp, prepare, prompts
 
 app = typer.Typer(
     add_completion=False,
@@ -34,7 +34,6 @@ prepare.register(app)
 generate.register(app)
 config.register(app)
 prompts.register(app)
-render.register(app)
 mcp.register(app)
 
 

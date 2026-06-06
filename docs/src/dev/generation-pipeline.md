@@ -19,7 +19,8 @@ The framework models phase invocations as task nodes:
 | --- | --- | --- |
 | `evidence_extraction` | one `(project_key, session_ref)` | `projects/<project_key>/evidence/<session_ref>.json` |
 | `project_synthesis` | one `project_key` | `projects/<project_key>/project-synthesis.json` |
-| `daily_synthesis` | the prepared workspace | `daily-report.json`, `report.md` |
+| `daily_synthesis` | the prepared workspace | `daily-report.json` |
+| `rendering` | the prepared workspace | `report.md`, `report.notion.json` |
 
 This is a real DAG, not only three coarse phase barriers. Project synthesis for one project depends
 only on that project's evidence tasks. Daily synthesis depends on all project synthesis tasks.
@@ -52,13 +53,14 @@ Each real phase implementation should live in its phase package and implement th
 runner may use Codex, MCP tools, deterministic code, or mocks. The framework calls it only after
 dependencies are complete.
 
-Concrete phase runners hold an injected `AgentSessionFactory` but do not own backend lifecycle.
-Backend ownership lives at the run scope: `GenerateWorkspaceWorkflow` enters one shared factory
-once per run (inside `asyncio.run`), and every task mints its own conversation off that shared
-backend via `factory.runner(config)`. The composition root `cmds/generate.py::build_generation_workflow()`
-constructs one `CodexAgentSessionFactory`, passes it to all three phase runners, and sets it as
-the workflow's `agent_factory`. `GeneratePipelineRunner` itself is agent-agnostic — it schedules
-tasks and calls `PhaseRunner.run`; backend and agent wiring are the workflow's concern.
+The three agent phase runners hold an injected `AgentSessionFactory` but do not own backend
+lifecycle. Backend ownership lives at the run scope: `GenerateWorkspaceWorkflow` enters one shared
+factory once per run (inside `asyncio.run`), and every agent task mints its own conversation off that
+shared backend via `factory.runner(config)`. The composition root
+`cmds/generate.py::build_generation_workflow()` constructs one `CodexAgentSessionFactory`, passes it
+to the three agent phase runners, and sets it as the workflow's `agent_factory`; the rendering runner
+is deterministic and takes no agent factory. `GeneratePipelineRunner` itself is agent-agnostic — it
+schedules tasks and calls `PhaseRunner.run`; backend and agent wiring are the workflow's concern.
 
 A phase runner therefore does not need to be an async context manager to obtain its backend: the
 shared `AgentSessionFactory` is entered once at the workflow scope, above the pipeline. The pipeline
@@ -89,10 +91,13 @@ its declared prerequisites:
 report generate evidence --date YYYY-MM-DD --project-key <project_key> --session-ref S0001
 report generate project --date YYYY-MM-DD --project-key <project_key>
 report generate daily --date YYYY-MM-DD
+report generate render --date YYYY-MM-DD
+report generate render --date YYYY-MM-DD --notion
 ```
 
 The phase commands do not rerun earlier phases or prepare missing workspaces. They are development
-and repair entrypoints for the phase boundary rule.
+and repair entrypoints for the phase boundary rule. `generate render` writes the views from an
+existing `daily-report.json`; `generate render --notion` renders then publishes to Notion.
 
 ## Evidence Extraction Runner
 
@@ -127,7 +132,8 @@ phase runner's `run(...)`; the evidence runner emits `TurnAdvanced` per turn. Se
 
 The framework checks only generic output existence. Phase-local validation belongs to the phase
 runner before it returns success. For example, evidence extraction should validate evidence card
-structure, and daily synthesis should validate `daily-report.json` and `report.md`.
+structure, daily synthesis should validate `daily-report.json`, and the rendering phase should
+validate the rendered views.
 
 Failed extraction may become a durable evidence card that project synthesis accounts for as a gap.
 An absent evidence card is a missing prerequisite artifact and prevents the project task from

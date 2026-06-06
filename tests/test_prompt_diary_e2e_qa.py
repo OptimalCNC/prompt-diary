@@ -84,7 +84,7 @@ def test_cli_generate_reuses_existing_workspace_from_env_roots(
     assert f"Wrote rendered report {workspace / 'report.md'}" in generate_result.stdout
     assert (workspace / "daily-report.json").exists()
     assert (workspace / "report.md").exists()
-    assert phase_runner.events[-1] == "daily"
+    assert phase_runner.events[-1] == "render"
     report_text = (workspace / "report.md").read_text(encoding="utf-8")
     assert "# Prompt Diary Report - 2020-01-02" in report_text
     assert "Status: final" in report_text
@@ -121,7 +121,7 @@ def test_cli_generate_prepares_missing_workspace_from_env_roots(
     assert workspace.exists()
     assert (workspace / "daily-report.json").exists()
     assert (workspace / "report.md").exists()
-    assert phase_runner.events[-1] == "daily"
+    assert phase_runner.events[-1] == "render"
 
 
 def _prepare_existing_workspace(*, reports_root: Path, sources: ReconstructedSources) -> Path:
@@ -361,6 +361,7 @@ def _all_phase_runners(phase_runner: PhaseRunner) -> dict[TaskKind, PhaseRunner]
         "evidence_extraction": phase_runner,
         "project_synthesis": phase_runner,
         "daily_synthesis": phase_runner,
+        "rendering": phase_runner,
     }
 
 

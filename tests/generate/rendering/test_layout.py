@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from prompt_diary.generate.daily_synthesis.layout import (
+from prompt_diary.generate.rendering.layout import (
     Callout,
     Document,
     Empty,
@@ -39,7 +39,7 @@ from tests.support.daily_synthesis import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from prompt_diary.generate.daily_synthesis.layout import Block
+    from prompt_diary.generate.rendering.layout import Block
 
 
 def _finalized_report(tmp_path: Path) -> dict[str, Any]:

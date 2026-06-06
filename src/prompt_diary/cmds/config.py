@@ -19,14 +19,14 @@ from prompt_diary.config import (
     save_config,
 )
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.notion_client_adapter import build_notion_validator
+from prompt_diary.generate.rendering.notion_client_adapter import build_notion_validator
 from prompt_diary.paths import REPORTS_HOME_ENV, platform_data_dir
 from prompt_diary.secret import Secret
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from prompt_diary.generate.daily_synthesis.notion_validate import (
+    from prompt_diary.generate.rendering.notion_validate import (
         NotionDatabaseInfo,
         NotionIdentity,
     )

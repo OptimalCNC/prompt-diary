@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from prompt_diary.generate.daily_synthesis.layout import (
+from prompt_diary.generate.rendering.layout import (
     Callout,
     Document,
     Group,
@@ -23,7 +23,7 @@ from prompt_diary.generate.daily_synthesis.layout import (
     Toggle,
     build_layout,
 )
-from prompt_diary.generate.daily_synthesis.render_markdown import render_markdown, render_report
+from prompt_diary.generate.rendering.render_markdown import render_markdown, render_report
 from tests.support.daily_synthesis import (
     build_daily_report_via_api,
     copy_basic_daily_workspace,

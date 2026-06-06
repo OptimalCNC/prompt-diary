@@ -27,7 +27,7 @@ report --help
 prompt-diary --help
 report prepare --date 2026-05-12 --timezone Asia/Shanghai
 report generate --date 2026-05-12 --timezone Asia/Shanghai
-report render notion --date 2026-05-12 --timezone Asia/Shanghai
+report generate render --notion --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
 生成报告时，Prompt Diary 会先把每个阶段的产物写到磁盘，再进入下一步；各阶段也可以单独运行：
@@ -38,21 +38,22 @@ report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key
 report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
-配置好 Notion 后，`report render notion` 可以把已经生成的报告作为新记录发布到 Notion 数据库。它会解析
+配置好 Notion 后，`report generate render --notion` 可以把已经生成的报告作为新记录发布到 Notion 数据库。它会解析
 已有工作区，要求其中存在 `daily-report.json`，从该模型重新生成 `report.md` 旁边结构稳定、可复现的
-`report.notion.json`，然后发布该载荷。`report generate` 在流水线成功后会委托给同一条渲染路径：默认会在
-Notion 已配置时发布；用 `--no-notion` 可跳过发布，用 `--notion` 可强制发布（若 Notion 未配置则报错）。
+`report.notion.json`，然后发布该载荷。`report generate` 会把渲染作为流水线的最后一个阶段运行，并在
+Notion 发布启用时执行同样的发布步骤：默认会在 Notion 已配置时发布；用 `--no-notion` 可跳过发布，用
+`--notion` 可强制发布（若 Notion 未配置则报错）。
 先用 `prompt-diary config init` 配置 Notion 集成令牌和目标数据库 ID（见[配置](#配置)）；凭据不会出现在命令行里。
 每次发布都会追加一条新的日期记录；重复发布不会改写或删除已有记录。
 
-实际生成由 Codex CLI 驱动，流程分为证据抽取、项目汇总和日报汇总三个阶段。最终会产出
-`daily-report.json`、渲染后的 `report.md` 和 `report.notion.json`。运行前需要安装并认证
-`codex` CLI；上面的子命令用于在已准备好的工作区中单独执行某个阶段。
+实际生成由 Codex CLI 驱动，流程分为证据抽取、项目汇总、日报汇总和渲染四个阶段。前三个阶段产出
+`daily-report.json`；确定性、无代理的渲染阶段再把该模型投影为 `report.md` 和 `report.notion.json`
+两个视图。运行前需要安装并认证 `codex` CLI；上面的子命令用于在已准备好的工作区中单独执行某个阶段。
 
 默认情况下，准备好的工作区和生成出来的报告都会放在当前用户的数据目录中（Linux 上是
 `~/.local/share/prompt-diary/`；macOS 和 Windows 使用各自的平台目录），并按日期放在
-`<reports-root>/work/<YYYY-MM-DD>/` 下。如果需要改位置，可以使用 `prepare`、`generate` 和
-`render notion` 的 `--reports-root <path>`、`PROMPT_DIARY_HOME`，或已保存的配置（见[配置](#配置)）。优先级依次是
+`<reports-root>/work/<YYYY-MM-DD>/` 下。如果需要改位置，可以使用 `prepare` 和 `generate`（含
+`generate render`）的 `--reports-root <path>`、`PROMPT_DIARY_HOME`，或已保存的配置（见[配置](#配置)）。优先级依次是
 `--reports-root`、`PROMPT_DIARY_HOME`、已保存的配置、默认数据目录。（早期版本会写到当前目录下的
 `./.reports`；如果想继续使用已有的本地目录，请传入 `--reports-root .reports`。）
 

@@ -50,8 +50,8 @@ no lifecycle of its own — it starts its SDK thread on the first `turn()` call.
 
 The generation phase wiring composition root is `cmds/generate.py::build_generation_workflow()`,
 the only place that imports both `generate/` and `integrations/`. It constructs one
-`CodexAgentSessionFactory`, passes it to all three phase runners, and sets it as the workflow's
-`agent_factory`.
+`CodexAgentSessionFactory`, passes it to the three agent phase runners, and sets it as the workflow's
+`agent_factory`. The fourth phase runner, rendering, is deterministic and takes no Codex backend.
 
 ## Needs
 

@@ -36,6 +36,7 @@ modules and other details that may change as the implementation evolves.
 | `src/prompt_diary/generate/evidence_extraction/` | Evidence Extraction phase behavior and internal contracts for its canonical artifacts and tools. |
 | `src/prompt_diary/generate/project_synthesis/` | Project Synthesis phase behavior and internal contracts for its canonical artifacts and tools. |
 | `src/prompt_diary/generate/daily_synthesis/` | Daily Report Synthesis phase behavior and internal contracts for its canonical artifacts and tools. |
+| `src/prompt_diary/generate/rendering/` | Rendering phase behavior: the deterministic, agent-free projection of `daily-report.json` into the `report.md` / `report.notion.json` views, plus the Notion publish path. |
 | `src/prompt_diary/generate/prompts/` | Runtime prompt templates and prompt-rendering helpers used by generation phases and prompt CLI commands. |
 | `src/prompt_diary/mcp/` | MCP protocol adapter. MCP code adapts requests and responses; it does not own workflow semantics. |
 | `src/prompt_diary/integrations/` | Optional external runner and bootstrap integrations that are not core workflow semantics. |
@@ -49,6 +50,7 @@ boundaries are the artifact-producing phases defined by
 - Evidence Extraction
 - Project Synthesis
 - Daily Report Synthesis
+- Rendering
 
 Generation subpackages mirror those broad phase boundaries. This architecture page should not name
 every phase helper module; those details belong in code and phase-local tests.
@@ -97,8 +99,9 @@ consumes only the prepared workspace plus durable artifacts from earlier generat
 
 The generation agent-wiring composition root is `cmds/generate.py::build_generation_workflow()` —
 the only place that imports both `generate/` and `integrations/`. It constructs one
-`CodexAgentSessionFactory` (from `integrations/codex_runner.py`) and passes it to all three phase
-runners and to the workflow. Generation phase code depends only on `prompt_diary.agent` (the
+`CodexAgentSessionFactory` (from `integrations/codex_runner.py`) and passes it to the three agent
+phase runners and to the workflow; the fourth phase runner, rendering, is deterministic and
+agent-free, so it takes no factory. Generation phase code depends only on `prompt_diary.agent` (the
 neutral port), never on `integrations/` directly.
 
 Product contracts: [Report Generation](../generate/index.md),

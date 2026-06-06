@@ -1,15 +1,16 @@
 """Tests for the daily-synthesis runner orchestration against a mock agent.
 
-The runner runs Build, the per-project summary passes, the engagement and team-learning passes,
-Finalize, and the Markdown render. These tests drive it with a prompt-reading fake agent that fills
-each slot through the real write tools, so the runner's sequencing, slot checks, and the
-empty-report short-circuit are exercised end to end without Codex.
+The runner runs Build, the per-project summary passes, the engagement and team-learning passes, and
+Finalize. These tests drive it with a prompt-reading fake agent that fills each slot through the
+real write tools, so the runner's sequencing, slot checks, and the empty-report short-circuit are
+exercised end to end without Codex. The runner builds only the model (``daily-report.json``); the
+separate Rendering phase projects it into the reader-facing views (see
+``tests/generate/rendering/test_runner.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from typing import TYPE_CHECKING
 
@@ -21,10 +22,7 @@ from prompt_diary.generate.pipeline import (
     TaskSpec,
     daily_report_model_artifact,
     daily_synthesis_task_id,
-    markdown_report_artifact,
-    notion_report_artifact,
 )
-from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from tests.support.daily_synthesis import (
     PROJECT_KEY,
     TWO_PROJECTS_KEY_A,
@@ -37,27 +35,18 @@ from tests.support.daily_synthesis import (
     rewrite_envelope_gap_only,
 )
 from tests.support.daily_synthesis_agent import DailySynthesisAgentSessionFactory
-from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from prompt_diary.generate.pipeline import TaskResult
 
-# Raised by the fake renderer to exercise the runner's transactional render cleanup; kept as a
-# constant so the raise site avoids ruff's long-inline-message rule (TRY003).
-_RENDER_FAILED = "notion render failed"
-
 
 def _task() -> TaskSpec:
     return TaskSpec(
         task_id=daily_synthesis_task_id(),
         kind="daily_synthesis",
-        output_artifacts=(
-            daily_report_model_artifact(),
-            markdown_report_artifact(),
-            notion_report_artifact(),
-        ),
+        output_artifacts=(daily_report_model_artifact(),),
     )
 
 
@@ -71,18 +60,10 @@ def _run(factory: DailySynthesisAgentSessionFactory, workspace: Path) -> TaskRes
     return asyncio.run(run())
 
 
-def _report_md(workspace: Path) -> Path:
-    return workspace / "report.md"
-
-
-def _report_notion(workspace: Path) -> Path:
-    return workspace / "report.notion.json"
-
-
 # --- happy path ----------------------------------------------------------------------------------
 
 
-def test_runner_fills_all_slots_and_renders(tmp_path: Path) -> None:
+def test_runner_fills_all_slots(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
 
@@ -94,89 +75,15 @@ def test_runner_fills_all_slots_and_renders(tmp_path: Path) -> None:
     assert report["engagement_assessment"] is not None
     assert report["team_learning"] is not None
     assert report["overall_confidence"] is not None
-    assert _report_md(workspace).read_text(encoding="utf-8").strip()
 
 
-def test_runner_returns_all_output_artifacts(tmp_path: Path) -> None:
+def test_runner_returns_the_model_output_artifact(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
 
     result = _run(DailySynthesisAgentSessionFactory(), workspace)
 
     paths = {str(artifact.path) for artifact in result.output_artifacts}
-    assert paths == {"daily-report.json", "report.md", "report.notion.json"}
-
-
-def test_runner_renders_notion_payload(tmp_path: Path) -> None:
-    workspace = copy_basic_daily_workspace(tmp_path)
-
-    result = _run(DailySynthesisAgentSessionFactory(), workspace)
-
-    assert result.status == "success"
-    # The Notion payload is written beside report.md as a well-formed page payload.
-    payload = json.loads(_report_notion(workspace).read_text(encoding="utf-8"))
-    assert payload["title"] == "Prompt Diary Report — 2026-05-28"
-    assert payload["children"]
-
-
-def test_runner_reports_local_rendering_phase(tmp_path: Path) -> None:
-    workspace = copy_basic_daily_workspace(tmp_path)
-    factory = DailySynthesisAgentSessionFactory()
-    reporter = RecordingReporter()
-    runner = DailySynthesisRunner(agent_factory=factory)
-
-    async def run() -> TaskResult:
-        async with factory:
-            return await runner.run(workspace_path=workspace, task=_task(), reporter=reporter)
-
-    result = asyncio.run(run())
-
-    assert result.status == "success"
-    rendering_events = [
-        event
-        for event in reporter.events
-        if isinstance(event, PhaseStarted | PhaseFinished) and event.phase_id == "rendering"
-    ]
-    assert [type(event).__name__ for event in rendering_events] == [
-        "PhaseStarted",
-        "PhaseFinished",
-    ]
-
-
-def test_runner_clears_stale_notion_payload_when_run_fails(tmp_path: Path) -> None:
-    # A previous run left a report.notion.json; this run fails (a summary pass writes nothing), so
-    # the stale Notion payload must be cleared before Build, like the stale report.md.
-    workspace = copy_basic_daily_workspace(tmp_path)
-    stale = _report_notion(workspace)
-    stale.write_text("{}\n", encoding="utf-8")
-    factory = DailySynthesisAgentSessionFactory(skip_pass=frozenset({"project_summary"}))
-
-    result = _run(factory, workspace)
-
-    assert result.status == "failed"
-    assert not stale.exists()
-
-
-def test_runner_clears_both_reports_when_a_render_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # If a renderer raises after Finalize, the run leaves neither rendered report behind: the
-    # Markdown render succeeds and writes report.md, then the Notion render fails, and the runner's
-    # transactional cleanup removes both before the error propagates (the pipeline turns it failed).
-    workspace = copy_basic_daily_workspace(tmp_path)
-
-    def _boom(*, workspace_path: Path) -> Path:
-        del workspace_path
-        raise RuntimeError(_RENDER_FAILED)
-
-    monkeypatch.setattr(
-        "prompt_diary.generate.daily_synthesis.runner.render_notion_artifact", _boom
-    )
-
-    with pytest.raises(RuntimeError, match=_RENDER_FAILED):
-        _run(DailySynthesisAgentSessionFactory(), workspace)
-
-    assert not _report_md(workspace).exists()
-    assert not _report_notion(workspace).exists()
+    assert paths == {"daily-report.json"}
 
 
 def test_runner_runs_one_pass_per_project_plus_two(tmp_path: Path) -> None:
@@ -231,7 +138,6 @@ def test_runner_two_projects_fills_both_summaries(tmp_path: Path) -> None:
     assert summaries == {TWO_PROJECTS_KEY_A: True, TWO_PROJECTS_KEY_B: True}
     assert report["engagement_assessment"] is not None
     assert report["team_learning"] is not None
-    assert _report_md(workspace).read_text(encoding="utf-8").strip()
 
 
 def test_runner_uses_a_fresh_conversation_per_pass(tmp_path: Path) -> None:
@@ -278,7 +184,6 @@ def test_runner_fails_when_summary_pass_writes_nothing(tmp_path: Path) -> None:
 
     assert result.status == "failed"
     assert any("summary" in error and PROJECT_KEY in error for error in result.errors)
-    assert not _report_md(workspace).exists()
 
 
 def test_runner_fails_when_engagement_pass_writes_nothing(tmp_path: Path) -> None:
@@ -289,7 +194,6 @@ def test_runner_fails_when_engagement_pass_writes_nothing(tmp_path: Path) -> Non
 
     assert result.status == "failed"
     assert any("engagement_assessment" in error for error in result.errors)
-    assert not _report_md(workspace).exists()
     # The summary pass ran, the engagement pass ran (and wrote nothing), team-learning never ran.
     assert len(factory.runners) == 2
 
@@ -302,31 +206,13 @@ def test_runner_fails_when_team_learning_pass_writes_nothing(tmp_path: Path) -> 
 
     assert result.status == "failed"
     assert any("team_learning" in error for error in result.errors)
-    assert not _report_md(workspace).exists()
     assert len(factory.runners) == 3
 
 
-def test_runner_clears_stale_report_md_when_run_fails(tmp_path: Path) -> None:
-    # A previous successful run left a report.md; this run fails (the summary pass writes nothing),
-    # so the stale rendered report must not survive beside the new, partial daily-report.json.
-    workspace = copy_basic_daily_workspace(tmp_path)
-    stale = _report_md(workspace)
-    stale.write_text("# stale report from a previous run\n", encoding="utf-8")
-    factory = DailySynthesisAgentSessionFactory(skip_pass=frozenset({"project_summary"}))
-
-    result = _run(factory, workspace)
-
-    assert result.status == "failed"
-    assert not stale.exists()
-
-
-def test_runner_clears_stale_report_md_when_build_raises(tmp_path: Path) -> None:
-    # report.md is reset before Build, so a Build that raises on a corrupt envelope also clears a
-    # stale rendered report rather than leaving it beside a now-absent/partial daily-report.json.
-    # The error propagates out of run (the pipeline marks the task failed); the stale file is gone.
+def test_runner_build_raises_on_corrupt_envelope(tmp_path: Path) -> None:
+    # Build fails loudly on a structurally-invalid post-synthesis work item (a non-controlled kind);
+    # the error propagates out of run (the pipeline marks the task failed) before any pass runs.
     workspace = copy_corrupt_daily_workspace(tmp_path)
-    stale = _report_md(workspace)
-    stale.write_text("# stale report from a previous run\n", encoding="utf-8")
     factory = DailySynthesisAgentSessionFactory()
     runner = DailySynthesisRunner(agent_factory=factory)
 
@@ -337,15 +223,13 @@ def test_runner_clears_stale_report_md_when_build_raises(tmp_path: Path) -> None
     with pytest.raises(PromptDiaryError):
         asyncio.run(run())
 
-    assert not stale.exists()
     # Build raised before any pass ran, so no synthesize conversation was minted.
     assert factory.runners == []
 
 
 def test_runner_fails_when_finalize_rejects(tmp_path: Path) -> None:
     # All three passes write valid slots, but the team-learning turn leaves a malformed citation
-    # (missing its resolved lines); Finalize rejects, and the runner surfaces that as a failure and
-    # does not render report.md.
+    # (missing its resolved lines); Finalize rejects, and the runner surfaces that as a failure.
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory(tamper_citation=True)
 
@@ -353,13 +237,12 @@ def test_runner_fails_when_finalize_rejects(tmp_path: Path) -> None:
 
     assert result.status == "failed"
     assert result.errors
-    assert not _report_md(workspace).exists()
 
 
 # --- empty report --------------------------------------------------------------------------------
 
 
-def test_runner_empty_workspace_runs_no_passes_and_renders_fallbacks(tmp_path: Path) -> None:
+def test_runner_empty_workspace_runs_no_passes(tmp_path: Path) -> None:
     workspace = empty_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
 
@@ -372,13 +255,9 @@ def test_runner_empty_workspace_runs_no_passes_and_renders_fallbacks(tmp_path: P
     assert report["engagement_assessment"] is None
     assert report["team_learning"] is None
     assert report["overall_confidence"] is None
-    text = _report_md(workspace).read_text(encoding="utf-8")
-    assert text.strip()
-    assert "Insufficient supported engagement evidence" in text
-    assert "No supported reusable agent-driving pattern" in text
 
 
-def test_runner_gap_only_project_runs_no_passes_and_renders_fallbacks(tmp_path: Path) -> None:
+def test_runner_gap_only_project_runs_no_passes(tmp_path: Path) -> None:
     # A project whose only work item is an evidence_gap_item has no committed, citable turn: the
     # runner must treat it as no reportable work — no summary, engagement, or team-learning pass —
     # rather than failing on a summary it could never cite.
@@ -395,7 +274,3 @@ def test_runner_gap_only_project_runs_no_passes_and_renders_fallbacks(tmp_path: 
     assert report["engagement_assessment"] is None
     assert report["team_learning"] is None
     assert report["overall_confidence"] is None
-    text = _report_md(workspace).read_text(encoding="utf-8")
-    assert text.strip()
-    assert "Insufficient supported engagement evidence" in text
-    assert "No supported reusable agent-driving pattern" in text

@@ -29,6 +29,11 @@ from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
 from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
+from prompt_diary.generate.rendering import (
+    NotionRenderResult,
+    RenderingRunner,
+    render_workspace_report_to_notion,
+)
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
 from prompt_diary.mcp.codex_config import (
@@ -42,7 +47,6 @@ from prompt_diary.prepare.workspace import (
     workspace_path_for_target,
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
-from prompt_diary.render.notion import NotionRenderResult, render_workspace_report_to_notion
 from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
@@ -64,6 +68,18 @@ NotionOption = Annotated[
             "--notion to require it (errors if unconfigured) or --no-notion to skip. "
             f"Configure with `prompt-diary config init`, or ${NOTION_DATABASE_ENV} / "
             f"${NOTION_TOKEN_ENV}."
+        ),
+    ),
+]
+
+RenderNotionOption = Annotated[
+    bool,
+    typer.Option(
+        "--notion",
+        help=(
+            "After rendering, publish the report as a new row in the configured Notion database. "
+            f"Requires configuration (`prompt-diary config init`, or ${NOTION_TOKEN_ENV} and "
+            f"${NOTION_DATABASE_ENV})."
         ),
     ),
 ]
@@ -98,6 +114,7 @@ def build_generation_workflow() -> GenerateWorkspaceWorkflow:
             "evidence_extraction": EvidenceExtractionRunner(agent_factory=factory),
             "project_synthesis": ProjectSynthesisRunner(agent_factory=factory),
             "daily_synthesis": DailySynthesisRunner(agent_factory=factory),
+            "rendering": RenderingRunner(),
         }
 
     return GenerateWorkspaceWorkflow(
@@ -116,6 +133,7 @@ def register(app: typer.Typer) -> None:
     generate_app.command(name="evidence")(generate_evidence)
     generate_app.command(name="project")(generate_project)
     generate_app.command(name="daily")(generate_daily)
+    generate_app.command(name="render")(generate_render)
     app.add_typer(generate_app, name="generate")
 
 
@@ -270,6 +288,53 @@ def generate_daily(
         quiet=quiet,
         reports_root=_group_reports_root(ctx, reports_root),
     )
+
+
+def generate_render(
+    ctx: typer.Context,
+    *,
+    date: DateOption = None,
+    today: TodayOption = False,
+    timezone: TimezoneOption = None,
+    quiet: QuietOption = False,
+    notion: RenderNotionOption = False,
+    reports_root: ReportsRootOption = None,
+) -> None:
+    """Render the report views from daily-report.json, optionally publishing to Notion."""
+    try:
+        # Resolve the publish target before rendering so --notion fails fast on an unconfigured
+        # machine. Unlike the full pipeline, bare `generate render` never publishes — only an
+        # explicit --notion does — so publishing requires configuration here.
+        notion_target = resolve_notion_publish(notion=True) if notion else None
+        root = resolve_reports_root(_group_reports_root(ctx, reports_root))
+        workspace_path = workspace_for_existing_target(
+            date=date,
+            today=today,
+            timezone_name=timezone,
+            reports_root=root,
+        )
+        workflow = build_generation_workflow()
+        with build_cli_reporter(quiet=quiet) as reporter:
+            result = workflow.run_phase(
+                workspace_path=workspace_path,
+                phase="render",
+                reporter=reporter,
+            )
+            # Publishing is an outward-facing step after a successful render; it stays inside the
+            # reporter context so its timing is included.
+            published = (
+                render_report_to_notion_messages(
+                    workspace_path,
+                    credentials=notion_target,
+                    progress_reporter=reporter,
+                )
+                if notion_target is not None
+                else ()
+            )
+            timing = reporter.timing_summary_message()
+    except PromptDiaryError as exc:
+        exit_with_error(exc)
+    echo_messages((*result.messages, *published, *((timing,) if timing is not None else ())))
 
 
 def workspace_for_generate_target(

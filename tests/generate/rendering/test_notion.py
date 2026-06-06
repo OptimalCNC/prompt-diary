@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-import prompt_diary.render.notion as render_api
+import prompt_diary.generate.rendering.notion as render_api
 from prompt_diary.config import ReporterTarget, StoredConfig, save_config
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.notion_publish import PublishResult
+from prompt_diary.generate.rendering.notion_publish import PublishResult
 from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from tests.support.daily_synthesis import (
     build_daily_report_via_api,
@@ -120,7 +120,7 @@ def test_render_workspace_report_to_notion_regenerates_payload_before_publishing
     assert result.url == "https://notion.so/page-x"
 
 
-def test_render_workspace_report_to_notion_reports_rendering_phase(
+def test_render_workspace_report_to_notion_reports_publish_phase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -138,12 +138,12 @@ def test_render_workspace_report_to_notion_reports_rendering_phase(
         progress_reporter=reporter,
     )
 
-    rendering_events = [
+    publish_events = [
         event
         for event in reporter.events
-        if isinstance(event, PhaseStarted | PhaseFinished) and event.phase_id == "rendering"
+        if isinstance(event, PhaseStarted | PhaseFinished) and event.phase_id == "publish"
     ]
-    assert [type(event).__name__ for event in rendering_events] == [
+    assert [type(event).__name__ for event in publish_events] == [
         "PhaseStarted",
         "PhaseFinished",
     ]

@@ -1,11 +1,12 @@
 # Daily Report Synthesis
 
-Daily report synthesis is the final report-producing generation phase. It turns project work items
-into a semantic daily report model, `daily-report.json`, where the three
+Daily report synthesis is the convergence *synthesis* phase. It turns project work items into a
+semantic daily report model, `daily-report.json`, where the three
 [product purposes](../product.md#purposes) must converge from one evidence base: work
-communication, engagement review, and team learning — each honest about its evidence. Reader-facing views —
-`report.md`, `report.notion.json`, and any future view — are rendered from that model by a deterministic step; the
-synthesizer that builds the model is view-agnostic.
+communication, engagement review, and team learning — each honest about its evidence. The
+[Rendering](./rendering.md) phase then projects that model into `report.md` (the Markdown view) and
+`report.notion.json` (the Notion page payload the publish step uploads to create the Notion page),
+plus any future engine; the synthesizer that builds the model is view-agnostic.
 
 Daily report synthesis starts from the prepared workspace and generation artifacts. It must not
 rediscover raw sessions outside the prepared workspace.
@@ -25,22 +26,19 @@ Inputs:
 Outputs:
 
 - `daily-report.json` in the prepared workspace root — built by the synthesizer agent
-- `report.md` in the prepared workspace root — rendered from `daily-report.json`
-- `report.notion.json` in the prepared workspace root — the deterministic Notion page payload
-  rendered from `daily-report.json`
 
-`daily-report.json` is the authoritative report artifact and the synthesizer agent's only output.
-`report.md` and `report.notion.json` are deterministic views rendered from that model (see
-[Rendering](#rendering)). The phase returns them, but the responsibilities are separate: synthesis
-builds the model, rendering projects it into views. A model that misses required fields, uses
-invalid citations, hides required evidence-quality limits, or includes forbidden high-risk content
-is a synthesis bug; a view that adds, drops, or alters a claim relative to the model is a rendering
-bug.
+`daily-report.json` is the authoritative report artifact and this phase's only output. The Markdown
+view `report.md` and the Notion page payload `report.notion.json` (which the publish step uploads to
+create the Notion page) are deterministic projections of that model produced by the
+[Rendering](./rendering.md) phase, not by this one: synthesis builds the model, rendering projects it
+into those outputs. A model that misses required fields, uses invalid citations, hides required
+evidence-quality limits, or includes forbidden high-risk content is a synthesis bug; a rendered
+output that adds, drops, or alters a claim relative to the model is a rendering bug.
 
 ## Report Contract
 
 Daily report synthesis owns the daily report data model — the content of `daily-report.json` — from
-which the reader-facing views in [Rendering](#rendering) are produced. Its shape is set by the
+which the reader-facing views in [Rendering](./rendering.md) are produced. Its shape is set by the
 abstract layout: the union of every block's `needs` is what `daily-report.json` must carry, and the
 [Field Provenance](#field-provenance) tables below record which of those fields are AI-`synthesize`d
 versus deterministically built.
@@ -200,283 +198,12 @@ they render inline on each claim, so their provenance lives with whichever secti
 
 ## Rendering
 
-Rendering turns `daily-report.json` into reader-facing views through an intermediate,
-engine-independent **abstract layout**:
-
-```text
-daily-report.json   →   abstract layout   →   { report.md, Notion, … }
- (semantic model)        (presentation tree)     (engine adapters)
-```
-
-The abstract layout is the single source of truth for the report's *structure* — its sections,
-their order, and the blocks inside them — written without any engine's syntax. Each engine renderer
-walks the layout and serializes its blocks into that engine's constructs, degrading gracefully where
-an engine lacks one. Rendering stays deterministic and adds no judgment: every claim, citation,
-confidence value, and evidence-quality signal in a view comes from the model through the layout. A
-view that reads sessions, evidence cards, or work items, or introduces content absent from the
-model, is a rendering bug. Because rendering is deterministic, the "no new claims" guarantee is
-structural, not a rule the synthesizer must remember.
-
-Each block also declares the model data it consumes (`needs:`). Those needs are the layout's claim
-on the contract — the union of every `needs` is what `daily-report.json` must carry — so settling
-the layout settles the model, and it is the living structure this page tracks. Each field's
-provenance — `lift` / `derive` / `resolve` / `synthesize` — is recorded in
-[Field Provenance](#field-provenance); only `synthesize` fields need the agent.
-
-### Abstract Layout
-
-Blocks (engine-independent presentation primitives):
-
-- `Document(title, properties)` — the report root; `properties` are key/value metadata.
-- `Section(title)` — a titled, ordered region with a stated purpose; may nest.
-- `Group(label)` — a labeled cluster of blocks repeated over a collection, such as one per project.
-- `Prose(text, citation?)` — a run of rich text, optionally carrying an inline citation.
-- `List(bullet|number)` — a sequence of items, each prose or nested blocks.
-- `Table(columns, rows, affordances)` — tabular data; `affordances` declare the default sort,
-  group-by, and filter-by keys. Rows bind to a model collection.
-- `Tag(value, scale)` — one controlled value from a named scale (materiality, disposition,
-  confidence, type); the key that filtering and sorting use.
-- `Citation(refs)` — one or more evidence references resolving to `{session, lines}`.
-- `Callout(tone)` — set-apart emphasis for limits, warnings, or gaps.
-- `Toggle(label)` — a collapsible region, collapsed by default; reveals its children on demand.
-- `Empty(fallback)` — explicit empty-state when a section's data is absent.
-
-Layout (all sections below are designed):
-
-```text
-Document  "Prompt Diary Report — {report_date}"
-  properties: status{final|partial} · window{start–end, tz} · overall_confidence{high|medium|low}
-  needs: report_date, status, window, overall_confidence
-
-Section "Executive Summary" — the 30-second digest: what got done and what's open
-  List(bullet)  top outcomes (curated across projects)     — Prose · Citation
-  List(bullet)  headline open items (unfinished / blocked) — Prose · Citation
-      needs: executive_summary → { top_outcomes[] → {text, citations},
-                                   open_items[]   → {text, citations} }
-
-Section "Work by Project" — the day's outcomes, grouped by project then work item
-  Group per project (ordered by significance)
-    Prose   project summary — produced / finished / in-progress (qualitative) · Citation(work items)
-    List of work items (material first):
-      Prose    {work item title}              · Tag(disposition) · Tag(confidence)
-      Toggle "Why" (folded)                   — trigger.summary (+ agent_reaction) · Citation
-      Toggle "User messages" (folded)         — verbatim source_user_messages for the work item's turns · Citation
-      List of outcomes — what changed · Tag(confidence) · Citation
-      Callout(limit) (only if any) — what this work item did not verify or confirm · work_items[].limits
-      (a work item with no material outcome shows its terminal disposition in place of the outcomes)
-    Toggle "Minor activity" (folded)          — the project's no-material / trivial work items
-    needs: projects[] → { project_label, summary → {text, citations}, work_items[] → { title, kind,
-           disposition, confidence, trigger.summary, agent_reaction.summary,
-           outcomes[] → {what_changed, confidence, citations},
-           terminal_states[] → {summary, citations}, limits[] } }
-           + source_user_messages by covered_turn → verbatim {messages} per (session_ref, turn_ref)
-
-Section "Engagement Assessment" — a per-person, cited reading of how the user directed, reviewed, corrected, and resumed the work; judged from their messages, not volume, and never a score
-  Prose   overall reading — a short qualitative judgment of how substantively the user's messages
-          steered the day's work, grounded in the observations below and explicit about limits · synthesize · Citation
-  Group "Direction"  (only if any)  — framing, goals, supplied context, acceptance criteria
-    List(bullet)  {observation}                              · Tag(confidence) · Citation
-  Group "Review"     (only if any)  — checking a result before moving on (approval, feedback)
-    List(bullet)  {observation}                              · Tag(confidence) · Citation
-  Group "Correction" (only if any)  — redirecting the agent after a wrong or failed attempt
-    List(bullet)  {observation}                              · Tag(confidence) · Citation
-  Group "Recovery"   (only if any)  — resuming stalled, interrupted, or blocked work
-    List(bullet)  {observation}                              · Tag(confidence) · Citation
-  Callout(limit)  what could not be observed — offline thinking and review are not visible, and
-                  interaction precision is limited to the work-item grain
-  needs: engagement_assessment → { overall_reading → {text, citations, confidence},
-           observations[] → {dimension, statement, citations, confidence}, limits[] }
-         evaluated per work item from { trigger.summary, agent_reaction.summary, outcomes[],
-           terminal_states[] } + the work item's source_user_messages (verbatim, by covered_turn)
-
-Section "Team Learning" — reusable, promotable, and avoidable patterns in how the work was done,
-                          judged by productivity (good outcomes per unit of human attention), not by
-                          prompt polish; abstracted for the team, within-day (trends deferred)
-  Prose   key takeaways — the few patterns most worth the team's attention, or a note that the day
-          shows nothing strong enough to generalize · synthesize · Citation
-  Group "Promote" (only if any)  — practices that reached good outcomes efficiently
-                                   (incl. a suitable start + well-placed corrections)
-    List(bullet)  {pattern} — what worked and why it was productive       · Tag(confidence) · Citation
-  Group "Avoid"   (only if any)  — practices that cost attention or quality: non-converging
-                                   correction churn, rework from unclear goals, over-engineering upfront
-    List(bullet)  {pattern} — what cost effort/quality + the cheaper way   · Tag(confidence) · Citation
-  Group "Reuse"   (only if any)  — workflows worth capturing (stable inputs, repeatable steps, clear output)
-    List(bullet)  {pattern} — the repeatable shape (+ light suggested form) · Tag(confidence) · Citation
-  Callout(limit)  productivity is read from observable proxies (outcome vs. visible back-and-forth),
-                  never a precise effort metric; single-day evidence — recurrence and "improving over
-                  time" need cross-day data (deferred); one-offs are flagged, not asserted
-  needs: team_learning → { takeaways → {text, citations, confidence},
-           patterns[] → {kind(promote|avoid|reuse), statement, rationale, recurrence, citations, confidence},
-           limits[] }
-         judged from each work item's arc — trigger → corrections (covered_turns / source_user_messages)
-           → agent_reaction → outcomes / terminal_states — reading message quality in context;
-           seeded by process_outcome (reuse), repeated failed/blocked + non-converging loops (avoid)
-
-rule: any Section whose data is empty renders as Empty(fallback)
-```
-
-Notes on the purpose-1 region:
-
-- Executive Summary and the per-project outcomes render the same set at two altitudes: the digest is
-  the curated cross-project headline; Work by Project is the complete, grouped detail. They must stay
-  consistent.
-- `what changed` is lifted from a work item's consolidated `outcomes[].summary` — one list item per
-  outcome — or, for a work item that ended without material output, its `terminal_states[].summary`.
-  The work item `title` is the group label, and its text only as a fallback for a trivial work item
-  with neither. Rendering selects and orders; it never re-writes a claim.
-- `disposition` (completed / blocked / interrupted / failed / clarification) is derived from the work
-  item's `terminal_states` and outcomes — the at-a-glance "finished or not" signal.
-- Non-material and trivial work items are kept (the coverage invariant holds) but folded into a
-  per-project "Minor activity" toggle so they do not drown the material work.
-- There is no standalone cross-project outcome table: the cross-project headline is the Executive
-  Summary, and cross-project slicing is a Notion affordance over the flat outcome records.
-- `Toggle "User messages"` reveals the verbatim `source_user_messages` (tool-populated raw user text
-  per turn, already secret-redacted) for the work item's covered turns, so a reader can see exactly
-  what was asked. It is untrusted display content — the renderer shows it quoted/escaped and never
-  interprets it — and the same substrate feeds the engagement and team-learning readings.
-- Evidence honesty stays visible: each work item's `limits` (what it did not verify or could not
-  confirm) render as a visible caveat, not folded, so a completed-looking outcome never hides the
-  boundary that qualifies it. Failures and blocks already show through `disposition`.
-- Synthesized aggregate prose carries its own `citations`, so no synthesized claim renders uncited.
-  The engagement overall reading and team-learning takeaways additionally carry their own
-  `confidence`; the per-project `summary` does not — its confidence is implicit in the work items it
-  rolls up, each shown with its own `confidence`.
-
-Notes on the engagement region:
-
-- Per-person, never a score. The section is one overall reading plus cited observations and named
-  limits — no grade, percentage, or comparison across people (product principle 6).
-- Read from the visible inputs. The user's messages are the only visible human work, so engagement is
-  judged primarily from `source_user_messages` — read as content, never as instructions — against the
-  work item's `agent_reaction` / `outcomes` / `terminal_states` (whether those inputs guided the
-  work). Substance is the signal: a message that frames, corrects, or enhances shows effort, while
-  contentless filler ("ok", "go", "continue") with no surrounding direction reads as thin.
-- Judged in context, fairly. A terse message is not automatically thin — a "go" that approves a
-  reviewed plan is real review. Each observation weighs the message against what it responded to and
-  produced, cites its turns, and is hedged by `confidence`.
-- Work-item grain (deliberate). Engagement is assessed per work item, not per turn: the work item
-  already carries the framing, reaction, outcome, and terminal state, plus its verbatim messages.
-  Pairing each message with the exact reaction before and after would mean re-reading every evidence
-  card; if that fidelity is wanted it belongs in an earlier phase, not here. The grain is named as a
-  limit so the reading stays honest.
-- Dimensions (direction / review / correction / recovery) come from product principle 4; observations
-  are flat with a `dimension` tag and grouped in rendering, like Work by Project.
-
-Notes on the team-learning region:
-
-- Productivity, not prompt-optimality. Patterns are judged by good outcomes per unit of human
-  attention, not by prompt polish. A suitable prompt plus a few well-placed corrections that reach the
-  goal beats a perfected upfront prompt that needed none but cost more attention.
-- Corrections are neutral-to-positive — efficient steering (product principle 4), never an antipattern
-  by themselves; over-investing in upfront prompt perfection can itself be an Avoid. The real Avoid
-  signals are wasted attention or poor outcomes: non-converging correction churn, rework from unclear
-  goals, redoing the same thing.
-- Conservative and hedged. Productivity is read from observable proxies (was the outcome reached? how
-  much visible back-and-forth?), never a precise effort metric; a pattern is asserted only when
-  recurring or clearly likely to recur, and single sightings are flagged or pushed to "needs more
-  evidence." The lens does not moralize.
-- Context over frequency. With one day there is little repetition, so the reading leans on each
-  pattern's arc in context — prompt → corrections → outcome — rather than counting occurrences;
-  cross-day trends ("improving over time") are deferred.
-- Patterns, not a verdict on the person, and aligned with engagement: neither rewards volume, both
-  treat well-placed corrections as good. Team learning abstracts the shareable pattern; engagement
-  attributes the behavior. Coverage of no-material / interrupted items stays in Work by Project's
-  "Minor activity"; this section surfaces only the recurring pattern they may reveal.
-- Recommended form (Reuse only): a light, generic suggestion — a reusable prompt, checklist, or
-  playbook — never a tool-specific build on one day's evidence.
-
-### Markdown Rendering
-
-Markdown rendering serializes the abstract layout to `report.md`. Markdown is a presentation format,
-not the source of truth for the report's structure or evidence model.
-
-Block → Markdown:
-
-- `Document` → `# {title}` followed by a status / window / overall-confidence line.
-- `Section` → a `##` heading; nested sections deepen to `###`.
-- `Group` → a `###` subheading carrying the label.
-- `Prose` → a paragraph; an inline `Citation` is appended.
-- `List` → `-` or `1.` items.
-- `Table` → a GitHub pipe table. Interactive affordances are approximated: rows are pre-sorted by
-  the layout's default sort (material first), group-by renders as a leading column or repeated
-  sub-tables, and filtering is left to the reader's text search.
-- `Tag` → plain text, optionally a marker such as ● material / ○ non-material.
-- `Citation` → `S0001:45-52`, the project-scoped session ref and line range.
-- `Callout` → a blockquote.
-- `Toggle` → a `<details><summary>` block (HTML-in-Markdown), collapsed by default.
-- `Empty` → the section's fallback bullet:
-  - Executive Summary: `- No supported work claims found for this report window.`
-  - Work by Project: `- No supported project-level work items found for this report window.`
-  - Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
-  - Team Learning: `- No supported reusable agent-driving pattern found.`
-
-Every concrete work claim in a claim-bearing section cites lines inside exactly one indexed turn
-using the report citation format from the
-[Evidence Contract](./evidence-contract.md#session-evidence-cards). The renderer must not add
-claim-bearing prose absent from `daily-report.json`.
-
-### Notion Rendering
-
-Notion rendering serializes the same abstract layout into a Notion page payload. Like Markdown
-rendering it is deterministic, read-only over the model, and adds no claim-bearing content. It is
-split in two: a pure renderer
-(`daily_synthesis/render_notion.py`) that walks the layout into Notion block JSON and writes it to
-`report.notion.json`, and a publisher (`daily_synthesis/notion_publish.py`, with the real SDK behind
-`notion_client_adapter.py`) that pushes that payload. `report.notion.json` is a deterministic
-artifact emitted on every run beside `report.md`; `report render notion` also regenerates it from
-`daily-report.json` immediately before publishing.
-
-Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
-
-- `Document` → the page: its title, plus a `properties` map (report_date, status, window, overall
-  confidence) the publisher maps to database columns.
-- `Section` → a `heading_2`; a `Group` that is a direct section child (a project, an
-  engagement/team-learning dimension) → a `heading_3`.
-- `Group` that is a list item (a work item) → a native **`toggle`** whose label carries the
-  disposition and confidence and whose blocks nest inside — a collapsible record, the idiomatic
-  Notion form for a titled cluster in a list.
-- `Prose` → a `paragraph`, or a `bulleted_list_item` / `numbered_list_item` inside a list; its
-  confidence tags and `Citation` ride in the same rich text.
-- `Citation` → an inline-`code` run (e.g. `ReportGenerator · S0001:2-8`), never a link — workspace
-  session references have no Notion URL.
-- `Toggle` → a native `toggle`; `Callout` tone `quote` (a verbatim user message) → a `quote` block,
-  tone `limit` → a `callout` block with a warning icon; `Empty` → the Markdown view's fallback text.
-
-Safety is structural: every model-derived string is placed only in a plain rich-text `text.content`
-(never a `link` or other interpreted field), and Notion stores content literally, so no escaping is
-needed and a session-derived string cannot forge structure. Notion's content limits are honored in
-the payload (each `text.content` ≤ 2000 chars; each block's rich-text array ≤ 100 runs, truncating a
-pathologically long single string with a fixed marker).
-
-Publishing (`report render notion`): the render command resolves an existing workspace, requires
-`daily-report.json`, regenerates `report.notion.json`, then invokes the publisher. The publisher
-reads the integration token and target database id from the stored config (`prompt-diary config
-init`) or the `NOTION_API_KEY` / `NOTION_PAGE_ID` env vars (so credentials never pass on the command
-line) and creates a **new row** per report — re-publishing never edits or deletes an existing row,
-so the user prunes stale rows by hand. `report generate` delegates to this same render-owned path
-after a successful pipeline when Notion publishing is active (`--notion`, or default configured
-publishing without `--no-notion`). Property mapping is schema-driven: the database's single
-title-typed property gets the page title, every date-typed property gets the report date, the
-configured reporter name (from `config init` — the `汇报人` column by default, retargetable via
-`notion_reporter_property`) is written into that one text property when it exists. Whenever the
-reporter cannot be written — the column is missing, is present but not a text property, or no name is
-configured — the publish still succeeds but prints a `Warning:` to stderr rather than silently
-leaving the column empty (a database with no reporter column at all is not flagged). All other
-property types are left untouched. A creation timestamp should use Notion's native **Created time** property
-type (with *Include time* enabled), which Notion auto-fills with the upload instant; because the
-publisher writes only `date`-typed columns, it never overwrites a `created_time` column. Metadata the
-database has no column for (status, window, overall confidence) is surfaced in a status-colored
-banner callout at the top of the page body (final → green, partial → yellow), followed by a table of
-contents, so the report is self-describing and navigable against any schema. The page is created
-empty and its block tree appended one nesting level at a time, keeping each request within Notion's
-per-request and create-nesting limits.
-
-The previously open questions are resolved: citations render as inline code (no link); a run always
-appends a new page (never in place); `partial` versus `final` `status` shows in the color-coded
-metadata banner (and in the `status` column if the database has one); and the `汇报人` reporter is a
-configured free-form name (like `git config user.name`, not a Notion user) written into a text
-column. Deferred: find-or-create of the target database, and database-schema introspection beyond
-property-type matching.
+The reader-facing outputs are produced by the [Rendering](./rendering.md) phase, which reads
+`daily-report.json` and writes `report.md` (the Markdown view) and `report.notion.json` (the Notion
+page payload the publish step uploads to create the Notion page). Rendering is deterministic and
+agent-free, so those outputs add no claims: every claim, citation, confidence value, and
+evidence-quality signal in them comes from this model. The abstract layout, the block vocabulary,
+and the Block→Markdown / Block→Notion mappings live on that page.
 
 ## AI Synthesis Workflow
 
@@ -489,7 +216,7 @@ left to prompt discipline.
 This page is developer-facing — no agent reads it. Each pass sees only its own rendered prompt and the
 workspace files it opens, so any rule a pass must follow has to be restated in that prompt's source.
 Every pass is view-agnostic: it writes model fields only and never mentions `report.md`, Markdown, or
-Notion (rendering consumes the model afterwards — see [Rendering](#rendering)).
+Notion (rendering consumes the model afterwards — see [Rendering](./rendering.md)).
 
 ### Steps
 

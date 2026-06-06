@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from prompt_diary.generate.daily_synthesis.layout import (
+from prompt_diary.generate.rendering.layout import (
     Citation,
     Document,
     Group,
@@ -30,7 +30,7 @@ from prompt_diary.generate.daily_synthesis.layout import (
     Tag,
     build_layout,
 )
-from prompt_diary.generate.daily_synthesis.render_notion import (
+from prompt_diary.generate.rendering.render_notion import (
     render_notion,
     render_notion_artifact,
 )

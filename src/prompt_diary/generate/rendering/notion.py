@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 from prompt_diary.config import resolve_notion_credentials, resolve_notion_reporter
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.notion_client_adapter import build_notion_client
-from prompt_diary.generate.daily_synthesis.notion_publish import publish_workspace_report
-from prompt_diary.generate.daily_synthesis.render_notion import render_notion_artifact
+from prompt_diary.generate.rendering.notion_client_adapter import build_notion_client
+from prompt_diary.generate.rendering.notion_publish import publish_workspace_report
+from prompt_diary.generate.rendering.render_notion import render_notion_artifact
 from prompt_diary.progress.events import PhaseFinished, PhaseStarted
 from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.secret import REDACTED
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from prompt_diary.generate.daily_synthesis.notion_publish import NotionClientProtocol
+    from prompt_diary.generate.rendering.notion_publish import NotionClientProtocol
     from prompt_diary.progress.reporter import ProgressReporter
     from prompt_diary.secret import Secret
 
@@ -53,9 +53,7 @@ def render_workspace_report_to_notion(
 
     redacted = ""
     status = "failed"
-    progress_reporter.emit(
-        PhaseStarted(at=time.monotonic(), phase_id="rendering", label="rendering")
-    )
+    progress_reporter.emit(PhaseStarted(at=time.monotonic(), phase_id="publish", label="publish"))
     try:
         output_path = workspace_path / _NOTION_REPORT_NAME
         try:
@@ -104,7 +102,7 @@ def render_workspace_report_to_notion(
             )
     finally:
         progress_reporter.emit(
-            PhaseFinished(at=time.monotonic(), phase_id="rendering", status=status)
+            PhaseFinished(at=time.monotonic(), phase_id="publish", status=status)
         )
     raise PromptDiaryError(redacted)
 

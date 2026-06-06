@@ -27,13 +27,13 @@ on the reporter protocol, never on Rich.
 ## Emit sites
 
 - `prepare/workspace.py` — prepare phase timing and prepare stage steps.
-- `generate/pipeline.py` — aggregate evidence/project/daily phase timing,
+- `generate/pipeline.py` — aggregate evidence/project/daily/rendering phase timing,
   `TaskStarted`/`TaskFinished` (including `blocked`), threading the reporter to each phase runner's
-  `run(..., reporter=...)`.
+  `run(..., reporter=...)`. The in-pipeline rendering phase timing comes from the pipeline like the
+  other kinds; the rendering runner emits no phase events of its own.
 - `generate/evidence_extraction/runner.py` — `TurnAdvanced` per committed turn.
-- `generate/daily_synthesis/runner.py` — local Markdown/Notion artifact render timing.
-- `render/notion.py` — Notion render-and-publish timing for `generate` publishing and
-  `render notion`.
+- `generate/rendering/notion.py` — Notion publish timing for `generate` publishing and
+  `generate render --notion`; its progress phase id is `publish`.
 - `generate/workflow.py` — `RunStarted`/`RunFinished` and standalone phase timing.
 
 A phase runner that wants per-item progress emits via the `reporter` argument it receives; runners

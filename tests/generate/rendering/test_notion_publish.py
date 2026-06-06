@@ -18,11 +18,11 @@ import pytest
 
 from prompt_diary.config import ReporterTarget
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.notion_publish import (
+from prompt_diary.generate.rendering.notion_publish import (
     publish_report,
     publish_workspace_report,
 )
-from prompt_diary.generate.daily_synthesis.render_notion import (
+from prompt_diary.generate.rendering.render_notion import (
     NotionPagePayload,
     render_notion_artifact,
 )

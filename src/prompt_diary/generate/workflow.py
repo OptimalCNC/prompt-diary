@@ -19,6 +19,7 @@ from prompt_diary.generate.pipeline import (
     daily_synthesis_task_id,
     evidence_task_id,
     project_synthesis_task_id,
+    rendering_task_id,
     run_generation_task_with_lifecycle,
 )
 from prompt_diary.progress.events import (
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
     from prompt_diary.agent import AgentSessionFactory
     from prompt_diary.generate.pipeline import GenerationPlan
 
-PhaseName = Literal["evidence", "project", "daily"]
+PhaseName = Literal["evidence", "project", "daily", "render"]
 
 
 def _kind_totals(plan: GenerationPlan) -> tuple[tuple[str, int], ...]:
@@ -282,7 +283,9 @@ def _task_id_for_phase(
         if project_key is None:
             raise PromptDiaryError(_project_scope_message())
         return project_synthesis_task_id(project_key)
-    return daily_synthesis_task_id()
+    if phase == "daily":
+        return daily_synthesis_task_id()
+    return rendering_task_id()
 
 
 def _pipeline_failed_message(result: PipelineRunResult) -> str:
@@ -322,7 +325,9 @@ def _phase_id_for_kind(kind: TaskKind) -> str:
         return "evidence"
     if kind == "project_synthesis":
         return "project"
-    return "daily"
+    if kind == "daily_synthesis":
+        return "daily"
+    return "rendering"
 
 
 def _phase_label_for_kind(kind: TaskKind) -> str:

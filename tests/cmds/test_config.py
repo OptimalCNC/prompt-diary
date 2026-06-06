@@ -19,7 +19,7 @@ from prompt_diary.config import (
     save_config,
 )
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.notion_validate import (
+from prompt_diary.generate.rendering.notion_validate import (
     NotionDatabaseInfo,
     NotionIdentity,
 )

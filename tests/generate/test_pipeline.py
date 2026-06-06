@@ -23,6 +23,7 @@ from prompt_diary.generate.pipeline import (
     daily_synthesis_task_id,
     evidence_task_id,
     project_synthesis_task_id,
+    rendering_task_id,
     run_generation_task,
 )
 from prompt_diary.generate.workspace import IndexedSession, PreparedProject, load_prepared_workspace
@@ -59,6 +60,7 @@ def test_generation_plan_builds_project_local_fan_in(tmp_path: Path) -> None:
         "evidence:Beta-222222222222:S0001",
         "project:Beta-222222222222",
         "daily",
+        "render",
     )
     alpha_project = tasks[project_synthesis_task_id("Alpha-111111111111")]
     assert alpha_project.depends_on == (
@@ -80,6 +82,13 @@ def test_generation_plan_builds_project_local_fan_in(tmp_path: Path) -> None:
     )
     assert [artifact.path.as_posix() for artifact in daily.output_artifacts] == [
         "daily-report.json",
+    ]
+    rendering = tasks[rendering_task_id()]
+    assert rendering.depends_on == (daily_synthesis_task_id(),)
+    assert [artifact.path.as_posix() for artifact in rendering.prerequisite_artifacts] == [
+        "daily-report.json",
+    ]
+    assert [artifact.path.as_posix() for artifact in rendering.output_artifacts] == [
         "report.md",
         "report.notion.json",
     ]
@@ -107,7 +116,8 @@ def test_pipeline_runs_mock_phases_and_writes_durable_artifacts(tmp_path: Path) 
     assert (workspace / "projects" / "Alpha-111111111111" / "project-synthesis.json").exists()
     assert (workspace / "daily-report.json").exists()
     assert (workspace / "report.md").exists()
-    assert phase_runner.events[-1] == "daily"
+    assert (workspace / "report.notion.json").exists()
+    assert phase_runner.events[-1] == "render"
 
 
 def test_standalone_task_checks_prerequisites_without_rerunning_previous_phases(
@@ -321,8 +331,8 @@ def test_pipeline_emits_phase_timing_events_for_task_kinds(tmp_path: Path) -> No
 
     started = [event for event in reporter.events if isinstance(event, PhaseStarted)]
     finished = [event for event in reporter.events if isinstance(event, PhaseFinished)]
-    assert [event.phase_id for event in started] == ["evidence", "project", "daily"]
-    assert [event.phase_id for event in finished] == ["evidence", "project", "daily"]
+    assert [event.phase_id for event in started] == ["evidence", "project", "daily", "rendering"]
+    assert [event.phase_id for event in finished] == ["evidence", "project", "daily", "rendering"]
     assert {event.status for event in finished} == {"success"}
 
 
@@ -809,6 +819,7 @@ def _all_phase_runners(phase_runner: PhaseRunner) -> dict[TaskKind, PhaseRunner]
         "evidence_extraction": phase_runner,
         "project_synthesis": phase_runner,
         "daily_synthesis": phase_runner,
+        "rendering": phase_runner,
     }
 
 
@@ -819,7 +830,10 @@ def _write_task_output(workspace_path: Path, task: TaskSpec) -> None:
     if task.kind == "project_synthesis":
         _write_project_synthesis(workspace_path, task)
         return
-    _write_daily_synthesis(workspace_path)
+    if task.kind == "daily_synthesis":
+        _write_daily_synthesis(workspace_path)
+        return
+    _write_rendering(workspace_path)
 
 
 def _write_evidence_card(workspace_path: Path, task: TaskSpec) -> None:
@@ -935,6 +949,9 @@ def _write_daily_synthesis(workspace_path: Path) -> None:
             "evidence_gaps": [],
         },
     )
+
+
+def _write_rendering(workspace_path: Path) -> None:
     (workspace_path / "report.md").write_text(
         "\n".join(
             [
@@ -971,7 +988,7 @@ def _write_daily_synthesis(workspace_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    # The daily task also declares the Notion payload artifact; the mock writes a minimal one so the
+    # The rendering task declares the Notion payload artifact; the mock writes a minimal one so the
     # pipeline's missing-output check passes (the real runner renders it from the layout).
     _write_json(
         workspace_path / "report.notion.json",

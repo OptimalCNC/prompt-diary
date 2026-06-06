@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prompt_diary.generate.daily_synthesis.notion_validate import (
+from prompt_diary.generate.rendering.notion_validate import (
     NotionDatabaseInfo,
     NotionIdentity,
     parse_database_info,

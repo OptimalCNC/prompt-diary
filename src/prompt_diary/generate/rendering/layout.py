@@ -4,7 +4,7 @@ Rendering goes ``daily-report.json`` → **abstract layout** → ``{report.md, N
 module owns the middle term: a tree of presentation primitives that fixes the report's *structure*
 — its sections, their order, and the blocks inside them — without any engine's syntax.
 :func:`build_layout` projects a finalized report model into that tree; each engine renderer (see
-:mod:`prompt_diary.generate.daily_synthesis.render_markdown`) walks it and serializes the blocks.
+:mod:`prompt_diary.generate.rendering.render_markdown`) walks it and serializes the blocks.
 
 The projection adds no claim-bearing content: every string a block carries — prose, citation, tag,
 limit, verbatim message — is copied from the model, never synthesized or inferred. That "no new

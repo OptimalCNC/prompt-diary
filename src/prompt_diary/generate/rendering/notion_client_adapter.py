@@ -1,7 +1,7 @@
 """The real ``notion_client`` SDK adapter for the Notion publisher.
 
 This is the only module that talks to the network, so it is deliberately thin: it implements
-:class:`~prompt_diary.generate.daily_synthesis.notion_publish.NotionClientProtocol` by forwarding to
+:class:`~prompt_diary.generate.rendering.notion_publish.NotionClientProtocol` by forwarding to
 the ``notion_client`` SDK, with no logic of its own (mapping, banner, and request shaping all live
 in the unit-tested publisher). It is excluded from coverage for the same reason
 ``integrations/codex_runner.py`` is — its behaviour is the SDK's, exercised by the live publish path
@@ -20,14 +20,14 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from notion_client import Client
 
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.notion_validate import (
+from prompt_diary.generate.rendering.notion_validate import (
     parse_database_info,
     parse_identity,
 )
 
 if TYPE_CHECKING:
-    from prompt_diary.generate.daily_synthesis.notion_publish import NotionClientProtocol
-    from prompt_diary.generate.daily_synthesis.notion_validate import (
+    from prompt_diary.generate.rendering.notion_publish import NotionClientProtocol
+    from prompt_diary.generate.rendering.notion_validate import (
         NotionDatabaseInfo,
         NotionIdentity,
     )

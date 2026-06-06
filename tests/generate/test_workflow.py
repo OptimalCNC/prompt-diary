@@ -57,7 +57,7 @@ def test_generate_workflow_runs_pipeline_with_injected_phase_runners(tmp_path: P
     assert result.report_path == workspace / "report.md"
     assert result.daily_report_path == workspace / "daily-report.json"
     assert result.pipeline_result.ok
-    assert phase_runner.events == ["daily"]
+    assert phase_runner.events == ["daily", "render"]
     assert "Reusing existing workspace." in result.messages
     assert factory.entered == 1
     assert factory.exited == 1
@@ -119,6 +119,26 @@ def test_run_generate_phase_runs_one_task(tmp_path: Path) -> None:
     assert result.messages == ("Completed generation task daily.",)
     assert factory.entered == 1
     assert factory.exited == 1
+
+
+def test_run_generate_phase_runs_render(tmp_path: Path) -> None:
+    reports_root = tmp_path / ".reports"
+    workspace = reports_root / "work" / "2026-05-12"
+    _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
+    # The rendering task's prerequisite is the daily-report.json model produced by daily synthesis.
+    (workspace / "daily-report.json").write_text("{}\n", encoding="utf-8")
+    phase_runner = WritingPhaseRunner()
+
+    result = _workflow(phase_runner).run_phase(
+        workspace_path=workspace,
+        phase="render",
+    )
+
+    assert result.task.task_id == "render"
+    assert result.task_result.ok
+    assert phase_runner.events == ["render"]
+    assert (workspace / "report.md").exists()
+    assert (workspace / "report.notion.json").exists()
 
 
 def test_run_generate_phase_enters_context_managed_runner(tmp_path: Path) -> None:
@@ -255,7 +275,7 @@ def test_run_pipeline_emits_run_started_and_finished(tmp_path: Path) -> None:
     total_tasks = sum(count for _, count in started.kind_totals)
     assert total_tasks > 0
     assert finished.succeeded + finished.failed + finished.blocked == total_tasks
-    # The fixture has no projects, so the plan contains only the daily_synthesis task,
+    # The fixture has no projects, so the plan contains the daily_synthesis and rendering tasks,
     # and WritingPhaseRunner always returns status="success".
     assert finished.succeeded == total_tasks
     assert finished.failed == 0
@@ -372,6 +392,7 @@ def _all_phase_runners(phase_runner: PhaseRunner) -> dict[TaskKind, PhaseRunner]
         "evidence_extraction": phase_runner,
         "project_synthesis": phase_runner,
         "daily_synthesis": phase_runner,
+        "rendering": phase_runner,
     }
 
 

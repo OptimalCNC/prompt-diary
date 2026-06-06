@@ -1,7 +1,7 @@
 """Serialize the abstract layout to ``report.md``.
 
 Markdown is a presentation format, not the source of truth for the report's structure or evidence
-model. :func:`render_markdown` walks the :mod:`~prompt_diary.generate.daily_synthesis.layout` tree
+model. :func:`render_markdown` walks the :mod:`~prompt_diary.generate.rendering.layout` tree
 and serializes each block per the doc's Block→Markdown mapping; :func:`render_report` reads the
 finalized ``daily-report.json``, builds the layout, renders it, and atomically writes ``report.md``
 to the workspace root.
@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, cast
 
-from prompt_diary.generate.daily_synthesis.layout import (
+from prompt_diary.generate.rendering.layout import (
     Block,
     Callout,
     Citation,

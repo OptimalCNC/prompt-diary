@@ -1,6 +1,6 @@
 """Publish a rendered Notion page payload into a Notion database.
 
-The deterministic renderer (:mod:`~prompt_diary.generate.daily_synthesis.render_notion`) produces
+The deterministic renderer (:mod:`~prompt_diary.generate.rendering.render_notion`) produces
 ``report.notion.json`` — a title, a metadata-properties map, and a tree of Notion block children.
 This module is the side-effecting half: it pushes that payload to Notion as a **new row (page) in a
 target database**, never editing an existing row (re-publishing simply adds another dated row, which
@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.daily_synthesis.render_notion import NotionPagePayload
+from prompt_diary.generate.rendering.render_notion import NotionPagePayload
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

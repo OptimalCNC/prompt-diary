@@ -34,9 +34,17 @@ def test_build_generation_workflow_builds_workspace_aware_codex_runners(tmp_path
     runners = workflow.build_phase_runners(factory)
 
     assert isinstance(factory, CodexAgentSessionFactory)
-    assert set(runners) == {"evidence_extraction", "project_synthesis", "daily_synthesis"}
-    for runner in runners.values():
-        assert cast("_HasAgentFactory", runner).agent_factory is factory
+    assert set(runners) == {
+        "evidence_extraction",
+        "project_synthesis",
+        "daily_synthesis",
+        "rendering",
+    }
+    # The three agent phases share the one Codex-backed factory; rendering is deterministic and
+    # holds no agent factory.
+    for kind in ("evidence_extraction", "project_synthesis", "daily_synthesis"):
+        assert cast("_HasAgentFactory", runners[kind]).agent_factory is factory
+    assert not hasattr(runners["rendering"], "agent_factory")
 
     overrides = _backend_config(factory).mcp_config_overrides
     assert 'mcp_servers.prompt_diary.command="report"' in overrides

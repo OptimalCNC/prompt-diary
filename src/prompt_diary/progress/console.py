@@ -34,6 +34,7 @@ _KIND_LABELS = (
     ("evidence_extraction", "evidence", "evidence"),
     ("project_synthesis", "project", "project"),
     ("daily_synthesis", "daily", "daily"),
+    ("rendering", "render", "rendering"),
 )
 
 
@@ -79,7 +80,7 @@ class LiveConsoleReporter:
         rows: list[RenderableType] = []
         if state.prepare_sources or state.prepare_step_order or state.prepare_done:
             rows.append(self._render_prepare(state))
-        if state.kind_totals or "rendering" in state.phases:
+        if state.kind_totals or "publish" in state.phases:
             rows.append(self._render_generate(state))
         return Group(*rows) if rows else Text("")
 
@@ -139,11 +140,11 @@ class LiveConsoleReporter:
                     detail = "working"
                 label = row.session_ref or row.project_key or row.task_id
                 table.add_row(Text(f"    {label}"), Text(detail, style="cyan"))
-        if "rendering" in state.phases:
+        if "publish" in state.phases:
             table.add_row(
-                Text("  rendering"),
-                Text(_phase_status(state, "rendering")),
-                Text(_phase_duration(state, "rendering")),
+                Text("  publish"),
+                Text(_phase_status(state, "publish")),
+                Text(_phase_duration(state, "publish")),
             )
         return table
 

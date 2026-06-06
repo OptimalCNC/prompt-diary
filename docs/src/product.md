@@ -97,7 +97,7 @@ The user-facing CLI surface should stay thin and map directly to the workflow:
 ```text
 prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force] [--quiet]
 prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City] [--quiet]
-prompt-diary render notion [--date YYYY-MM-DD] [--timezone Area/City] [--reports-root PATH]
+prompt-diary generate render [--date YYYY-MM-DD | --today] [--timezone Area/City] [--notion] [--quiet]
 prompt-diary mcp serve
 ```
 
@@ -113,16 +113,18 @@ Date targeting rules:
 existing workspace unchanged and print an informational message; `--force` explicitly re-prepares
 it.
 
-`generate` resolves the same target date, ensures a prepared workspace exists, runs the report
-generation workflow in that workspace, writes `report.md`, and validates it before returning
-success. If the workspace is missing, generation internally runs preparation first. If the
-workspace already exists, generation should print an informational message that the existing
-workspace is being reused and that `prepare --force` can refresh it after session updates.
+`generate` resolves the same target date, ensures a prepared workspace exists, and runs the report
+generation pipeline in that workspace. Its final phase, rendering, writes `report.md` (and
+`report.notion.json`) from the semantic model and validates the views before returning success. If
+the workspace is missing, generation internally runs preparation first. If the workspace already
+exists, generation should print an informational message that the existing workspace is being reused
+and that `prepare --force` can refresh it after session updates.
 
-`render notion` resolves an existing workspace for the target date, requires the semantic
-`daily-report.json` artifact, regenerates `report.notion.json`, and publishes it as a new row in the
-configured Notion database. When Notion publishing is active for `generate`, generation delegates
-that post-pipeline publishing step to this render path.
+`generate render` runs the rendering phase on an existing workspace for the target date: it requires
+the semantic `daily-report.json` artifact and writes the deterministic `report.md` and
+`report.notion.json` views without any network access. `generate render --notion` renders, then
+publishes `report.notion.json` as a new row in the configured Notion database. When Notion publishing
+is active for the full `generate`, that publish step runs after the in-pipeline rendering phase.
 
 `mcp serve` starts the package MCP server over stdio for integration work. The server exposes
 `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and `write_work_item`.

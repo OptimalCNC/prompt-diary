@@ -3,7 +3,8 @@
 Report generation is where Prompt Diary realizes the [product purposes](../product.md#purposes).
 It turns a prepared workspace into daily report artifacts that communicate the day's work, assess
 observable engagement faithfully, and surface team learning from AI-agent usage. Those purposes
-converge in the final report-producing phase.
+converge in the daily report synthesis phase, whose model the rendering phase then projects into
+views.
 
 Generation starts from the [Workspace Layout](../workspace-layout.md). It should not rediscover raw
 assistant sessions or reinterpret the report date. If the workspace is missing, the CLI may run
@@ -54,23 +55,30 @@ flowchart TD
     project["Project Synthesis"]
     work_items[/Work items/]
     report["Daily Report Synthesis"]
-    final[/"daily-report.json + Views (report.md, notion, ...)"/]
+    model[/"daily-report.json"/]
+    rendering["Rendering"]
+    final[/"report.md + report.notion.json (Notion page payload)"/]
 
     workspace -->|"Indexed sessions"| evidence
     evidence --> evidence_cards
     evidence_cards --> project
     project --> work_items
     work_items --> report
-    report -->|"Daily report artifacts"| final
+    report -->|"Semantic model"| model
+    model --> rendering
+    rendering -->|"Rendered outputs"| final
 ```
 
-The pipeline has three artifact-producing phases:
+The pipeline has four artifact-producing phases:
 
 - [Evidence Extraction](./evidence-contract.md) turns indexed sessions into evidence cards.
 - [Project Synthesis](./project-synthesis.md) turns evidence cards into work items.
 - [Daily Report Synthesis](./daily-synthesis.md) turns work items into a semantic daily report
-  model and a rendered Markdown report; it is the convergence phase for work communication,
-  engagement review, and team learning.
+  model, `daily-report.json`; it is the convergence phase for work communication, engagement review,
+  and team learning.
+- [Rendering](./rendering.md) projects `daily-report.json` into `report.md` (the reader-facing
+  Markdown view) and `report.notion.json` (the Notion page payload the publish step uploads to create
+  the Notion page). It is deterministic and agent-free, adding no claims.
 
 ### Phase Output Constraints
 
@@ -78,7 +86,8 @@ The pipeline has three artifact-producing phases:
 | --- | --- | --- | --- |
 | [Evidence Extraction](./evidence-contract.md) | Indexed sessions | Evidence cards | Cards record trigger-centered observations, terminal states, visible checks, and citations without verification judgment or unsupported outcomes. Canonical card writes use [MCP evidence tools](./mcp-tools/evidence-extraction.md). |
 | [Project Synthesis](./project-synthesis.md) | Evidence cards | Work items | Work items group evidence chains by line of work, cite them, and summarize them; every indexed turn is covered by exactly one work item, including no-material, evidence-gap, and excluded items. |
-| [Daily Report Synthesis](./daily-synthesis.md) | Work items | Daily report artifacts | The report model realizes all three product readings from the same evidence base: clear work communication, faithful engagement assessment, and reusable AI-agent usage learning. It preserves no-material signals where relevant, cites claim-bearing content, records confidence and evidence gaps structurally, and renders a required Markdown view. |
+| [Daily Report Synthesis](./daily-synthesis.md) | Work items | `daily-report.json` | The report model realizes all three product readings from the same evidence base: clear work communication, faithful engagement assessment, and reusable AI-agent usage learning. It preserves no-material signals where relevant, cites claim-bearing content, and records confidence and evidence gaps structurally. |
+| [Rendering](./rendering.md) | `daily-report.json` | `report.md` (Markdown view) + `report.notion.json` (Notion page payload) | Rendering is deterministic and agent-free: it projects the model into its outputs and adds no claim-bearing content. Every claim, citation, confidence value, and evidence-quality signal in a rendered output comes from the model; an output that adds, drops, or alters a claim is a rendering bug. |
 
 ### Artifact Handoffs
 
@@ -88,4 +97,5 @@ The pipeline has three artifact-producing phases:
 | Evidence cards | Per-session, trigger-centered records of user triggers, agent reactions, observed outcomes, observed checks, terminal states, and citations. |
 | Work items | Project-level groupings of evidence chains by line of work. Each work item cites and summarizes its chains; every indexed turn is covered by exactly one work item, including no-material, evidence-gap, and excluded items. |
 | `daily-report.json` | The authoritative semantic daily report model, synthesized from work items and evidence citations. Daily report synthesis uses preserved material and non-material evidence for outcomes, evidence gaps, risks, engagement assessment, next actions, and team-learning content. |
-| `report.md` | The required Markdown view rendered from `daily-report.json` in the section order defined by [Daily Report Synthesis](./daily-synthesis.md). |
+| `report.md` | The required Markdown view, produced by [Rendering](./rendering.md) from `daily-report.json` in the section order it defines. |
+| `report.notion.json` | The deterministic Notion page payload, produced by [Rendering](./rendering.md) from `daily-report.json`. |
