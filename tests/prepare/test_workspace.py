@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import prompt_diary.prepare.workspace as workspace_module
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.models import ReportTarget, SourceSpec
 from prompt_diary.prepare.workspace import (
@@ -439,11 +440,22 @@ def test_prepare_workspace_accepts_single_jsonl_root_and_ignores_unusable_roots(
     ]
 
 
-def test_prepare_workspace_skips_sessions_inside_reports_root(tmp_path: Path) -> None:
+def test_prepare_workspace_skips_sessions_inside_reports_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     reports_root = tmp_path / "prompt-diary-data"
     source_root = tmp_path / "source-sessions"
     sibling_root = tmp_path / "prompt-diary-data-sibling"
     sibling_root.mkdir()
+    original_resolve = workspace_module.Path.resolve
+
+    def maybe_fail_resolve(self: Path, *, strict: bool = False) -> Path:
+        if self == reports_root or reports_root in self.parents:
+            raise OSError
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(workspace_module.Path, "resolve", maybe_fail_resolve)
+
     _write_jsonl(
         source_root / "owned-codex.jsonl",
         [
