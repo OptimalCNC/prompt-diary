@@ -87,15 +87,15 @@ def test_generate_help_lists_phase_commands() -> None:
     assert "render" in result.stdout
 
 
-def test_generate_render_help_lists_notion_flag() -> None:
+def test_generate_render_accepts_notion_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NOTION_API_KEY", raising=False)
+    monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
     runner = CliRunner()
 
-    result = runner.invoke(
-        app, ["generate", "render", "--help"], color=False, env={"COLUMNS": "120"}
-    )
+    result = runner.invoke(app, ["generate", "render", "--notion", "--date", "2026-05-12"])
 
-    assert result.exit_code == 0
-    assert "--notion" in result.stdout
+    assert result.exit_code == 2
+    assert "--notion was given" in result.stderr
 
 
 def test_report_version() -> None:
