@@ -9,6 +9,7 @@ skeleton to the workspace root and returns it.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -52,6 +53,18 @@ def _by_ref(report: dict[str, Any], ref: str) -> dict[str, Any]:
         if item["work_item_ref"] == ref:
             return item
     pytest.fail(f"no work item {ref!r}")
+
+
+def _envelope_path(workspace: Path) -> Path:
+    return workspace / "projects" / PROJECT_KEY / "project-synthesis.json"
+
+
+def _load_envelope(workspace: Path) -> dict[str, Any]:
+    return json.loads(_envelope_path(workspace).read_text(encoding="utf-8"))
+
+
+def _write_envelope(workspace: Path, envelope: dict[str, Any]) -> None:
+    _envelope_path(workspace).write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 
 
 # --- header -----------------------------------------------------------------------------------
@@ -234,6 +247,41 @@ def test_build_executive_summary_top_outcomes(tmp_path: Path) -> None:
     ]
 
 
+def test_build_executive_summary_top_outcomes_are_capped(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    envelope = _load_envelope(workspace)
+    first_item = envelope["work_items"][0]
+    first_item["outcomes"] = [
+        {
+            "category": "document_outcome",
+            "summary": f"Headline outcome {index}.",
+            "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}],
+            "confidence": "high",
+        }
+        for index in range(1, 8)
+    ]
+    _write_envelope(workspace, envelope)
+
+    report = build_daily_report_via_api(workspace)
+
+    assert [entry["text"] for entry in report["executive_summary"]["top_outcomes"]] == [
+        "Headline outcome 1.",
+        "Headline outcome 2.",
+        "Headline outcome 3.",
+        "Headline outcome 4.",
+        "Headline outcome 5.",
+    ]
+    assert [entry["what_changed"] for entry in _by_ref(report, "W0001")["outcomes"]] == [
+        "Headline outcome 1.",
+        "Headline outcome 2.",
+        "Headline outcome 3.",
+        "Headline outcome 4.",
+        "Headline outcome 5.",
+        "Headline outcome 6.",
+        "Headline outcome 7.",
+    ]
+
+
 def test_build_executive_summary_open_items_empty(tmp_path: Path) -> None:
     summary = _build(tmp_path)["executive_summary"]
 
@@ -308,18 +356,21 @@ def test_build_open_items_are_blocked_failed_interrupted_in_order(tmp_path: Path
                 }
             ],
         },
-        {
-            "text": "W0003 interrupted terminal.",
-            "citations": [
-                {
-                    "project_key": PROJECT_KEY,
-                    "session_ref": "S0001",
-                    "turn_ref": "T0003",
-                    "lines": "6-7",
-                }
-            ],
-        },
     ]
+
+
+def test_build_executive_summary_open_items_are_capped(tmp_path: Path) -> None:
+    report = _disposition_report(tmp_path)
+    summary = report["executive_summary"]
+
+    assert [entry["text"] for entry in summary["open_items"]] == [
+        "W0002 blocked terminal.",
+        "W0008 failed terminal.",
+        "W0001 failed terminal.",
+    ]
+    assert _by_ref(report, "W0003")["terminal_states"][0]["summary"] == (
+        "W0003 interrupted terminal."
+    )
 
 
 def test_build_top_outcomes_resorted_by_outcome_confidence(tmp_path: Path) -> None:

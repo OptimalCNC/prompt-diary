@@ -129,9 +129,9 @@ rule: any Section whose data is empty renders as Empty(fallback)
 
 Notes on the purpose-1 region:
 
-- Executive Summary and the per-project outcomes render the same set at two altitudes: the digest is
-  the curated cross-project headline; Work by Project is the complete, grouped detail. They must stay
-  consistent.
+- Executive Summary and the per-project outcomes render the same evidence at two altitudes: the
+  digest is a capped cross-project headline subset; Work by Project is the complete, grouped detail.
+  They must stay consistent.
 - `what changed` is lifted from a work item's consolidated `outcomes[].summary` — one list item per
   outcome — or, for a work item that ended without material output, its `terminal_states[].summary`.
   The work item `title` is the group label, and its text only as a fallback for a trivial work item

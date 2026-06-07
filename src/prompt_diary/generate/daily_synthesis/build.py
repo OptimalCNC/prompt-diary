@@ -45,6 +45,8 @@ __all__ = ["build_daily_report"]
 
 _REPORT_NAME = "daily-report.json"
 _MATERIAL = "material_work_item"
+_EXECUTIVE_SUMMARY_TOP_OUTCOME_LIMIT = 5
+_EXECUTIVE_SUMMARY_OPEN_ITEM_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -222,7 +224,7 @@ def _top_outcomes(
     # appears, uncited, in Work by Project).
     cited = [entry for entry in ranked if entry.entry["citations"]]
     cited.sort(key=lambda entry: (-entry.rank, entry.significance))
-    return [entry.entry for entry in cited]
+    return [entry.entry for entry in cited[:_EXECUTIVE_SUMMARY_TOP_OUTCOME_LIMIT]]
 
 
 def _ranked_outcome(
@@ -255,7 +257,7 @@ def _open_items(
         if not citations:
             continue
         items.append({"text": state.summary, "citations": citations})
-    return items
+    return items[:_EXECUTIVE_SUMMARY_OPEN_ITEM_LIMIT]
 
 
 def _significant_work_items(
