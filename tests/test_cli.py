@@ -90,7 +90,9 @@ def test_generate_help_lists_phase_commands() -> None:
 def test_generate_render_help_lists_notion_flag() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["generate", "render", "--help"])
+    result = runner.invoke(
+        app, ["generate", "render", "--help"], color=False, env={"COLUMNS": "120"}
+    )
 
     assert result.exit_code == 0
     assert "--notion" in result.stdout
