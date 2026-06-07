@@ -300,7 +300,14 @@ def prepare_workspace(
             PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs))
         )
         prepared_at_local = _timestamp_for_target(target, prepared_at)
-        parsed_sessions = tuple(_selected_sessions(specs, target, reporter=reporter))
+        parsed_sessions = tuple(
+            _selected_sessions(
+                specs,
+                target,
+                reports_root=reports_root,
+                reporter=reporter,
+            )
+        )
         reporter.emit(
             PrepareStep(
                 at=time.monotonic(), name="discovering", done=len(parsed_sessions), total=None
@@ -483,6 +490,7 @@ def _selected_sessions(
     source_specs: tuple[SourceSpec, ...],
     target: ReportTarget,
     *,
+    reports_root: Path,
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> Iterable[ParsedSession]:
     per_source = [(spec, _jsonl_source_files(spec.root)) for spec in source_specs]
@@ -513,7 +521,12 @@ def _selected_sessions(
         for source_path in source_paths:
             if source_path not in probe.candidate_root_paths:
                 continue
-            parsed = _parse_session_file(source_path=source_path, spec=spec, target=target)
+            parsed = _parse_session_file(
+                source_path=source_path,
+                spec=spec,
+                target=target,
+                reports_root=reports_root,
+            )
             if parsed is not None:
                 selected_count += 1
                 yield _with_target_subagents(parsed, subagent_index)
@@ -786,6 +799,7 @@ def _parse_session_file(
     source_path: Path,
     spec: SourceSpec,
     target: ReportTarget,
+    reports_root: Path,
 ) -> ParsedSession | None:
     raw_bytes = source_path.read_bytes()
     checksum = hashlib.sha256(raw_bytes).hexdigest()
@@ -829,6 +843,8 @@ def _parse_session_file(
 
     source_session_id = _source_session_id_for_state(state)
     project_root = _project_root_for_session(state, spec)
+    if _project_root_is_under_reports_root(project_root, reports_root=reports_root):
+        return None
     project = project_identity(
         project_root=project_root,
         source=spec.source,
@@ -1572,6 +1588,31 @@ def _project_root_for_session(state: _ParseState, spec: SourceSpec) -> str | Non
     if state.source == "codex":
         return state.codex_session_meta_cwd or state.codex_turn_context_cwd or _fallback_root(spec)
     return state.claude_cwd or _fallback_root(spec)
+
+
+def _project_root_is_under_reports_root(project_root: str | None, *, reports_root: Path) -> bool:
+    if project_root is None or not project_root.strip():
+        return False
+    return _path_is_same_or_child(
+        _best_effort_absolute(Path(project_root)),
+        parent=_best_effort_absolute(reports_root),
+    )
+
+
+def _best_effort_absolute(path: Path) -> Path:
+    expanded = path.expanduser()
+    try:
+        return expanded.resolve(strict=False)
+    except OSError:
+        return expanded.absolute()
+
+
+def _path_is_same_or_child(path: Path, *, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def _fallback_root(spec: SourceSpec) -> str | None:

@@ -439,6 +439,79 @@ def test_prepare_workspace_accepts_single_jsonl_root_and_ignores_unusable_roots(
     ]
 
 
+def test_prepare_workspace_skips_sessions_inside_reports_root(tmp_path: Path) -> None:
+    reports_root = tmp_path / "prompt-diary-data"
+    source_root = tmp_path / "source-sessions"
+    sibling_root = tmp_path / "prompt-diary-data-sibling"
+    sibling_root.mkdir()
+    _write_jsonl(
+        source_root / "owned-codex.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "timestamp": "2026-05-11T16:00:00Z",
+                "payload": {
+                    "id": "owned-codex",
+                    "cwd": str(reports_root / "work" / "2026-05-11"),
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2026-05-11T16:00:01Z",
+                "payload": {
+                    "content": [{"text": "Extract evidence.", "type": "input_text"}],
+                    "role": "user",
+                    "type": "message",
+                },
+            },
+        ],
+    )
+    _write_jsonl(
+        source_root / "accepted-codex.jsonl",
+        [
+            {
+                "type": "session_meta",
+                "timestamp": "2026-05-11T16:00:00Z",
+                "payload": {"id": "accepted-codex", "cwd": str(sibling_root)},
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2026-05-11T16:00:01Z",
+                "payload": {
+                    "content": [{"text": "Do real work.", "type": "input_text"}],
+                    "role": "user",
+                    "type": "message",
+                },
+            },
+        ],
+    )
+    _write_jsonl(
+        source_root / "owned-claude.jsonl",
+        [
+            {
+                "cwd": str(reports_root / "private" / "2026-05-11"),
+                "message": {"content": "Summarize projects.", "role": "user"},
+                "timestamp": "2026-05-11T16:00:01Z",
+                "type": "user",
+            },
+        ],
+    )
+
+    result = prepare_workspace(
+        _target(),
+        reports_root=reports_root,
+        source_specs=(
+            SourceSpec(source="codex", root=source_root),
+            SourceSpec(source="claude-code", root=source_root),
+        ),
+    )
+
+    assert result.session_count == 1
+    project_dir = _single_directory(result.workspace_path / "projects")
+    rows = _load_jsonl(project_dir / "sessions.index.jsonl")
+    assert [row["source_session_id"] for row in rows] == ["accepted-codex"]
+
+
 def test_prepare_workspace_records_parse_warnings_and_fallback_root(
     tmp_path: Path,
 ) -> None:

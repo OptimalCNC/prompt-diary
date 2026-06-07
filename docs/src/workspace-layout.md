@@ -54,6 +54,9 @@ over `PROMPT_DIARY_HOME` over the stored config over the default data directory.
 manifest for the same date lives beside `work/` at
 `<reports-root>/private/<YYYY-MM-DD>/audit.manifest.json`.
 
+Preparation excludes root sessions whose recorded project root resolves inside the resolved reports
+root. Those sessions are Prompt Diary's own generation side effects, not user-authored project work.
+
 Copied session files keep their source filenames. The examples above use UUID-based filenames
 because both Codex and Claude Code identify local session transcript files by session id rather
 than by report date. Source-native subagent transcripts are copied under
