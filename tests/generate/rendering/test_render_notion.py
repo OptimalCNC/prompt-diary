@@ -4,8 +4,9 @@
 the doc's Block→Notion mapping, and writes the page payload (title, metadata properties, body block
 children) to ``report.notion.json``. These tests pin the title/properties, the heading_2 sections,
 the project heading_3, the work-item ``toggle`` (the idiomatic Notion form for a titled cluster),
-the nested Why / User-messages toggles, the quote vs. callout split, the inline-code citations, the
-four Empty fallbacks, and the two invariants that make Notion rendering faithful and safe:
+the plain nested Why / User-messages sections, the quote vs. callout split, the inline-code
+citations, the four Empty fallbacks, and the two invariants that make Notion rendering faithful and
+safe:
 
 - **No new claims** — every claim-bearing string the renderer emits is sourced verbatim from the
   model (asserted by finding each model string in the rendered ``text.content``).
@@ -200,7 +201,9 @@ def test_render_notion_work_item_is_a_toggle_with_tags_in_label(tmp_path: Path) 
     assert "Simplify the MCP evidence tools and drop chain_ref — completed · high" in labels
 
 
-def test_render_notion_work_item_toggle_nests_why_messages_outcome_limit(tmp_path: Path) -> None:
+def test_render_notion_work_item_toggle_nests_plain_why_messages_outcome_limit(
+    tmp_path: Path,
+) -> None:
     children = _basic_children(tmp_path)
     work_item = next(
         t
@@ -209,11 +212,14 @@ def test_render_notion_work_item_toggle_nests_why_messages_outcome_limit(tmp_pat
     )
     nested = _children_of(work_item)
 
-    # The nested Why and User-messages toggles, the outcome bullet, and the limit callout all live
-    # inside the work-item toggle.
+    # The nested Why and User-messages sections are plain blocks, not additional toggles; the
+    # outcome bullet and the limit callout all still live inside the work-item toggle.
     nested_toggle_labels = [_plain(t) for t in _of_type(nested, "toggle")]
-    assert "Why" in nested_toggle_labels
-    assert "User messages" in nested_toggle_labels
+    assert "Why" not in nested_toggle_labels
+    assert "User messages" not in nested_toggle_labels
+    nested_paragraphs = _plain_texts(nested, "paragraph")
+    assert "Why" in nested_paragraphs
+    assert "User messages" in nested_paragraphs
     outcome = next(
         b
         for b in _of_type(nested, "bulleted_list_item")
@@ -250,9 +256,9 @@ def test_render_notion_limit_is_a_callout_with_warning_icon(tmp_path: Path) -> N
 def test_render_notion_minor_activity_toggle_holds_work_item_toggles(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    minor = next(t for t in _of_type(children, "toggle") if _plain(t) == "Minor activity")
-    # The minor-activity toggle nests the project's trivial work items, themselves toggles.
-    assert _of_type(_children_of(minor), "toggle")
+    # Minor activity is a plain label; the minor work items remain work-item toggles.
+    assert "Minor activity" in _plain_texts(children, "paragraph")
+    assert all(_plain(t) != "Minor activity" for t in _of_type(children, "toggle"))
 
 
 # --- engagement + team learning ---------------------------------------------------------------

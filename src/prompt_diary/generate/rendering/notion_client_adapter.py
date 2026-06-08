@@ -57,10 +57,19 @@ class NotionSDKClient:
     def retrieve_database(self, *, database_id: str) -> dict[str, Any]:
         return cast("dict[str, Any]", self._client.databases.retrieve(database_id=database_id))
 
-    def create_page(self, *, parent: dict[str, Any], properties: dict[str, Any]) -> dict[str, Any]:
+    def create_page(
+        self,
+        *,
+        parent: dict[str, Any],
+        properties: dict[str, Any],
+        children: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"parent": parent, "properties": properties}
+        if children is not None:
+            kwargs["children"] = children
         return cast(
             "dict[str, Any]",
-            self._client.pages.create(parent=parent, properties=properties),
+            self._client.pages.create(**kwargs),
         )
 
     def append_children(self, *, block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:

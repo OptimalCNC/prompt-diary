@@ -50,7 +50,8 @@ Blocks (engine-independent presentation primitives):
   confidence, type); the key that filtering and sorting use.
 - `Citation(refs)` — one or more evidence references resolving to `{session, lines}`.
 - `Callout(tone)` — set-apart emphasis for limits, warnings, or gaps.
-- `Toggle(label)` — a collapsible region, collapsed by default; reveals its children on demand.
+- `Toggle(label)` — a collapsible region for top-level records or renderer-specific folding;
+  renderers may degrade nested labels to plain content when that better fits the target engine.
 - `Empty(fallback)` — explicit empty-state when a section's data is absent.
 
 Layout (all sections below are designed):
@@ -70,13 +71,14 @@ Section "Work by Project" — the day's outcomes, grouped by project then work i
   Group per project (ordered by significance)
     Prose   project summary — produced / finished / in-progress (qualitative) · Citation(work items)
     List of work items (material first):
-      Prose    {work item title}              · Tag(disposition) · Tag(confidence)
-      Toggle "Why" (folded)                   — trigger.summary (+ agent_reaction) · Citation
-      Toggle "User messages" (folded)         — verbatim source_user_messages for the work item's turns · Citation
-      List of outcomes — what changed · Tag(confidence) · Citation
-      Callout(limit) (only if any) — what this work item did not verify or confirm · work_items[].limits
-      (a work item with no material outcome shows its terminal disposition in place of the outcomes)
-    Toggle "Minor activity" (folded)          — the project's no-material / trivial work items
+      Group    {work item title}              · Tag(disposition) · Tag(confidence)
+        Prose label "Why"                     — trigger.summary (+ agent_reaction) · Citation
+        Prose label "User messages"           — verbatim source_user_messages for the work item's turns · Citation
+        List of outcomes — what changed · Tag(confidence) · Citation
+        Callout(limit) (only if any) — what this work item did not verify or confirm · work_items[].limits
+        (a work item with no material outcome shows its terminal disposition in place of the outcomes)
+    Prose label "Minor activity"              — introduces the project's no-material / trivial work items
+      List of minor work items                — same work-item Group shape
     needs: projects[] → { project_label, summary → {text, citations}, work_items[] → { title, kind,
            disposition, confidence, trigger.summary, agent_reaction.summary,
            outcomes[] → {what_changed, confidence, citations},
@@ -138,14 +140,14 @@ Notes on the purpose-1 region:
   with neither. Rendering selects and orders; it never re-writes a claim.
 - `disposition` (completed / blocked / interrupted / failed / clarification) is derived from the work
   item's `terminal_states` and outcomes — the at-a-glance "finished or not" signal.
-- Non-material and trivial work items are kept (the coverage invariant holds) but folded into a
-  per-project "Minor activity" toggle so they do not drown the material work.
+- Non-material and trivial work items are kept (the coverage invariant holds) but grouped under a
+  per-project "Minor activity" label so they do not drown the material work.
 - There is no standalone cross-project outcome table: the cross-project headline is the Executive
   Summary, and cross-project slicing is a Notion affordance over the flat outcome records.
-- `Toggle "User messages"` reveals the verbatim `source_user_messages` (tool-populated raw user text
-  per turn, already secret-redacted) for the work item's covered turns, so a reader can see exactly
-  what was asked. It is untrusted display content — the renderer shows it quoted/escaped and never
-  interprets it — and the same substrate feeds the engagement and team-learning readings.
+- The "User messages" block reveals the verbatim `source_user_messages` (tool-populated raw user
+  text per turn, already secret-redacted) for the work item's covered turns, so a reader can see
+  exactly what was asked. It is untrusted display content — the renderer shows it quoted/escaped and
+  never interprets it — and the same substrate feeds the engagement and team-learning readings.
 - Evidence honesty stays visible: each work item's `limits` (what it did not verify or could not
   confirm) render as a visible caveat, not folded, so a completed-looking outcome never hides the
   boundary that qualifies it. Failures and blocks already show through `disposition`.
@@ -251,7 +253,8 @@ Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
   confidence tags and `Citation` ride in the same rich text.
 - `Citation` → an inline-`code` run (e.g. `ReportGenerator · S0001:2-8`), never a link — workspace
   session references have no Notion URL.
-- `Toggle` → a native `toggle`; `Callout` tone `quote` (a verbatim user message) → a `quote` block,
+- `Toggle` → a plain label paragraph followed by its children; only work-item `Group` list items
+  become native Notion toggles. `Callout` tone `quote` (a verbatim user message) → a `quote` block,
   tone `limit` → a `callout` block with a warning icon; `Empty` → the Markdown view's fallback text.
 
 Safety is structural: every model-derived string is placed only in a plain rich-text `text.content`
@@ -282,9 +285,12 @@ type (with *Include time* enabled), which Notion auto-fills with the upload inst
 publisher writes only `date`-typed columns, it never overwrites a `created_time` column. Metadata the
 database has no column for (status, window, overall confidence) is surfaced in a status-colored
 banner callout at the top of the page body (final → green, partial → yellow), followed by a table of
-contents, so the report is self-describing and navigable against any schema. The page is created
-empty and its block tree appended one nesting level at a time, keeping each request within Notion's
-per-request and create-nesting limits.
+contents, so the report is self-describing and navigable against any schema. When the rendered body
+fits Notion's create-page body limits (≤100 top-level children, ≤1000 block elements, and no
+grandchildren), the publisher creates the page with its body in the same request. Larger or deeper
+reports fall back to append batches that still respect ≤100 top-level children and ≤1000 block
+elements per request, inlining leaf-only children and recursing only when returned block ids are
+needed for deeper descendants.
 
 The previously open questions are resolved: citations render as inline code (no link); a run always
 appends a new page (never in place); `partial` versus `final` `status` shows in the color-coded

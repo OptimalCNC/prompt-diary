@@ -47,8 +47,14 @@ class _FakeNotionClient:
             }
         }
 
-    def create_page(self, *, parent: dict[str, Any], properties: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("create", parent, properties))
+    def create_page(
+        self,
+        *,
+        parent: dict[str, Any],
+        properties: dict[str, Any],
+        children: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(("create", parent, properties, children or []))
         return {"id": "page-1", "url": "https://notion.so/page-x"}
 
     def append_children(self, *, block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:

@@ -6,6 +6,8 @@ Notion block objects per the doc's Block→Notion mapping; :func:`render_notion_
 finalized ``daily-report.json``, builds the layout, renders it, and atomically writes the page
 payload to ``report.notion.json`` at the workspace root. A separate publisher
 (:mod:`~prompt_diary.generate.rendering.notion_publish`) pushes that payload to Notion.
+The source-of-truth structure is documented in ``docs/src/generate/rendering.md#abstract-layout``;
+update that section with any reader-facing layout change made here.
 
 Like the Markdown renderer it only reads model strings carried by the layout blocks and synthesizes
 no prose of its own. The injection-safety story is *structural and simpler than Markdown's*: every
@@ -28,7 +30,8 @@ Mapping (the "best Notion" choices, not 1:1 with Markdown):
 - ``Prose`` → a ``paragraph`` (standalone) or a ``bulleted_list_item`` / ``numbered_list_item``
   (in a list); its trailing confidence tags and inline citation ride in the same rich-text array.
 - ``ListBlock`` → a run of list-item blocks (prose items) or toggle blocks (group items).
-- ``Toggle`` → a native ``toggle`` block.
+- ``Toggle`` → a plain labeled paragraph followed by its children. Native toggles are reserved for
+  work-item ``Group`` list items so the published page stays shallow and fast to append.
 - ``Callout`` tone ``quote`` (a verbatim user message) → a ``quote`` block; tone ``limit`` → a
   ``callout`` block with a warning icon.
 - ``Empty`` → a ``bulleted_list_item`` carrying the section's fallback text.
@@ -155,8 +158,10 @@ def _render_one(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
     if isinstance(block, ListBlock):
         return _render_list(block, heading_level=heading_level)
     if isinstance(block, Toggle):
-        children = _render_blocks(block.children, heading_level=heading_level)
-        return [_toggle(_text_runs(block.label), children)]
+        return [
+            _label_paragraph(block.label),
+            *_render_blocks(block.children, heading_level=heading_level),
+        ]
     if isinstance(block, Callout):
         return [_callout(block)]
     if isinstance(block, Empty):
@@ -200,6 +205,10 @@ def _heading(level: int, title: str, tags: tuple[Tag, ...]) -> dict[str, Any]:
 
 def _paragraph(prose: Prose) -> dict[str, Any]:
     return _block("paragraph", {"rich_text": _prose_rich_text(prose)})
+
+
+def _label_paragraph(label: str) -> dict[str, Any]:
+    return _block("paragraph", {"rich_text": _text_runs(label)})
 
 
 def _toggle(rich_text: list[dict[str, Any]], children: list[dict[str, Any]]) -> dict[str, Any]:

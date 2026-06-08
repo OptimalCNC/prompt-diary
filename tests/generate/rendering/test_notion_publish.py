@@ -5,14 +5,15 @@ These tests pin the schema-driven property mapping (title by type, date column �
 reporter into its text column, others left alone), the status-colored banner and table of contents
 prepended to the body, the always-create-new behaviour (one create, never an
 edit/delete), and the request shaping that keeps every append within Notion's
-≤100-children / single-nesting-level limits while still uploading an arbitrarily deep tree. The real
-SDK is exercised only behind the thin adapter; here a fake client records calls and returns ids.
+≤100 top-level children / ≤1000 block-elements / two-level nesting limits while still uploading an
+arbitrarily deep tree. The real SDK is exercised only behind the thin adapter; here a fake client
+records calls and returns ids.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -34,6 +35,7 @@ from tests.support.daily_synthesis import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -49,8 +51,14 @@ class _FakeNotionClient:
         self.calls.append(("retrieve", database_id))
         return {"properties": self.schema}
 
-    def create_page(self, *, parent: dict[str, Any], properties: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append(("create", parent, properties))
+    def create_page(
+        self,
+        *,
+        parent: dict[str, Any],
+        properties: dict[str, Any],
+        children: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(("create", parent, properties, children or []))
         self.counter += 1
         return {"id": "page-1", "url": "https://notion.so/page-x"}
 
@@ -108,13 +116,61 @@ def _appends(client: _FakeNotionClient) -> list[tuple[str, list[dict[str, Any]]]
     return [(call[1], call[2]) for call in client.calls if call[0] == "append"]
 
 
+def _created_body(client: _FakeNotionClient) -> list[dict[str, Any]]:
+    create = next(call for call in client.calls if call[0] == "create")
+    return cast("list[dict[str, Any]]", create[3])
+
+
+def _published_body(client: _FakeNotionClient) -> list[dict[str, Any]]:
+    created = _created_body(client)
+    if created:
+        return created
+    return _appends(client)[0][1]
+
+
 def _appended_text(client: _FakeNotionClient) -> str:
     return " ".join(
         run["text"]["content"]
-        for _, children in _appends(client)
-        for block in children
+        for children in [_created_body(client), *[children for _, children in _appends(client)]]
+        for block in _iter_request_blocks(children)
         for run in block[block["type"]].get("rich_text", [])
     )
+
+
+def _iter_request_blocks(blocks: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    for block in blocks:
+        yield block
+        yield from _iter_request_blocks(_request_children(block))
+
+
+def _request_children(block: dict[str, Any]) -> list[dict[str, Any]]:
+    body = block[block["type"]]
+    value = body.get("children", [])
+    return cast("list[dict[str, Any]]", value) if isinstance(value, list) else []
+
+
+def _request_block_count(blocks: list[dict[str, Any]]) -> int:
+    return sum(1 + _request_block_count(_request_children(block)) for block in blocks)
+
+
+def _assert_append_request_limits(client: _FakeNotionClient) -> None:
+    for _, children in _appends(client):
+        assert len(children) <= 100
+        assert _request_block_count(children) <= 1000
+        for block in children:
+            for child in _request_children(block):
+                assert _request_children(child) == []
+
+
+def _assert_published_request_limits(client: _FakeNotionClient) -> None:
+    created = _created_body(client)
+    if created:
+        assert len(created) <= 100
+        assert _request_block_count(created) <= 1000
+        for block in created:
+            for child in _request_children(block):
+                assert _request_children(child) == []
+    _assert_append_request_limits(client)
 
 
 # --- property mapping --------------------------------------------------------------------------
@@ -253,7 +309,7 @@ def test_publish_prepends_a_metadata_banner_callout() -> None:
 
     publish_report(client=client, database_id="db", payload=_payload([]))
 
-    first_block = _appends(client)[0][1][0]
+    first_block = _published_body(client)[0]
     assert first_block["type"] == "callout"
     text = "".join(run["text"]["content"] for run in first_block["callout"]["rich_text"])
     # Columns the database lacks (status / window / overall confidence) survive in the body.
@@ -265,7 +321,7 @@ def test_publish_prepends_a_metadata_banner_callout() -> None:
 def test_publish_colors_the_banner_by_status() -> None:
     final_client = _FakeNotionClient(_schema())
     publish_report(client=final_client, database_id="db", payload=_payload([]))
-    final_banner = _appends(final_client)[0][1][0]
+    final_banner = _published_body(final_client)[0]
     assert final_banner["callout"]["color"] == "green_background"
 
     partial_client = _FakeNotionClient(_schema())
@@ -273,7 +329,7 @@ def test_publish_colors_the_banner_by_status() -> None:
         title="t", properties={"report_date": "2026-05-28", "status": "partial"}, children=[]
     )
     publish_report(client=partial_client, database_id="db", payload=partial)
-    partial_banner = _appends(partial_client)[0][1][0]
+    partial_banner = _published_body(partial_client)[0]
     assert partial_banner["callout"]["color"] == "yellow_background"
 
     other_client = _FakeNotionClient(_schema())
@@ -281,7 +337,7 @@ def test_publish_colors_the_banner_by_status() -> None:
         title="t", properties={"report_date": "2026-05-28", "status": "draft"}, children=[]
     )
     publish_report(client=other_client, database_id="db", payload=other)
-    other_banner = _appends(other_client)[0][1][0]
+    other_banner = _published_body(other_client)[0]
     assert other_banner["callout"]["color"] == "gray_background"  # neutral fallback
 
 
@@ -290,7 +346,7 @@ def test_publish_inserts_a_table_of_contents_after_the_banner() -> None:
 
     publish_report(client=client, database_id="db", payload=_payload([_para("body")]))
 
-    body = _appends(client)[0][1]
+    body = _published_body(client)
     assert body[0]["type"] == "callout"  # banner first
     assert body[1]["type"] == "table_of_contents"  # then a navigable table of contents
 
@@ -322,22 +378,63 @@ def test_publish_returns_created_page_id_and_url() -> None:
 # --- request shaping (depth + breadth limits) --------------------------------------------------
 
 
-def test_publish_appends_a_deep_tree_one_nesting_level_per_request() -> None:
+def test_publish_creates_page_with_body_when_request_fits() -> None:
+    client = _FakeNotionClient(_schema())
+
+    publish_report(client=client, database_id="db", payload=_payload([_para("body")]))
+
+    body = _created_body(client)
+    assert [block["type"] for block in body] == ["callout", "table_of_contents", "paragraph"]
+    assert _appends(client) == []
+
+
+def test_publish_uses_two_level_requests_without_losing_deep_child_ids() -> None:
     client = _FakeNotionClient(_schema())
     deep = _toggle("Outer", [_toggle("Inner", [_para("deep leaf")])])
 
     publish_report(client=client, database_id="db", payload=_payload([deep]))
 
     appends = _appends(client)
-    # Every appended block is shallow: its nested ``children`` are stripped from the request body.
-    for _, children in appends:
-        for block in children:
-            assert "children" not in block[block["type"]]
-    # The recursion reached the deepest leaf, via its own append call.
+    _assert_append_request_limits(client)
+    # The outer toggle's child still needs its own descendants, so the outer request is stripped to
+    # keep the inner toggle's id available from a first-level append result.
+    page_blocks = appends[0][1]
+    outer = page_blocks[2]
+    assert "children" not in outer["toggle"]
+    # The inner toggle's child is a leaf, so it is safe to inline in the second append request.
+    inner = appends[1][1][0]
+    assert inner["toggle"]["children"] == [_para("deep leaf")]
     assert "deep leaf" in _appended_text(client)
-    # Page body, Outer's children, and Inner's children are three separate append calls.
-    min_append_calls = 3
-    assert len(appends) >= min_append_calls
+    assert len(appends) == 2
+
+
+def test_publish_inlines_leaf_children_in_their_parent_append() -> None:
+    client = _FakeNotionClient(_schema())
+    fillers = [_para(f"filler {index}") for index in range(100)]
+    parent = _toggle("Parent", [_para("leaf one"), _para("leaf two")])
+
+    publish_report(client=client, database_id="db", payload=_payload([*fillers, parent]))
+
+    appends = _appends(client)
+    appended_parent = next(
+        block for _, children in appends for block in children if block["type"] == "toggle"
+    )
+    assert appended_parent["type"] == "toggle"
+    assert appended_parent["toggle"]["children"] == [_para("leaf one"), _para("leaf two")]
+
+
+def test_publish_splits_inlined_batches_before_request_block_limit() -> None:
+    client = _FakeNotionClient(_schema())
+    children = [
+        _toggle(f"Parent {index}", [_para(f"leaf {index}-{n}") for n in range(100)])
+        for index in range(10)
+    ]
+
+    publish_report(client=client, database_id="db", payload=_payload(children))
+
+    page_appends = [children for block_id, children in _appends(client) if block_id == "page-1"]
+    assert [len(children) for children in page_appends] == [11, 1]
+    _assert_append_request_limits(client)
 
 
 def test_publish_batches_more_than_100_top_level_blocks() -> None:
@@ -370,11 +467,8 @@ def test_publish_workspace_report_publishes_the_rendered_artifact(tmp_path: Path
     assert result.page_id == "page-1"
     create = next(call for call in client.calls if call[0] == "create")
     assert create[2]["Name"]["title"][0]["text"]["content"] == "Prompt Diary Report — 2026-05-28"
-    # The real report is deep and wide; every append still respects the shallow / ≤100 contract.
-    for _, children in _appends(client):
-        assert len(children) <= 100
-        for block in children:
-            assert "children" not in block[block["type"]]
+    # The real report is deep and wide; every request still respects Notion's request-shape limits.
+    _assert_published_request_limits(client)
     # A known model claim from the basic fixture reached the appended blocks.
     assert "Three-layer QA strategy delivered." in _appended_text(client)
 
@@ -402,9 +496,13 @@ def test_publish_refuses_to_publish_without_report_date() -> None:
 def test_publish_raises_when_create_returns_no_page_id() -> None:
     class _NoId(_FakeNotionClient):
         def create_page(
-            self, *, parent: dict[str, Any], properties: dict[str, Any]
+            self,
+            *,
+            parent: dict[str, Any],
+            properties: dict[str, Any],
+            children: list[dict[str, Any]] | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("create", parent, properties))
+            self.calls.append(("create", parent, properties, children or []))
             return {"url": "https://notion.so/x"}
 
     client = _NoId(_schema())
@@ -424,7 +522,11 @@ def test_publish_raises_when_append_result_count_mismatches() -> None:
     client = _Short(_schema())
 
     with pytest.raises(PromptDiaryError, match="partial row"):
-        publish_report(client=client, database_id="db", payload=_payload([_para("x")]))
+        publish_report(
+            client=client,
+            database_id="db",
+            payload=_payload([_para(f"x{index}") for index in range(150)]),
+        )
 
 
 def test_publish_raises_when_append_result_lacks_a_block_id() -> None:
@@ -436,7 +538,7 @@ def test_publish_raises_when_append_result_lacks_a_block_id() -> None:
             return {"results": [{"type": child["type"]} for child in children]}  # ids missing
 
     client = _NoBlockId(_schema())
-    deep = _toggle("Outer", [_para("inner")])
+    deep = _toggle("Outer", [_toggle("Inner", [_para("inner")])])
 
     with pytest.raises(PromptDiaryError, match="partial row"):
         publish_report(client=client, database_id="db", payload=_payload([deep]))
@@ -465,6 +567,10 @@ def test_publish_wraps_an_append_failure_with_the_created_page_location() -> Non
     client = _Boom(_schema())
 
     with pytest.raises(PromptDiaryError, match="partial row") as exc_info:
-        publish_report(client=client, database_id="db", payload=_payload([_para("x")]))
+        publish_report(
+            client=client,
+            database_id="db",
+            payload=_payload([_para(f"x{index}") for index in range(150)]),
+        )
     # The created page's URL is surfaced so the partial row can be found and deleted.
     assert "https://notion.so/page-x" in str(exc_info.value)
