@@ -250,6 +250,29 @@ def test_render_notion_work_item_toggle_nests_distinct_section_labels(
     assert " · high" in _plain(outcome)
 
 
+def test_render_notion_work_item_body_skips_non_rendering_child_without_divider(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+    work_item = Group(
+        "Skipped child",
+        (
+            Tag("completed", "disposition"),
+            Tag("high", "confidence"),
+            Citation(()),
+            Prose("Visible body.", None),
+        ),
+    )
+    section = Section("Work by Project", (Group("Proj", (ListBlock("bullet", (work_item,)),)),))
+
+    payload = render_notion(_doc_with_section(section))
+    toggle = next(t for t in _of_type(payload.children, "toggle") if "Skipped child" in _plain(t))
+    nested = _children_of(toggle)
+
+    assert [block["type"] for block in nested] == ["paragraph"]
+    assert _plain(nested[0]) == "Visible body."
+
+
 def test_render_notion_user_messages_are_verbatim_quote_blocks(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
     quotes = _plain_texts(children, "quote")
