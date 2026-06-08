@@ -32,6 +32,9 @@ from prompt_diary.generate.prompts import (
 )
 
 __all__ = [
+    "WORK_ITEM_CONTEXT_LABEL",
+    "WORK_ITEM_OUTCOMES_LABEL",
+    "WORK_ITEM_USER_MESSAGES_LABEL",
     "Block",
     "Callout",
     "Citation",
@@ -50,6 +53,10 @@ __all__ = [
 # affordance — the cross-project slice the linear Markdown view does not provide — and no section of
 # the current layout emits one. The Notion renderer ships without it; it remains a future
 # cross-project-database affordance.
+
+WORK_ITEM_CONTEXT_LABEL = "Context and Response"
+WORK_ITEM_USER_MESSAGES_LABEL = "User Messages"
+WORK_ITEM_OUTCOMES_LABEL = "Outcomes"
 
 
 @dataclass(frozen=True)
@@ -343,7 +350,7 @@ def _why_toggle(item: dict[str, Any]) -> Toggle | None:
     if not parts:
         return None
     # Trigger and agent reaction render as separate paragraphs inside the toggle.
-    return Toggle("Why", tuple(Prose(part) for part in parts))
+    return Toggle(WORK_ITEM_CONTEXT_LABEL, tuple(Prose(part) for part in parts))
 
 
 def _user_messages_toggle(
@@ -363,7 +370,7 @@ def _user_messages_toggle(
         quotes.extend(Callout("quote", message) for message in messages_by_turn.get(key, []))
     if not quotes:
         return None
-    return Toggle("User messages", tuple(quotes))
+    return Toggle(WORK_ITEM_USER_MESSAGES_LABEL, tuple(quotes))
 
 
 def _outcomes_block(item: dict[str, Any]) -> ListBlock:

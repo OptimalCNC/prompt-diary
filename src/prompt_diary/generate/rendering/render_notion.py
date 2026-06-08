@@ -30,8 +30,10 @@ Mapping (the "best Notion" choices, not 1:1 with Markdown):
 - ``Prose`` → a ``paragraph`` (standalone) or a ``bulleted_list_item`` / ``numbered_list_item``
   (in a list); its trailing confidence tags and inline citation ride in the same rich-text array.
 - ``ListBlock`` → a run of list-item blocks (prose items) or toggle blocks (group items).
-- ``Toggle`` → a plain labeled paragraph followed by its children. Native toggles are reserved for
-  work-item ``Group`` list items so the published page stays shallow and fast to append.
+- ``Toggle`` → a colored label callout followed by its children. Native toggles are reserved for
+  work-item ``Group`` list items so the published page stays shallow and fast to append. Inside a
+  work-item toggle, section groups are separated by divider blocks and outcome lists get the same
+  label treatment as the context and user-message sections.
 - ``Callout`` tone ``quote`` (a verbatim user message) → a ``quote`` block; tone ``limit`` → a
   ``callout`` block with a warning icon.
 - ``Empty`` → a ``bulleted_list_item`` carrying the section's fallback text.
@@ -51,6 +53,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.generate.rendering.layout import (
+    WORK_ITEM_CONTEXT_LABEL,
+    WORK_ITEM_OUTCOMES_LABEL,
+    WORK_ITEM_USER_MESSAGES_LABEL,
     Block,
     Callout,
     Citation,
@@ -90,6 +95,14 @@ _TRUNCATION_MARKER = " [truncated]"
 # The limit callout's icon — a warning sign, written as escapes so the source carries no literal
 # emoji (U+26A0 warning sign + U+FE0F emoji-presentation selector).
 _LIMIT_ICON = "\u26a0\ufe0f"
+
+_MINOR_ACTIVITY_LABEL = "Minor activity"
+_SECTION_LABEL_COLORS = {
+    WORK_ITEM_CONTEXT_LABEL: "blue_background",
+    WORK_ITEM_USER_MESSAGES_LABEL: "purple_background",
+    WORK_ITEM_OUTCOMES_LABEL: "green_background",
+    _MINOR_ACTIVITY_LABEL: "gray_background",
+}
 
 
 @dataclass(frozen=True)
@@ -159,7 +172,7 @@ def _render_one(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
         return _render_list(block, heading_level=heading_level)
     if isinstance(block, Toggle):
         return [
-            _label_paragraph(block.label),
+            _section_label(block.label),
             *_render_blocks(block.children, heading_level=heading_level),
         ]
     if isinstance(block, Callout):
@@ -185,11 +198,42 @@ def _render_list(block: ListBlock, *, heading_level: int) -> list[dict[str, Any]
         # arms below are exhaustive.
         if isinstance(item, Group):
             tags, body = _split_tags(item)
-            children = _render_blocks(body, heading_level=heading_level + 1)
+            children = _render_work_item_body(body, heading_level=heading_level + 1)
             blocks.append(_toggle(_label_rich_text(item.label, tags), children))
         elif isinstance(item, Prose):
             blocks.append(_list_item_block(_list_item_type(block.style), _prose_rich_text(item)))
     return blocks
+
+
+def _render_work_item_body(
+    children: tuple[Block, ...], *, heading_level: int
+) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    previous_was_limit = False
+    for child in children:
+        rendered = _render_work_item_body_block(child, heading_level=heading_level)
+        if not rendered:
+            continue
+        current_is_limit = isinstance(child, Callout) and child.tone == "limit"
+        if blocks and not (previous_was_limit and current_is_limit):
+            blocks.append(_divider())
+        blocks.extend(rendered)
+        previous_was_limit = current_is_limit
+    return blocks
+
+
+def _render_work_item_body_block(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
+    if isinstance(block, Toggle):
+        return [
+            _section_label(block.label),
+            *_render_blocks(block.children, heading_level=heading_level),
+        ]
+    if isinstance(block, ListBlock):
+        return [
+            _section_label(WORK_ITEM_OUTCOMES_LABEL),
+            *_render_list(block, heading_level=heading_level),
+        ]
+    return _render_one(block, heading_level=heading_level)
 
 
 def _split_tags(group: Group) -> tuple[tuple[Tag, ...], tuple[Block, ...]]:
@@ -207,8 +251,18 @@ def _paragraph(prose: Prose) -> dict[str, Any]:
     return _block("paragraph", {"rich_text": _prose_rich_text(prose)})
 
 
-def _label_paragraph(label: str) -> dict[str, Any]:
-    return _block("paragraph", {"rich_text": _text_runs(label)})
+def _section_label(label: str) -> dict[str, Any]:
+    return _block(
+        "callout",
+        {
+            "rich_text": _text_runs(label),
+            "color": _SECTION_LABEL_COLORS.get(label, "gray_background"),
+        },
+    )
+
+
+def _divider() -> dict[str, Any]:
+    return _block("divider", {})
 
 
 def _toggle(rich_text: list[dict[str, Any]], children: list[dict[str, Any]]) -> dict[str, Any]:

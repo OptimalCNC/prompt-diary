@@ -124,8 +124,8 @@ def test_render_work_item_heading_with_tags_and_unscoped_outcome(tmp_path: Path)
 def test_render_work_item_toggles_are_collapsed_details(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
-    assert "<details>\n<summary>Why</summary>" in text
-    assert "<details>\n<summary>User messages</summary>" in text
+    assert "<details>\n<summary>Context and Response</summary>" in text
+    assert "<details>\n<summary>User Messages</summary>" in text
     # User messages are quoted as untrusted display content and Markdown-neutralized: the ``_`` in
     # "chain_ref" is backslash-escaped so it cannot start an emphasis run. It renders as the literal
     # "chain_ref" in a Markdown viewer (the backslash is consumed), but the source carries ``\_``.
@@ -198,10 +198,10 @@ def test_render_minor_activity_toggle(tmp_path: Path) -> None:
 def test_render_gap_item_has_no_empty_user_messages_toggle(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
-    # The gap-turn minor item has no source messages, so it renders no "User messages" toggle and,
+    # The gap-turn minor item has no source messages, so it renders no "User Messages" toggle and,
     # in particular, no empty <details> with a blank body. The remaining toggles each have content:
     # there is no toggle whose summary is immediately followed by a blank line then </details>.
-    assert "<summary>User messages</summary>\n\n</details>" not in text
+    assert "<summary>User Messages</summary>\n\n</details>" not in text
     # The gap item's heading is present but carries no toggle after it.
     gap_heading = "##### Indexed turn with no extractable evidence — low"
     assert gap_heading in text

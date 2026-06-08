@@ -72,8 +72,9 @@ Section "Work by Project" — the day's outcomes, grouped by project then work i
     Prose   project summary — produced / finished / in-progress (qualitative) · Citation(work items)
     List of work items (material first):
       Group    {work item title}              · Tag(disposition) · Tag(confidence)
-        Prose label "Why"                     — trigger.summary (+ agent_reaction) · Citation
-        Prose label "User messages"           — verbatim source_user_messages for the work item's turns · Citation
+        Prose label "Context and Response"    — trigger.summary (+ agent_reaction) · Citation
+        Prose label "User Messages"           — verbatim source_user_messages for the work item's turns · Citation
+        Prose label "Outcomes"
         List of outcomes — what changed · Tag(confidence) · Citation
         Callout(limit) (only if any) — what this work item did not verify or confirm · work_items[].limits
         (a work item with no material outcome shows its terminal disposition in place of the outcomes)
@@ -144,7 +145,7 @@ Notes on the purpose-1 region:
   per-project "Minor activity" label so they do not drown the material work.
 - There is no standalone cross-project outcome table: the cross-project headline is the Executive
   Summary, and cross-project slicing is a Notion affordance over the flat outcome records.
-- The "User messages" block reveals the verbatim `source_user_messages` (tool-populated raw user
+- The "User Messages" block reveals the verbatim `source_user_messages` (tool-populated raw user
   text per turn, already secret-redacted) for the work item's covered turns, so a reader can see
   exactly what was asked. It is untrusted display content — the renderer shows it quoted/escaped and
   never interprets it — and the same substrate feeds the engagement and team-learning readings.
@@ -253,9 +254,11 @@ Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
   confidence tags and `Citation` ride in the same rich text.
 - `Citation` → an inline-`code` run (e.g. `ReportGenerator · S0001:2-8`), never a link — workspace
   session references have no Notion URL.
-- `Toggle` → a plain label paragraph followed by its children; only work-item `Group` list items
-  become native Notion toggles. `Callout` tone `quote` (a verbatim user message) → a `quote` block,
-  tone `limit` → a `callout` block with a warning icon; `Empty` → the Markdown view's fallback text.
+- `Toggle` → a colored label callout followed by its children; only work-item `Group` list items
+  become native Notion toggles. Work-item subsections (`Context and Response`, `User Messages`,
+  `Outcomes`, and limits) are separated by divider blocks. `Callout` tone `quote` (a verbatim user
+  message) → a `quote` block, tone `limit` → a `callout` block with a warning icon; `Empty` → the
+  Markdown view's fallback text.
 
 Safety is structural: every model-derived string is placed only in a plain rich-text `text.content`
 (never a `link` or other interpreted field), and Notion stores content literally, so no escaping is

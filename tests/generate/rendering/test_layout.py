@@ -2,7 +2,7 @@
 
 ``build_layout`` turns a finalized daily report into the presentation tree the renderers walk: a
 ``Document`` header, the four sections (Executive Summary, Work by Project, Engagement Assessment,
-Team Learning), a ``Group`` per project, work items material-first with folded ``Toggle``s, the
+Team Learning), a ``Group`` per project, work items material-first with labeled ``Toggle``s, the
 judgment groups present only when they carry observations/patterns, and the per-section ``Empty``
 fallback when a section's data is absent. Citations carry the cross-project scoping decision: bare
 within Work by Project, project-qualified in the cross-project sections.
@@ -184,15 +184,15 @@ def test_layout_work_item_carries_disposition_and_confidence_tags(tmp_path: Path
     assert (tags[1].scale, tags[1].value) == ("confidence", "high")
 
 
-def test_layout_work_item_why_and_user_messages_toggles(tmp_path: Path) -> None:
+def test_layout_work_item_context_and_user_messages_toggles(tmp_path: Path) -> None:
     group = _groups(_section(build_layout(_finalized_report(tmp_path)), "Work by Project"))[0]
     first_item = _lists(group.children)[0].items[0]
     assert isinstance(first_item, Group)
     toggles = _toggles(first_item.children)
 
-    assert [toggle.label for toggle in toggles] == ["Why", "User messages"]
-    why_text = _prose(toggles[0].children)[0].text
-    assert "User asked to simplify the MCP evidence tools and remove chain_ref." in why_text
+    assert [toggle.label for toggle in toggles] == ["Context and Response", "User Messages"]
+    context_text = _prose(toggles[0].children)[0].text
+    assert "User asked to simplify the MCP evidence tools and remove chain_ref." in context_text
     # User messages are the verbatim source_user_messages, carried as quote callouts (untrusted).
     messages = [child for child in toggles[1].children if isinstance(child, Callout)]
     assert all(message.tone == "quote" for message in messages)
@@ -325,7 +325,7 @@ def test_layout_minor_item_without_messages_has_no_user_messages_toggle(tmp_path
         if isinstance(item, Group)
         and item.label == "Clarify whether the placeholder wording was misleading"
     )
-    assert [t.label for t in _toggles(placeholder_item.children)] == ["User messages"]
+    assert [t.label for t in _toggles(placeholder_item.children)] == ["User Messages"]
 
 
 # --- engagement assessment --------------------------------------------------------------------

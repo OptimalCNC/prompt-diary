@@ -4,7 +4,7 @@
 the doc's Block→Notion mapping, and writes the page payload (title, metadata properties, body block
 children) to ``report.notion.json``. These tests pin the title/properties, the heading_2 sections,
 the project heading_3, the work-item ``toggle`` (the idiomatic Notion form for a titled cluster),
-the plain nested Why / User-messages sections, the quote vs. callout split, the inline-code
+the colored nested work-item subsection labels, the quote vs. callout split, the inline-code
 citations, the four Empty fallbacks, and the two invariants that make Notion rendering faithful and
 safe:
 
@@ -19,6 +19,7 @@ safe:
 from __future__ import annotations
 
 import json
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from prompt_diary.generate.rendering.layout import (
@@ -201,7 +202,7 @@ def test_render_notion_work_item_is_a_toggle_with_tags_in_label(tmp_path: Path) 
     assert "Simplify the MCP evidence tools and drop chain_ref — completed · high" in labels
 
 
-def test_render_notion_work_item_toggle_nests_plain_why_messages_outcome_limit(
+def test_render_notion_work_item_toggle_nests_distinct_section_labels(
     tmp_path: Path,
 ) -> None:
     children = _basic_children(tmp_path)
@@ -212,19 +213,38 @@ def test_render_notion_work_item_toggle_nests_plain_why_messages_outcome_limit(
     )
     nested = _children_of(work_item)
 
-    # The nested Why and User-messages sections are plain blocks, not additional toggles; the
-    # outcome bullet and the limit callout all still live inside the work-item toggle.
+    # The nested work-item sections are colored label callouts, not additional toggles; dividers
+    # separate the content groups and the outcome bullet still lives inside the work-item toggle.
     nested_toggle_labels = [_plain(t) for t in _of_type(nested, "toggle")]
-    assert "Why" not in nested_toggle_labels
-    assert "User messages" not in nested_toggle_labels
-    nested_paragraphs = _plain_texts(nested, "paragraph")
-    assert "Why" in nested_paragraphs
-    assert "User messages" in nested_paragraphs
+    assert "Context and Response" not in nested_toggle_labels
+    assert "User Messages" not in nested_toggle_labels
+    label_callouts = [
+        block
+        for block in nested
+        if block["type"] == "callout"
+        and _plain(block) in {"Context and Response", "User Messages", "Outcomes"}
+    ]
+    assert [_plain(block) for block in label_callouts] == [
+        "Context and Response",
+        "User Messages",
+        "Outcomes",
+    ]
+    assert [block["callout"]["color"] for block in label_callouts] == [
+        "blue_background",
+        "purple_background",
+        "green_background",
+    ]
+    label_indexes = [nested.index(block) for block in label_callouts]
+    assert all(
+        any(block["type"] == "divider" for block in nested[left + 1 : right])
+        for left, right in pairwise(label_indexes)
+    )
     outcome = next(
         b
         for b in _of_type(nested, "bulleted_list_item")
         if "Top-level turn_ref adopted; chain_ref removed from the evidence surface." in _plain(b)
     )
+    assert nested.index(outcome) > label_indexes[-1]
     assert [run["text"]["content"] for run in _code_runs(outcome)] == ["S0001:2-8"]
     # The outcome's own confidence renders inline as a ``· high`` run before the citation.
     assert " · high" in _plain(outcome)
@@ -256,8 +276,9 @@ def test_render_notion_limit_is_a_callout_with_warning_icon(tmp_path: Path) -> N
 def test_render_notion_minor_activity_toggle_holds_work_item_toggles(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    # Minor activity is a plain label; the minor work items remain work-item toggles.
-    assert "Minor activity" in _plain_texts(children, "paragraph")
+    # Minor activity is a label callout; the minor work items remain work-item toggles.
+    minor = next(c for c in _of_type(children, "callout") if _plain(c) == "Minor activity")
+    assert minor["callout"]["color"] == "gray_background"
     assert all(_plain(t) != "Minor activity" for t in _of_type(children, "toggle"))
 
 
