@@ -14,84 +14,70 @@ console commands after installation.
 
 ## Usage
 
-Install Prompt Diary from PyPI as an isolated uv tool:
+Install Prompt Diary from PyPI as an isolated `uv` tool:
 
 ```bash
 uv tool install prompt-diary
 ```
 
-Then run:
+### Configuration
+
+Configuration is optional for local-only reports. Run `prompt-diary config init` when you want
+Notion publishing; the same setup can also save a default data folder and reporter name:
 
 ```bash
-report --help
-prompt-diary --help
-report prepare --date 2026-05-12 --timezone Asia/Shanghai
-report generate --date 2026-05-12 --timezone Asia/Shanghai
-report generate render --notion --date 2026-05-12 --timezone Asia/Shanghai
+prompt-diary config init
 ```
 
-Generation is an artifact-first pipeline with standalone phase commands:
+The setup prompts for the Notion integration token, optional data folder, target database id, and
+optional reporter name. Credentials are validated before they are saved, written to a single config
+file with `0600` permissions, and never passed on the command line. Use these commands to inspect
+the stored configuration:
 
 ```bash
-report generate evidence --date 2026-05-12 --timezone Asia/Shanghai --project-key <project> --session-ref S0001
-report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key <project>
-report generate daily --date 2026-05-12 --timezone Asia/Shanghai
-```
-
-Once Notion is configured, `report generate render --notion` can publish an already-generated report
-as a new row in the Notion database. It resolves the existing workspace, requires `daily-report.json`,
-regenerates the deterministic `report.notion.json` payload beside `report.md`, and publishes that
-payload. `report generate` runs rendering as its final in-pipeline phase and then performs the same
-publish step when Notion publishing is active: by default it publishes when Notion is configured;
-pass `--no-notion` to skip publishing, or `--notion` to require it (which errors if Notion is not
-configured). Configure the Notion integration token and target database id once with `prompt-diary
-config init` (see [Configuration](#configuration)); credentials never pass on the command line. Each
-run appends a new dated row; re-publishing never edits or deletes existing rows.
-
-Generation drives a four-phase, artifact-first pipeline — evidence extraction, then project
-synthesis, then daily report synthesis, then rendering — through the Codex CLI. The first three
-phases produce `daily-report.json`; the deterministic, agent-free rendering phase projects that model
-into the `report.md` and `report.notion.json` views. It requires the `codex` CLI to be installed and
-authenticated; the subcommands above run each phase standalone against an already-prepared workspace.
-
-Prepared workspaces and generated reports are written under a per-user data directory by default
-(`~/.local/share/prompt-diary/` on Linux; the platform equivalent on macOS and Windows), organized
-by date as `<reports-root>/work/<YYYY-MM-DD>/`. Override the location with `--reports-root <path>` on
-`prepare` and `generate` (which includes `generate render`), `PROMPT_DIARY_HOME`, or the stored
-config (see
-[Configuration](#configuration)); precedence is `--reports-root` over `PROMPT_DIARY_HOME` over the
-stored config over the default data directory. (Earlier versions wrote to `./.reports` in the current directory — pass
-`--reports-root .reports` to keep using an existing local directory.)
-
-Both `prepare` and `generate` show a live progress dashboard when running on a TTY and write
-append-only log lines when output is piped, redirected, or running in CI. Pass `--quiet` to either
-command to suppress the live output and print only the final summary.
-
-## Configuration
-
-Run `prompt-diary config init` once to set up credentials and settings interactively. It prompts for
-the Notion integration token, an optional data folder, the Notion database id, and an optional
-reporter name (a free-form label, like `git config user.name`, written into the `汇报人` column at
-publish time). Each credential is validated live against the Notion API and saved the moment it
-passes — the token check reports the
-authenticated integration and workspace, and the database check reports the connected database's name
-— so an interrupted run keeps whatever was already verified. Everything is written to a single config
-file with `0600` permissions. The token is read only from that file or the environment — never passed
-on the command line, and never printed (`config show` masks it).
-
-```bash
-prompt-diary config init   # interactive setup; validates the token and database live
 prompt-diary config show   # print the configuration (token masked) and the file location
 prompt-diary config path   # print the config file location
 ```
 
 The config file lives under the per-user config directory (`~/.config/prompt-diary/config.json` on
-Linux; the platform equivalent on macOS and Windows), overridable with `PROMPT_DIARY_CONFIG`. Each
-setting is resolved from the first source that provides it: a CLI flag (where one exists), then the
-environment, then the stored config, then a built-in default (where one exists). So `NOTION_API_KEY`
-/ `NOTION_PAGE_ID` and `--reports-root` / `PROMPT_DIARY_HOME` still override the stored config (useful
-in CI). Once Notion is configured — including via those environment variables — a bare `report
-generate` publishes by default; pass `--no-notion` in CI or any pipeline that should not publish.
+Linux; the platform equivalent on macOS and Windows), overridable with `PROMPT_DIARY_CONFIG`.
+Environment variables still override stored credentials and settings when present, including
+`NOTION_API_KEY`, `NOTION_PAGE_ID`, and `PROMPT_DIARY_HOME`.
+
+### Generate a report
+
+Run the full report workflow directly:
+
+```bash
+report generate
+```
+
+By default, `report generate` first resolves the timezone, then targets the previous calendar day
+in that timezone: the most recent completed day. It prepares the workspace if it is missing,
+generates the report, and renders `report.md` and `report.notion.json`. The timezone is resolved
+from `--timezone`, then `PROMPT_DIARY_TIMEZONE`, then `TZ`, then the system timezone, then UTC. If
+Notion is configured, `report generate` also publishes a new row in the configured database; pass
+`--no-notion` to skip publishing, or `--notion` to require publishing and fail if Notion is not
+configured.
+
+Use explicit targeting when needed:
+
+```bash
+report generate --date 2026-05-12 --timezone Asia/Shanghai
+report generate --today --no-notion
+```
+
+The reports root is the base folder for prepared workspaces and generated report files. By default
+it is the per-user data directory (`~/.local/share/prompt-diary/` on Linux; the platform equivalent
+on macOS and Windows). Each run writes under `<reports-root>/work/<YYYY-MM-DD>/`. Override the
+location with `--reports-root <path>`, `PROMPT_DIARY_HOME`, or the saved data folder. Precedence is
+`--reports-root`, then `PROMPT_DIARY_HOME`, then the saved data folder, then the default per-user
+data directory. Earlier versions wrote to `./.reports` in the current directory; pass
+`--reports-root .reports` to keep using an existing local directory.
+
+In an interactive terminal, `report generate` shows live progress. When output is redirected or
+running in CI, it prints plain log lines. Pass `--quiet` to suppress the live output and print only
+the final summary.
 
 ## Development
 

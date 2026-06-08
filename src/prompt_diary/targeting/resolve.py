@@ -19,6 +19,14 @@ DEFAULT_TIMEZONE = "UTC"
 TIMEZONE_ENV_VARS = ("PROMPT_DIARY_TIMEZONE", "TZ")
 
 
+def normalize_timezone_env_value(value: str) -> str | None:
+    """Return a timezone env value usable as an IANA name, or ``None`` when it selects none."""
+    stripped = value.strip()
+    if not stripped or stripped.startswith(":"):
+        return None
+    return stripped
+
+
 def resolve_report_target(
     *,
     date: str | None,
@@ -58,8 +66,8 @@ def resolve_report_target(
 def _default_timezone_name(env: Mapping[str, str] | None) -> str:
     values = os.environ if env is None else env
     for key in TIMEZONE_ENV_VARS:
-        value = values.get(key)
-        if value is not None and value.strip() and not value.startswith(":"):
+        raw_value = values.get(key)
+        if raw_value is not None and (value := normalize_timezone_env_value(raw_value)) is not None:
             return value
     system_timezone = _system_timezone_name()
     if system_timezone is not None:
@@ -72,6 +80,16 @@ def _load_zone_info(timezone_name: str) -> ZoneInfo:
         return ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError as exc:
         raise PromptDiaryError(_unknown_timezone_message(timezone_name)) from exc
+
+
+def detect_system_timezone_name() -> str | None:
+    """Return the host's IANA timezone name when it can be detected."""
+    return _system_timezone_name()
+
+
+def is_known_timezone_name(value: str) -> bool:
+    """Return whether ``value`` is a known IANA timezone name."""
+    return _is_known_timezone(value)
 
 
 def _system_timezone_name() -> str | None:

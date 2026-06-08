@@ -52,6 +52,18 @@ def test_resolve_report_target_uses_environment_timezone_default() -> None:
     assert serialize_datetime(target.report_window_utc.start) == "2026-05-18T16:00:00Z"
 
 
+def test_resolve_report_target_strips_environment_timezone_default() -> None:
+    target = resolve_report_target(
+        date="2026-05-19",
+        today=False,
+        timezone_name=None,
+        now=datetime(2026, 5, 20, 10, 30, tzinfo=ZoneInfo("UTC")),
+        env={"PROMPT_DIARY_TIMEZONE": "  Asia/Shanghai  "},
+    )
+
+    assert target.timezone == "Asia/Shanghai"
+
+
 def test_resolve_report_target_rejects_mutually_exclusive_date_flags() -> None:
     with pytest.raises(PromptDiaryError, match="mutually exclusive"):
         resolve_report_target(

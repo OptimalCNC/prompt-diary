@@ -30,6 +30,16 @@ Run the CLI from the project environment:
 uv run report --help
 ```
 
+Developer workflow commands that are intentionally not highlighted in the README Usage section:
+
+```bash
+uv run report prepare --date YYYY-MM-DD --timezone Area/City
+uv run report generate render --date YYYY-MM-DD --timezone Area/City
+```
+
+Standalone generation phase commands are covered in the
+[Generation Pipeline Framework](./generation-pipeline.md#cli).
+
 Install the local checkout as an isolated uv tool:
 
 ```bash

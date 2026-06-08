@@ -10,6 +10,8 @@ import typer
 
 from prompt_diary.cmds.common import (
     DateOption,
+    DynamicDefaultsTyperCommand,
+    DynamicDefaultsTyperGroup,
     QuietOption,
     ReportsRootOption,
     TimezoneOption,
@@ -64,8 +66,7 @@ NotionOption = Annotated[
         "--notion/--no-notion",
         help=(
             "Publish the finished report as a new row in the configured Notion database. "
-            "Defaults to publishing when Notion is configured and skipping otherwise; pass "
-            "--notion to require it (errors if unconfigured) or --no-notion to skip. "
+            "Pass --notion to require publishing (errors if unconfigured) or --no-notion to skip. "
             f"Configure with `prompt-diary config init`, or ${NOTION_DATABASE_ENV} / "
             f"${NOTION_TOKEN_ENV}."
         ),
@@ -126,14 +127,16 @@ def build_generation_workflow() -> GenerateWorkspaceWorkflow:
 def register(app: typer.Typer) -> None:
     """Register generate commands."""
     generate_app = typer.Typer(
+        cls=DynamicDefaultsTyperGroup,
         help="Run report generation or a standalone generation phase.",
         invoke_without_command=True,
+        subcommand_metavar="[COMMAND] [ARGS]...",
     )
     generate_app.callback()(generate)
-    generate_app.command(name="evidence")(generate_evidence)
-    generate_app.command(name="project")(generate_project)
-    generate_app.command(name="daily")(generate_daily)
-    generate_app.command(name="render")(generate_render)
+    generate_app.command(name="evidence", cls=DynamicDefaultsTyperCommand)(generate_evidence)
+    generate_app.command(name="project", cls=DynamicDefaultsTyperCommand)(generate_project)
+    generate_app.command(name="daily", cls=DynamicDefaultsTyperCommand)(generate_daily)
+    generate_app.command(name="render", cls=DynamicDefaultsTyperCommand)(generate_render)
     app.add_typer(generate_app, name="generate")
 
 

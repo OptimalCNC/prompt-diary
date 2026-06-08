@@ -1,22 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
+from zoneinfo import ZoneInfo
 
+import click
 import pytest
 from typer.testing import CliRunner
 
 import prompt_diary.cli as cli_module
+import prompt_diary.cmds.common as common_cmd
 import prompt_diary.cmds.generate as generate_cmd
 import prompt_diary.cmds.mcp as mcp_cmd
 import prompt_diary.cmds.prepare as prepare_cmd
+import prompt_diary.paths as paths_module
+import prompt_diary.targeting.resolve as targets_module
 from prompt_diary import __version__
 from prompt_diary.cli import app, main
+from prompt_diary.config import NOTION_DATABASE_ENV, NOTION_TOKEN_ENV, StoredConfig, save_config
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.rendering import NotionRenderResult
+from prompt_diary.paths import REPORTS_HOME_ENV
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.progress.events import PhaseFinished, PhaseStarted
-from prompt_diary.targeting.resolve import resolve_report_target
+from prompt_diary.targeting.resolve import TIMEZONE_ENV_VARS, resolve_report_target
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,6 +35,11 @@ PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
 PHASE_FAILED = "phase failed"
 NO_NOTION_RENDER_FAILED = "render notion must not run with --no-notion"
+
+
+def _one_line(text: str) -> str:
+    plain = "".join(char if char.isascii() else " " for char in text)
+    return " ".join(plain.split())
 
 
 @dataclass
@@ -78,13 +91,328 @@ def test_report_help_lists_commands() -> None:
 def test_generate_help_lists_phase_commands() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["generate", "--help"])
+    result = runner.invoke(app, ["generate", "--help"], terminal_width=220)
 
+    help_text = _one_line(result.stdout)
     assert result.exit_code == 0
+    assert "generate [OPTIONS] [COMMAND] [ARGS]..." in help_text
     assert "evidence" in result.stdout
     assert "project" in result.stdout
     assert "daily" in result.stdout
     assert "render" in result.stdout
+
+
+def test_generate_help_shows_effective_default_targeting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reports_root = "help-reports"
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[0], "Asia/Shanghai")
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[1], "UTC")
+    monkeypatch.setenv(REPORTS_HOME_ENV, reports_root)
+    before = datetime.now(ZoneInfo("Asia/Shanghai")).date() - timedelta(days=1)
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    after = datetime.now(ZoneInfo("Asia/Shanghai")).date() - timedelta(days=1)
+    expected_dates = {before.isoformat(), after.isoformat()}
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert any(
+        (
+            f"Defaults to {expected} (yesterday in Asia/Shanghai) when neither --date nor "
+            "--today is passed"
+        )
+        in help_text
+        for expected in expected_dates
+    )
+    assert (
+        "Defaults to Asia/Shanghai from $PROMPT_DIARY_TIMEZONE. $TZ is set but not used "
+        "because $PROMPT_DIARY_TIMEZONE takes precedence" in help_text
+    )
+    assert (
+        "Defaults to help-reports from $PROMPT_DIARY_HOME (relative to the current working "
+        "directory)"
+    ) in help_text
+
+
+def test_generate_help_explains_blank_lower_priority_timezone_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[0], "Asia/Shanghai")
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[1], " ")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to Asia/Shanghai from $PROMPT_DIARY_TIMEZONE. $TZ is set but blank and is not "
+        "used because $PROMPT_DIARY_TIMEZONE takes precedence"
+    ) in help_text
+
+
+def test_generate_help_shows_unset_environment_default_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def user_data_dir(appname: str, *, appauthor: bool) -> str:
+        assert appname == "prompt-diary"
+        assert appauthor is False
+        return "/pd-data"
+
+    for env_var in (*TIMEZONE_ENV_VARS, REPORTS_HOME_ENV):
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr(targets_module, "_system_timezone_name", lambda: None)
+    monkeypatch.setattr(paths_module.platformdirs, "user_data_dir", user_data_dir)
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to UTC because no valid timezone override is set and no system timezone was "
+        "detected. $PROMPT_DIARY_TIMEZONE is unset. $TZ is unset" in help_text
+    )
+    assert (
+        "Defaults to /pd-data from the per-user data directory. $PROMPT_DIARY_HOME is unset "
+        "and no reports_root is stored in config"
+    ) in help_text
+
+
+def test_generate_help_explains_blank_timezone_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[0], " ")
+    monkeypatch.delenv(TIMEZONE_ENV_VARS[1], raising=False)
+    monkeypatch.setattr(targets_module, "_system_timezone_name", lambda: None)
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to UTC because no valid timezone override is set and no system timezone was "
+        "detected. $PROMPT_DIARY_TIMEZONE is set but blank. $TZ is unset"
+    ) in help_text
+
+
+def test_generate_help_explains_system_timezone_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for env_var in TIMEZONE_ENV_VARS:
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr(targets_module, "_system_timezone_name", lambda: "Asia/Shanghai")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to Asia/Shanghai from the system timezone. $PROMPT_DIARY_TIMEZONE is unset. "
+        "$TZ is unset"
+    ) in help_text
+
+
+def test_generate_help_explains_timezone_environment_that_is_not_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[0], ":posix/UTC")
+    monkeypatch.delenv(TIMEZONE_ENV_VARS[1], raising=False)
+    monkeypatch.setattr(targets_module, "_system_timezone_name", lambda: None)
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to UTC because no valid timezone override is set and no system timezone was "
+        "detected. $PROMPT_DIARY_TIMEZONE is not used because it is POSIX TZ syntax (:posix/UTC), "
+        "not an IANA timezone name. $TZ is unset"
+    ) in help_text
+
+
+def test_generate_help_explains_invalid_timezone_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[0], "Not/AZone")
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[1], "UTC")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "No default timezone is available because $PROMPT_DIARY_TIMEZONE=Not/AZone is not a known "
+        "IANA timezone name. $TZ is set but not used because $PROMPT_DIARY_TIMEZONE takes "
+        "precedence. Running without --timezone will error. Pass --timezone or fix "
+        "$PROMPT_DIARY_TIMEZONE"
+    ) in help_text
+    assert (
+        "If neither --date nor --today is passed, the default date cannot be computed until a "
+        "valid timezone default is available"
+    ) in help_text
+
+
+def test_generate_help_explains_invalid_secondary_timezone_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(TIMEZONE_ENV_VARS[0], raising=False)
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[1], "Not/AZone")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "No default timezone is available because $TZ=Not/AZone is not a known IANA timezone name. "
+        "$PROMPT_DIARY_TIMEZONE is unset. Running without --timezone will error. Pass --timezone "
+        "or fix $TZ"
+    ) in help_text
+    assert (
+        "If neither --date nor --today is passed, the default date cannot be computed until a "
+        "valid timezone default is available"
+    ) in help_text
+
+
+def test_generate_help_shows_stored_config_reports_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(REPORTS_HOME_ENV, raising=False)
+    save_config(StoredConfig(reports_root="stored-reports"))
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to stored-reports from stored config (relative to the current working "
+        "directory). $PROMPT_DIARY_HOME is unset"
+    ) in help_text
+
+
+def test_generate_help_explains_blank_reports_root_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def user_data_dir(appname: str, *, appauthor: bool) -> str:
+        assert appname == "prompt-diary"
+        assert appauthor is False
+        return "/pd-data"
+
+    monkeypatch.setenv(REPORTS_HOME_ENV, " ")
+    monkeypatch.setattr(paths_module.platformdirs, "user_data_dir", user_data_dir)
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Defaults to /pd-data from the per-user data directory. $PROMPT_DIARY_HOME is set but "
+        "blank and no reports_root is stored in config"
+    ) in help_text
+
+
+def test_generate_phase_help_shows_effective_default_targeting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TIMEZONE_ENV_VARS[0], "Asia/Shanghai")
+    monkeypatch.setenv(REPORTS_HOME_ENV, "phase-help-reports")
+
+    result = CliRunner().invoke(app, ["generate", "render", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert "Defaults to Asia/Shanghai from $PROMPT_DIARY_TIMEZONE. $TZ is unset" in help_text
+    assert (
+        "Defaults to phase-help-reports from $PROMPT_DIARY_HOME (relative to the current working "
+        "directory)"
+    ) in help_text
+
+
+def test_generate_help_shows_default_notion_publish_from_config() -> None:
+    save_config(StoredConfig(notion_api_key="cfg-tok", notion_page_id="cfg-db"))
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Default now: publish because the Notion token and database id are stored in config"
+        in help_text
+    )
+
+
+def test_generate_help_shows_default_notion_skip_when_missing() -> None:
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Default now: skip publishing because no Notion token or database id resolves" in help_text
+    )
+
+
+def test_generate_help_shows_default_notion_publish_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
+    monkeypatch.setenv(NOTION_DATABASE_ENV, "env-db")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert "Default now: publish because $NOTION_API_KEY and $NOTION_PAGE_ID are set" in help_text
+
+
+def test_generate_help_shows_default_notion_publish_from_mixed_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    save_config(StoredConfig(notion_page_id="cfg-db"))
+    monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Default now: publish because the Notion token is from $NOTION_API_KEY and the database "
+        "id is stored in config"
+    ) in help_text
+
+
+def test_generate_help_shows_default_notion_skip_when_database_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
+
+    result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert "Default now: skip publishing because no database id resolves" in help_text
+
+
+def test_generate_render_help_shows_notion_publish_is_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
+    monkeypatch.setenv(NOTION_DATABASE_ENV, "env-db")
+
+    result = CliRunner().invoke(app, ["generate", "render", "--help"], terminal_width=220)
+
+    help_text = _one_line(result.stdout)
+    assert result.exit_code == 0
+    assert (
+        "Default now: do not publish. If --notion is passed now, it will publish because "
+        "$NOTION_API_KEY and $NOTION_PAGE_ID are set"
+    ) in help_text
+
+
+def test_refresh_dynamic_default_help_ignores_click_arguments() -> None:
+    argument = click.Argument(["name"])
+
+    common_cmd.refresh_dynamic_default_help([argument])
+
+    assert argument.name == "name"
 
 
 def test_generate_render_accepts_notion_flag(monkeypatch: pytest.MonkeyPatch) -> None:
