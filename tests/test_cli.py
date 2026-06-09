@@ -315,6 +315,7 @@ def test_generate_phase_help_shows_effective_default_targeting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(TIMEZONE_ENV_VARS[0], "Asia/Shanghai")
+    monkeypatch.delenv(TIMEZONE_ENV_VARS[1], raising=False)
     monkeypatch.setenv(REPORTS_HOME_ENV, "phase-help-reports")
 
     result = CliRunner().invoke(app, ["generate", "render", "--help"], terminal_width=220)
