@@ -34,6 +34,10 @@ def test_config_content_language_resolves_to_zh_hans(monkeypatch: pytest.MonkeyP
     assert resolve_content_language().tag.value == "zh-Hans"
 
 
+def test_content_language_label_names_the_selected_tag() -> None:
+    assert LanguageNorm.from_tag("zh-Hant").label == "Traditional Chinese"
+
+
 def test_env_content_language_overrides_config(monkeypatch: pytest.MonkeyPatch) -> None:
     save_config(StoredConfig(content_language="zh-Hant"))
     monkeypatch.setenv(CONTENT_LANGUAGE_ENV, "zh-Hans")

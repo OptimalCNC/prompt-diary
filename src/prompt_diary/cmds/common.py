@@ -177,12 +177,14 @@ def _notion_default_help(param: click.Option) -> str:
 
 
 def _full_generate_notion_default_help() -> str:
-    configured, reason = _notion_configuration_reason()
-    action = "publish" if configured else "skip publishing"
-    return _ensure_sentence(f"Default now: {action} because {reason}")
+    return _notion_opt_in_default_help()
 
 
 def _render_notion_default_help() -> str:
+    return _notion_opt_in_default_help()
+
+
+def _notion_opt_in_default_help() -> str:
     configured, reason = _notion_configuration_reason()
     outcome = "publish" if configured else "error"
     return _ensure_sentence(

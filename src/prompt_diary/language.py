@@ -132,9 +132,7 @@ def render_language_instructions(language: LanguageNorm) -> str:
         ),
         *_PRESERVATION_ROWS,
     )
-    rendered_rows = "\n".join(
-        f"| {content_class} | {rule} |" for content_class, rule in row_items
-    )
+    rendered_rows = "\n".join(f"| {content_class} | {rule} |" for content_class, rule in row_items)
     return "\n".join(
         (
             "Prompt Diary content language norm",

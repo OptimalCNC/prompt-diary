@@ -58,7 +58,7 @@ def test_resolve_notion_publish_no_notion_never_publishes(monkeypatch: pytest.Mo
     assert resolve_notion_publish(notion=False) is None  # --no-notion skips even when configured
 
 
-def test_resolve_notion_publish_default_follows_configuration(
+def test_resolve_notion_publish_default_skips_even_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("NOTION_API_KEY", raising=False)
@@ -66,8 +66,7 @@ def test_resolve_notion_publish_default_follows_configuration(
     assert resolve_notion_publish(notion=None) is None  # unset + unconfigured -> skip
     monkeypatch.setenv("NOTION_API_KEY", "tok")
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
-    # unset + configured -> publish (the token is wrapped in a redacting Secret)
-    assert resolve_notion_publish(notion=None) == (Secret("tok"), "db")
+    assert resolve_notion_publish(notion=None) is None  # unset + configured -> still skip
 
 
 def test_resolve_notion_publish_explicit_notion_requires_configuration(

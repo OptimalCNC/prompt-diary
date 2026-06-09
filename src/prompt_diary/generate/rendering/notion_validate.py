@@ -1,10 +1,10 @@
 """Typed results and pure parsers for live Notion credential validation.
 
 The config wizard validates the Notion integration token and target database live before storing
-them. The networked SDK calls live in the coverage-omitted ``notion_client_adapter``; this module
-holds the *pure* half — the small result types the wizard reports back to the user and the parsers
-that turn a raw Notion ``users.me`` / ``databases.retrieve`` response into them. Keeping the parsing
-here, not in the omitted adapter, keeps it unit-tested and free of any network dependency.
+them. The networked SDK calls live in ``notion_client_adapter``; this module holds the *pure* half —
+the small result types the wizard reports back to the user and the parsers that turn a raw Notion
+``users.me`` / ``databases.retrieve`` response into them. Keeping the parsing here keeps it
+unit-tested and free of any network dependency.
 
 The parsers are deliberately defensive: a successful response that omits an optional field, or
 carries an unexpected shape, yields ``None`` for that field rather than raising. A rejected

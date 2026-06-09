@@ -31,9 +31,9 @@ def _isolate_prompt_diary_config(  # pyright: ignore[reportUnusedFunction]
     """Isolate Prompt Diary config so tests never read the real config or ambient credentials.
 
     Points PROMPT_DIARY_CONFIG at a unique temp path and clears the Notion credential env vars so a
-    test must opt in to configuration. Without the env clearing, an ambient NOTION_API_KEY /
-    NOTION_PAGE_ID in the developer's shell would make ``report generate``'s config-aware default
-    publish — even firing a real network publish from the end-to-end tests.
+    test must opt in to configuration. That keeps credential-resolution tests deterministic and
+    prevents an ambient NOTION_API_KEY / NOTION_PAGE_ID in the developer's shell from changing CLI
+    behavior.
     """
     config_dir = tmp_path_factory.mktemp("prompt-diary-config")
     # The directory exists but config.json does not, so load_config() defaults to empty until a

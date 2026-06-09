@@ -165,8 +165,8 @@ def generate(
         return
     try:
         # Freeze the Notion publish target before the expensive pipeline: the default (unset)
-        # publishes only when configured, --notion requires configuration (fail-fast), --no-notion
-        # never publishes. Resolving the credentials here means the target cannot drift mid-run.
+        # skips publishing, --notion requires configuration (fail-fast), and --no-notion is an
+        # explicit skip. Resolving the credentials here means the target cannot drift mid-run.
         notion_target = resolve_notion_publish(notion=notion)
         root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
@@ -203,16 +203,14 @@ def resolve_notion_publish(*, notion: bool | None) -> tuple[Secret, str] | None:
     """Resolve the frozen Notion ``(token, database_id)`` to publish with, or ``None`` to skip.
 
     Resolving the credentials here, before the expensive pipeline, both fails fast and freezes the
-    publish target so it cannot drift if the stored config changes mid-run. ``None`` (flag unset)
-    publishes only when Notion is configured; ``True`` (``--notion``) requires configuration and
-    raises otherwise; ``False`` (``--no-notion``) never publishes.
+    publish target so it cannot drift if the stored config changes mid-run. ``True`` (``--notion``)
+    requires configuration and raises otherwise; ``None`` (flag unset) and ``False``
+    (``--no-notion``) skip publishing.
     """
-    if notion is False:
+    if notion is not True:
         return None
     configured = notion_is_configured()
-    if notion is None and not configured:
-        return None
-    if notion is True and not configured:
+    if not configured:
         raise PromptDiaryError(_notion_unconfigured_message())
     return resolve_notion_credentials()
 

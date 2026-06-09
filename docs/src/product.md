@@ -123,8 +123,8 @@ and that `prepare --force` can refresh it after session updates.
 `generate render` runs the rendering phase on an existing workspace for the target date: it requires
 the semantic `daily-report.json` artifact and writes the deterministic `report.md` and
 `report.notion.json` views without any network access. `generate render --notion` renders, then
-publishes `report.notion.json` as a new row in the configured Notion database. When Notion publishing
-is active for the full `generate`, that publish step runs after the in-pipeline rendering phase.
+publishes `report.notion.json` as a new row in the configured Notion database. `generate --notion`
+runs that publish step after the in-pipeline rendering phase.
 
 `mcp serve` starts the package MCP server over stdio for integration work. The server exposes
 `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and `write_work_item`.

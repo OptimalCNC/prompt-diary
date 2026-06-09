@@ -275,9 +275,9 @@ reads the integration token and target database id from the stored config (`prom
 init`) or the `NOTION_API_KEY` / `NOTION_PAGE_ID` env vars (so credentials never pass on the command
 line) and creates a **new row** per report — re-publishing never edits or deletes an existing row,
 so the user prunes stale rows by hand. `report generate` runs rendering as an in-pipeline phase, and
-when Notion publishing is active (`--notion`, or default configured publishing without `--no-notion`)
-it then publishes through this same path. Property mapping is schema-driven: the database's single
-title-typed property gets the page title, every date-typed property gets the report date, the
+`report generate --notion` then publishes through this same path. Property mapping is schema-driven:
+the database's single title-typed property gets the page title, every date-typed property gets the
+report date, the
 configured reporter name (from `config init` — the `汇报人` column by default, retargetable via
 `notion_reporter_property`) is written into that one text property when it exists. Whenever the
 reporter cannot be written — the column is missing, is present but not a text property, or no name is

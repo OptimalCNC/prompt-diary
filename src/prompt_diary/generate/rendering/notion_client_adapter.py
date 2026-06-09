@@ -2,10 +2,9 @@
 
 This is the only module that talks to the network, so it is deliberately thin: it implements
 :class:`~prompt_diary.generate.rendering.notion_publish.NotionClientProtocol` by forwarding to
-the ``notion_client`` SDK, with no logic of its own (mapping, banner, and request shaping all live
-in the unit-tested publisher). It is excluded from coverage for the same reason
-``integrations/codex_runner.py`` is — its behaviour is the SDK's, exercised by the live publish path
-rather than the unit suite.
+the ``notion_client`` SDK, with no logic of its own. Mapping, banner, and request shaping all live
+in the publisher. Unit tests replace the SDK client with an in-process fake, so this adapter's
+boundary is covered without live Notion credentials or network access.
 
 The Notion API version is pinned to ``2022-06-28``: under that version a database retrieve returns a
 flat ``properties`` map and a page is created with a ``{"database_id": ...}`` parent, which is the

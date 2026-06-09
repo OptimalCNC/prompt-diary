@@ -24,6 +24,7 @@ from prompt_diary.generate.rendering import NotionRenderResult
 from prompt_diary.paths import REPORTS_HOME_ENV
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.progress.events import PhaseFinished, PhaseStarted
+from prompt_diary.secret import Secret
 from prompt_diary.targeting.resolve import TIMEZONE_ENV_VARS, resolve_report_target
 
 if TYPE_CHECKING:
@@ -327,7 +328,7 @@ def test_generate_phase_help_shows_effective_default_targeting(
     ) in help_text
 
 
-def test_generate_help_shows_default_notion_publish_from_config() -> None:
+def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_config() -> None:
     save_config(StoredConfig(notion_api_key="cfg-tok", notion_page_id="cfg-db"))
 
     result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
@@ -335,8 +336,8 @@ def test_generate_help_shows_default_notion_publish_from_config() -> None:
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: publish because the Notion token and database id are stored in config"
-        in help_text
+        "Default now: do not publish. If --notion is passed now, it will publish because "
+        "the Notion token and database id are stored in config" in help_text
     )
 
 
@@ -346,11 +347,12 @@ def test_generate_help_shows_default_notion_skip_when_missing() -> None:
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: skip publishing because no Notion token or database id resolves" in help_text
+        "Default now: do not publish. If --notion is passed now, it will error because no Notion "
+        "token or database id resolves" in help_text
     )
 
 
-def test_generate_help_shows_default_notion_publish_from_env(
+def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
@@ -360,10 +362,13 @@ def test_generate_help_shows_default_notion_publish_from_env(
 
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
-    assert "Default now: publish because $NOTION_API_KEY and $NOTION_PAGE_ID are set" in help_text
+    assert (
+        "Default now: do not publish. If --notion is passed now, it will publish because "
+        "$NOTION_API_KEY and $NOTION_PAGE_ID are set" in help_text
+    )
 
 
-def test_generate_help_shows_default_notion_publish_from_mixed_sources(
+def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_mixed_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     save_config(StoredConfig(notion_page_id="cfg-db"))
@@ -374,8 +379,8 @@ def test_generate_help_shows_default_notion_publish_from_mixed_sources(
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: publish because the Notion token is from $NOTION_API_KEY and the database "
-        "id is stored in config"
+        "Default now: do not publish. If --notion is passed now, it will publish because "
+        "the Notion token is from $NOTION_API_KEY and the database id is stored in config"
     ) in help_text
 
 
@@ -388,7 +393,10 @@ def test_generate_help_shows_default_notion_skip_when_database_missing(
 
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
-    assert "Default now: skip publishing because no database id resolves" in help_text
+    assert (
+        "Default now: do not publish. If --notion is passed now, it will error because no database "
+        "id resolves" in help_text
+    )
 
 
 def test_generate_render_help_shows_notion_publish_is_opt_in(
@@ -572,12 +580,12 @@ def test_generate_notion_flag_appends_publish_message(
         del date, today, timezone_name
         return tmp_path, ("prepared",)
 
-    published_for: list[Path] = []
+    published: list[tuple[Path, object]] = []
 
     def render_workspace_report_to_notion(
         workspace_path: Path, **_kwargs: object
     ) -> NotionRenderResult:
-        published_for.append(workspace_path)
+        published.append((workspace_path, _kwargs.get("credentials")))
         return NotionRenderResult(
             artifact_path=workspace_path / "report.notion.json",
             page_id="page-x",
@@ -602,7 +610,7 @@ def test_generate_notion_flag_appends_publish_message(
     assert result.exit_code == 0
     # The publish message is appended after the pipeline messages, and it published the workspace.
     assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
-    assert published_for == [tmp_path]
+    assert published == [(tmp_path, (Secret("tok"), "db"))]
     # A non-fatal publish warning is surfaced on stderr, without disturbing the stdout messages.
     assert "Warning: 汇报人 was left empty" in result.stderr
 
@@ -625,11 +633,10 @@ def test_generate_notion_flag_fails_fast_when_env_missing(
     assert "NOTION_API_KEY" in result.stderr
 
 
-def test_generate_publishes_by_default_when_notion_configured(
+def test_generate_skips_notion_by_default_even_when_notion_configured(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    # With Notion configured and no flag, the default is to publish (the headline new behavior).
     monkeypatch.setenv("NOTION_API_KEY", "tok")
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
 
@@ -639,17 +646,9 @@ def test_generate_publishes_by_default_when_notion_configured(
         del date, today, timezone_name
         return tmp_path, ("prepared",)
 
-    published_for: list[Path] = []
-
-    def render_workspace_report_to_notion(
-        workspace_path: Path, **_kwargs: object
-    ) -> NotionRenderResult:
-        published_for.append(workspace_path)
-        return NotionRenderResult(
-            artifact_path=workspace_path / "report.notion.json",
-            page_id="page-x",
-            url="https://notion.so/x",
-        )
+    def render_must_not_run(workspace_path: Path, **_kwargs: object) -> NotionRenderResult:
+        del workspace_path
+        raise AssertionError(NO_NOTION_RENDER_FAILED)
 
     monkeypatch.setattr(
         generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
@@ -659,15 +658,12 @@ def test_generate_publishes_by_default_when_notion_configured(
         "build_generation_workflow",
         lambda: _FakeWorkflow(pipeline_messages=("generated",)),
     )
-    monkeypatch.setattr(
-        generate_cmd, "render_workspace_report_to_notion", render_workspace_report_to_notion
-    )
+    monkeypatch.setattr(generate_cmd, "render_workspace_report_to_notion", render_must_not_run)
 
     result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12"])  # no --notion flag
 
     assert result.exit_code == 0
-    assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
-    assert published_for == [tmp_path]
+    assert result.stdout == "prepared\ngenerated\n"
 
 
 def test_generate_no_notion_skips_publish_even_when_configured(

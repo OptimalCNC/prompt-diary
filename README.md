@@ -65,16 +65,16 @@ report generate
 By default, `report generate` first resolves the timezone, then targets the previous calendar day
 in that timezone: the most recent completed day. It prepares the workspace if it is missing,
 generates the report, and renders `report.md` and `report.notion.json`. The timezone is resolved
-from `--timezone`, then `PROMPT_DIARY_TIMEZONE`, then `TZ`, then the system timezone, then UTC. If
-Notion is configured, `report generate` also publishes a new row in the configured database; pass
-`--no-notion` to skip publishing, or `--notion` to require publishing and fail if Notion is not
-configured.
+from `--timezone`, then `PROMPT_DIARY_TIMEZONE`, then `TZ`, then the system timezone, then UTC.
+Notion publishing is opt-in: pass `--notion` to publish a new row in the configured database and
+fail if Notion is not configured.
 
 Use explicit targeting when needed:
 
 ```bash
 report generate --date 2026-05-12 --timezone Asia/Shanghai
-report generate --today --no-notion
+report generate --today
+report generate --date 2026-05-12 --timezone Asia/Shanghai --notion
 ```
 
 The reports root is the base folder for prepared workspaces and generated report files. By default
