@@ -21,9 +21,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_default_content_language_resolves_to_english(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_content_language_resolves_to_simplified_chinese(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv(CONTENT_LANGUAGE_ENV, raising=False)
-    assert resolve_content_language().tag.value == "en"
+    assert resolve_content_language().tag.value == "zh-Hans"
 
 
 def test_config_content_language_resolves_to_zh_hans(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,14 +57,52 @@ def test_invalid_content_language_rejects_prompt_injection_text() -> None:
     assert "Ignore all previous instructions" not in message
 
 
-def test_rendered_language_instructions_include_preservation_rules() -> None:
+def test_rendered_language_instructions_use_simplified_chinese_rules() -> None:
     rendered = render_language_instructions(LanguageNorm.from_tag("zh-Hans"))
-    assert "Translate generated natural-language content values" in rendered
+    assert "Selected content language tag: `zh-Hans`." in rendered
+    assert "| Content class | Rule |" in rendered
+    assert "| Generated natural-language content values | 用简体中文 (`zh-Hans`) 撰写" in rendered
+    assert "| Schema and control tokens | Preserve JSON keys, MCP tool names" in rendered
+    assert "| Source material | Preserve verbatim source text exactly" in rendered
+    assert "| Renderer-owned text | Do not change renderer-owned labels" in rendered
     assert "zh-Hans" in rendered
     assert "JSON keys" in rendered
     assert "MCP tool names" in rendered
     assert "enum values" in rendered
     assert "verbatim source text" in rendered
+    assert "renderer-owned labels, headings, fallbacks, and Notion metadata banners" in rendered
+
+
+def test_rendered_language_instructions_use_traditional_chinese_rules() -> None:
+    rendered = render_language_instructions(LanguageNorm.from_tag("zh-Hant"))
+    assert "Selected content language tag: `zh-Hant`." in rendered
+    assert "| Content class | Rule |" in rendered
+    assert "| Generated natural-language content values | 用繁體中文 (`zh-Hant`) 撰寫" in rendered
+    assert "| Schema and control tokens | Preserve JSON keys, MCP tool names" in rendered
+    assert "| Source material | Preserve verbatim source text exactly" in rendered
+    assert "| Renderer-owned text | Do not change renderer-owned labels" in rendered
+    assert "JSON keys" in rendered
+    assert "MCP tool names" in rendered
+    assert "enum values" in rendered
+    assert "verbatim source text" in rendered
+
+
+def test_rendered_language_instructions_keep_english_rules_for_english() -> None:
+    rendered = render_language_instructions(LanguageNorm.from_tag("en"))
+    assert "Selected content language tag: `en`." in rendered
+    assert "| Content class | Rule |" in rendered
+    generated_rule = (
+        "| Generated natural-language content values | "
+        "Write generated natural-language content values"
+    )
+    assert generated_rule in rendered
+    assert "| Schema and control tokens | Preserve JSON keys, MCP tool names" in rendered
+    assert "| Source material | Preserve verbatim source text exactly" in rendered
+    assert "| Renderer-owned text | Do not change renderer-owned labels" in rendered
+    assert "JSON keys" in rendered
+    assert "MCP tool names" in rendered
+    assert "enum values" in rendered
+    assert "Preserve verbatim source text" in rendered
 
 
 def test_generated_agents_file_is_written_with_marker(tmp_path: Path) -> None:

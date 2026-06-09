@@ -50,6 +50,57 @@ class LanguageNorm:
         return _LANGUAGE_LABELS[self.tag]
 
 
+@dataclass(frozen=True)
+class _GeneratedContentRule:
+    tag: ContentLanguageTag
+    rule: str
+
+
+_GENERATED_CONTENT_RULES = {
+    ContentLanguageTag.EN: _GeneratedContentRule(
+        tag=ContentLanguageTag.EN,
+        rule=(
+            "Write generated natural-language content values in English ({tag}). This includes "
+            "summaries, assessments, risks, next actions, team-learning prose, and other "
+            "free-text report values produced by the agent."
+        ),
+    ),
+    ContentLanguageTag.ZH_HANS: _GeneratedContentRule(
+        tag=ContentLanguageTag.ZH_HANS,
+        rule=(
+            "用简体中文 ({tag}) 撰写生成的自然语言内容值, 包括摘要、评估、风险、后续行动、"
+            "团队学习文字, 以及代理生成的其他自由文本报告值。"
+        ),
+    ),
+    ContentLanguageTag.ZH_HANT: _GeneratedContentRule(
+        tag=ContentLanguageTag.ZH_HANT,
+        rule=(
+            "用繁體中文 ({tag}) 撰寫生成的自然語言內容值, 包括摘要、評估、風險、後續行動、"
+            "團隊學習文字, 以及代理生成的其他自由文字報告值。"
+        ),
+    ),
+}
+
+_PRESERVATION_ROWS = (
+    (
+        "Schema and control tokens",
+        "Preserve JSON keys, MCP tool names, enum values, IDs, citations, paths, commands, and "
+        "code identifiers exactly as required by the schema or tool contract. Do not translate "
+        "or rewrite them.",
+    ),
+    (
+        "Source material",
+        "Preserve verbatim source text exactly. Do not translate quoted user messages, "
+        "transcript excerpts, logs, code, command output, or cited source snippets.",
+    ),
+    (
+        "Renderer-owned text",
+        "Do not change renderer-owned labels, headings, fallbacks, and Notion metadata banners; "
+        "they are deterministic renderer output, not generated content values.",
+    ),
+)
+
+
 def parse_content_language(value: str) -> LanguageNorm:
     """Parse a content-language tag, rejecting unsupported values."""
     stripped = value.strip()
@@ -62,22 +113,38 @@ def parse_content_language(value: str) -> LanguageNorm:
 def resolve_content_language_setting(
     *, env_value: str | None, config_value: str | None
 ) -> LanguageNorm:
-    """Resolve content language from env, stored config, then the English default."""
+    """Resolve content language from env, stored config, then the Simplified Chinese default."""
     if env_value is not None and env_value.strip():
         return parse_content_language(env_value)
     if config_value is not None and config_value.strip():
         return parse_content_language(config_value)
-    return LanguageNorm(tag=ContentLanguageTag.EN)
+    return LanguageNorm(tag=ContentLanguageTag.ZH_HANS)
 
 
 def render_language_instructions(language: LanguageNorm) -> str:
-    """Render compact runtime instructions for the selected content language."""
-    return (
-        "Prompt Diary content language norm:\n"
-        f"- Translate generated natural-language content values into {language.label} "
-        f"(`{language.tag.value}`).\n"
-        "- Preserve JSON keys, MCP tool names, enum values, IDs, citations, paths, commands, "
-        "code identifiers, and verbatim source text."
+    """Render deterministic runtime instructions for the selected content language."""
+    selected_tag = f"`{language.tag.value}`"
+    content_rule = _GENERATED_CONTENT_RULES[language.tag]
+    row_items = (
+        (
+            "Generated natural-language content values",
+            content_rule.rule.format(tag=f"`{content_rule.tag.value}`"),
+        ),
+        *_PRESERVATION_ROWS,
+    )
+    rendered_rows = "\n".join(
+        f"| {content_class} | {rule} |" for content_class, rule in row_items
+    )
+    return "\n".join(
+        (
+            "Prompt Diary content language norm",
+            "",
+            f"Selected content language tag: {selected_tag}.",
+            "",
+            "| Content class | Rule |",
+            "| --- | --- |",
+            rendered_rows,
+        )
     )
 
 

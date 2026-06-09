@@ -151,7 +151,7 @@ def resolve_reports_root(explicit: Path | None) -> Path:
 
 
 def resolve_content_language() -> LanguageNorm:
-    """Resolve the typed content language: env, then config, then English."""
+    """Resolve the typed content language: env, then config, then Simplified Chinese."""
     return resolve_content_language_setting(
         env_value=_env(CONTENT_LANGUAGE_ENV),
         config_value=load_config().content_language,

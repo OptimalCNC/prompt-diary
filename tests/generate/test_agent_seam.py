@@ -161,7 +161,8 @@ def test_language_factory_writes_agents_and_merges_developer_instructions(
     merged = inner.configs[0].developer_instructions
     assert merged is not None
     assert merged.startswith("Phase-specific instruction.\n\n")
-    assert "Translate generated natural-language content values" in merged
+    assert "Selected content language tag: `zh-Hans`." in merged
+    assert "| Generated natural-language content values | 用简体中文 (`zh-Hans`) 撰写" in merged
     assert "zh-Hans" in merged
 
 
