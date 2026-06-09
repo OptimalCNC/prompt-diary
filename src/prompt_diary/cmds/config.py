@@ -71,6 +71,9 @@ def config_init() -> None:
         config = structs.replace(config, reports_root=reports_root)
         save_config(config)
 
+        config = structs.replace(config, content_language=_prompt_content_language())
+        save_config(config)
+
         # Rebuild the validator with the accepted token so the database check authenticates with it.
         validator = build_notion_validator(token=token.reveal())
         page_id, database = _prompt_until_valid(
@@ -184,6 +187,18 @@ def _prompt_reports_root(current: StoredConfig) -> str | None:
     if Path(entered).expanduser() == default_dir:
         return None
     return entered
+
+
+def _prompt_content_language() -> str:
+    """Prompt for the generated-content language, returning the canonical supported tag."""
+    current = resolve_content_language().tag.value
+    _, language = _prompt_until_valid(
+        "Content language (PROMPT_DIARY_CONTENT_LANGUAGE; en, zh-Hans, zh-Hant)",
+        hide_input=False,
+        current=current,
+        validate=parse_content_language,
+    )
+    return language.tag.value
 
 
 def _prompt_reporter(current: StoredConfig) -> str | None:
