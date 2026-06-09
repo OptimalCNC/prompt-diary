@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
@@ -36,10 +37,12 @@ PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
 PHASE_FAILED = "phase failed"
 NO_NOTION_RENDER_FAILED = "render notion must not run with --no-notion"
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _one_line(text: str) -> str:
-    plain = "".join(char if char.isascii() else " " for char in text)
+    plain = ANSI_ESCAPE_PATTERN.sub("", text)
+    plain = "".join(char if char.isascii() else " " for char in plain)
     return " ".join(plain.split())
 
 
