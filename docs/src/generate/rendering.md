@@ -61,15 +61,10 @@ Document  "Prompt Diary Report — {report_date}"
   properties: status{final|partial} · window{start–end, tz} · overall_confidence{high|medium|low}
   needs: report_date, status, window, overall_confidence
 
-Section "Executive Summary" — the 30-second digest: what got done and what's open
-  List(bullet)  top outcomes (curated across projects)     — Prose · Citation
-  List(bullet)  headline open items (unfinished / blocked) — Prose · Citation
-      needs: executive_summary → { top_outcomes[] → {text, citations},
-                                   open_items[]   → {text, citations} }
-
-Section "Work by Project" — the day's outcomes, grouped by project then work item
+Section "Work by Project" — the day's brief and outcomes, grouped by project then work item
   Group per project (ordered by significance)
-    Prose   project summary — produced / finished / in-progress (qualitative) · Citation(work items)
+    Prose   project summary — the daily brief for this project: produced / finished / in-progress
+            (qualitative) · Citation(work items)
     List of work items (material first):
       Group    {work item title}              · Tag(disposition) · Tag(confidence)
         Prose label "Context and Response"    — trigger.summary (+ agent_reaction) · Citation
@@ -132,9 +127,8 @@ rule: any Section whose data is empty renders as Empty(fallback)
 
 Notes on the purpose-1 region:
 
-- Executive Summary and the per-project outcomes render the same evidence at two altitudes: the
-  digest is a capped cross-project headline subset; Work by Project is the complete, grouped detail.
-  They must stay consistent.
+- Work by Project is the report's opening brief: each project summary gives the daily-level reading
+  while preserving the project grouping that makes the day understandable.
 - `what changed` is lifted from a work item's consolidated `outcomes[].summary` — one list item per
   outcome — or, for a work item that ended without material output, its `terminal_states[].summary`.
   The work item `title` is the group label, and its text only as a fallback for a trivial work item
@@ -143,8 +137,8 @@ Notes on the purpose-1 region:
   item's `terminal_states` and outcomes — the at-a-glance "finished or not" signal.
 - Non-material and trivial work items are kept (the coverage invariant holds) but grouped under a
   per-project "Minor activity" label so they do not drown the material work.
-- There is no standalone cross-project outcome table: the cross-project headline is the Executive
-  Summary, and cross-project slicing is a Notion affordance over the flat outcome records.
+- There is no standalone cross-project outcome table: cross-project slicing is a Notion affordance
+  over the flat outcome records.
 - The "User Messages" block reveals the verbatim `source_user_messages` (tool-populated raw user
   text per turn, already secret-redacted) for the work item's covered turns, so a reader can see
   exactly what was asked. It is untrusted display content — the renderer shows it quoted/escaped and
@@ -220,7 +214,6 @@ Block → Markdown:
 - `Callout` → a blockquote.
 - `Toggle` → a `<details><summary>` block (HTML-in-Markdown), collapsed by default.
 - `Empty` → the section's fallback bullet:
-  - Executive Summary: `- No supported work claims found for this report window.`
   - Work by Project: `- No supported project-level work items found for this report window.`
   - Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
   - Team Learning: `- No supported reusable agent-driving pattern found.`

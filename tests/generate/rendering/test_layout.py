@@ -1,11 +1,11 @@
 """Tests for the engine-independent abstract layout built from ``daily-report.json``.
 
 ``build_layout`` turns a finalized daily report into the presentation tree the renderers walk: a
-``Document`` header, the four sections (Executive Summary, Work by Project, Engagement Assessment,
-Team Learning), a ``Group`` per project, work items material-first with labeled ``Toggle``s, the
-judgment groups present only when they carry observations/patterns, and the per-section ``Empty``
-fallback when a section's data is absent. Citations carry the cross-project scoping decision: bare
-within Work by Project, project-qualified in the cross-project sections.
+``Document`` header, the three sections (Work by Project, Engagement Assessment, Team Learning), a
+``Group`` per project, work items material-first with labeled ``Toggle``s, the judgment groups
+present only when they carry observations/patterns, and the per-section ``Empty`` fallback when a
+section's data is absent. Citations carry the cross-project scoping decision: bare within Work by
+Project, project-qualified in the cross-project sections.
 """
 
 from __future__ import annotations
@@ -108,39 +108,26 @@ def test_layout_sections_in_order(tmp_path: Path) -> None:
 
     titles = [child.title for child in document.children]
     assert titles == [
-        "Executive Summary",
         "Work by Project",
         "Engagement Assessment",
         "Team Learning",
     ]
 
 
-# --- executive summary ------------------------------------------------------------------------
+def test_layout_ignores_legacy_executive_summary(tmp_path: Path) -> None:
+    report = _finalized_report(tmp_path)
+    report["executive_summary"] = {
+        "top_outcomes": [{"text": "stale legacy headline", "citations": []}],
+        "open_items": [{"text": "stale open item", "citations": []}],
+    }
 
+    document = build_layout(report)
 
-def test_layout_executive_summary_outcomes_scoped(tmp_path: Path) -> None:
-    section = _section(build_layout(_finalized_report(tmp_path)), "Executive Summary")
-    outcomes = _lists(section.children)[0]
-
-    texts = [_prose((item,))[0].text for item in outcomes.items]
-    assert texts == [
-        "Top-level turn_ref adopted; chain_ref removed from the evidence surface.",
-        "Three-layer QA strategy delivered.",
+    assert [child.title for child in document.children] == [
+        "Work by Project",
+        "Engagement Assessment",
+        "Team Learning",
     ]
-    # Cross-project section: each citation is project-scoped.
-    first = _prose((outcomes.items[0],))[0]
-    assert first.citation is not None
-    assert [ref["scoped"] for ref in first.citation.refs] == [True]
-    assert first.citation.refs[0]["project_label"] == PROJECT_LABEL
-    assert first.citation.refs[0]["session_ref"] == "S0001"
-    assert first.citation.refs[0]["lines"] == "2-8"
-
-
-def test_layout_executive_summary_open_items_empty_list(tmp_path: Path) -> None:
-    section = _section(build_layout(_finalized_report(tmp_path)), "Executive Summary")
-    open_items = _lists(section.children)[1]
-
-    assert open_items.items == ()
 
 
 # --- work by project --------------------------------------------------------------------------
@@ -247,7 +234,6 @@ def _no_outcome_material_report() -> dict[str, Any]:
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
         "overall_confidence": "high",
-        "executive_summary": {"top_outcomes": [], "open_items": []},
         "projects": [
             {
                 "project_key": "k",
@@ -402,7 +388,6 @@ def test_layout_empty_report_all_sections_empty(tmp_path: Path) -> None:
     document = build_layout(_empty_report(tmp_path))
 
     for title, fallback in (
-        ("Executive Summary", "No supported work claims found for this report window."),
         (
             "Work by Project",
             "No supported project-level work items found for this report window.",

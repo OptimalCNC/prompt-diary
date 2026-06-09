@@ -1,11 +1,11 @@
 """Build the deterministic daily-report skeleton.
 
-The Build step assembles every deterministic field of ``daily-report.json`` — the header, all of
-Work by Project except each project's ``summary``, and the whole Executive Summary — directly from
-the prepared workspace and the per-project ``project-synthesis.json`` envelopes, with no AI. The
-three ``synthesize`` slots (per-project ``summary``, ``engagement_assessment``, ``team_learning``)
-are seeded ``null`` for the agent passes to patch, and ``overall_confidence`` is left ``null`` for
-Finalize to fill. The assembled report is written to the workspace root and returned.
+The Build step assembles every deterministic field of ``daily-report.json`` — the header and all of
+Work by Project except each project's ``summary`` — directly from the prepared workspace and the
+per-project ``project-synthesis.json`` envelopes, with no AI. The three ``synthesize`` slots
+(per-project ``summary``, ``engagement_assessment``, ``team_learning``) are seeded ``null`` for the
+agent passes to patch, and ``overall_confidence`` is left ``null`` for Finalize to fill. The
+assembled report is written to the workspace root and returned.
 
 Every claim-bearing field is lifted verbatim from a validated upstream work item or resolved
 through the session index, so a built report cannot drift from its evidence: the work-item view
@@ -23,14 +23,11 @@ from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.citations import CitationResolver
 from prompt_diary.generate.daily_synthesis.model import (
     CONFIDENCE_RANK,
-    OPEN_DISPOSITIONS,
     derive_disposition,
 )
 from prompt_diary.generate.project_synthesis.model import (
     InvalidWorkItem,
     WorkItem,
-    WorkItemOutcome,
-    WorkItemTerminalState,
     parse_work_item,
 )
 from prompt_diary.generate.workspace import load_prepared_workspace
@@ -45,8 +42,6 @@ __all__ = ["build_daily_report"]
 
 _REPORT_NAME = "daily-report.json"
 _MATERIAL = "material_work_item"
-_EXECUTIVE_SUMMARY_TOP_OUTCOME_LIMIT = 5
-_EXECUTIVE_SUMMARY_OPEN_ITEM_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -56,20 +51,6 @@ class _ProjectInput:
     project: PreparedProject
     work_items: tuple[WorkItem, ...]
     source_user_messages: list[dict[str, Any]]
-
-
-@dataclass(frozen=True)
-class _RankedOutcome:
-    """An executive-summary outcome entry tagged with its sort keys.
-
-    ``rank`` is the outcome confidence (high=3) and ``significance`` is its position in the
-    project-then-work-item significance traversal; the list sorts by ``(-rank, significance)`` so
-    the highest-confidence outcomes lead while ties keep significance order.
-    """
-
-    rank: int
-    significance: int
-    entry: dict[str, Any]
 
 
 def build_daily_report(*, workspace_path: Path) -> dict[str, Any]:
@@ -86,7 +67,6 @@ def build_daily_report(*, workspace_path: Path) -> dict[str, Any]:
         "status": workspace.status,
         "window": _window(workspace_path, workspace.timezone),
         "overall_confidence": None,
-        "executive_summary": _executive_summary(ordered, resolver),
         "projects": project_views,
         "engagement_assessment": None,
         "team_learning": None,
@@ -200,81 +180,6 @@ def _disposition(item: WorkItem) -> str | None:
         terminal_types=frozenset(state.type for state in item.terminal_states),
         has_outcomes=bool(item.outcomes),
     )
-
-
-def _executive_summary(
-    ordered: tuple[_ProjectInput, ...], resolver: CitationResolver
-) -> dict[str, Any]:
-    return {
-        "top_outcomes": _top_outcomes(ordered, resolver),
-        "open_items": _open_items(ordered, resolver),
-    }
-
-
-def _top_outcomes(
-    ordered: tuple[_ProjectInput, ...], resolver: CitationResolver
-) -> list[dict[str, Any]]:
-    ranked = [
-        _ranked_outcome(index, project_key, outcome, resolver)
-        for index, project_key, item in _significant_work_items(ordered)
-        if item.kind == _MATERIAL
-        for outcome in item.outcomes
-    ]
-    # A curated headline must be cited: drop any outcome whose citations did not resolve (it still
-    # appears, uncited, in Work by Project).
-    cited = [entry for entry in ranked if entry.entry["citations"]]
-    cited.sort(key=lambda entry: (-entry.rank, entry.significance))
-    return [entry.entry for entry in cited[:_EXECUTIVE_SUMMARY_TOP_OUTCOME_LIMIT]]
-
-
-def _ranked_outcome(
-    significance: int, project_key: str, outcome: WorkItemOutcome, resolver: CitationResolver
-) -> _RankedOutcome:
-    return _RankedOutcome(
-        rank=CONFIDENCE_RANK[outcome.confidence],
-        significance=significance,
-        entry={
-            "text": outcome.summary,
-            "citations": _resolve_refs(outcome.evidence_refs, project_key, resolver),
-        },
-    )
-
-
-def _open_items(
-    ordered: tuple[_ProjectInput, ...], resolver: CitationResolver
-) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for _, project_key, item in _significant_work_items(ordered):
-        disposition = _disposition(item)
-        if disposition not in OPEN_DISPOSITIONS:
-            continue
-        state = _terminal_state_for(item, disposition)
-        if state is None:  # pragma: no cover - an open disposition always has its terminal state
-            continue
-        citations = _resolve_refs(state.evidence_refs, project_key, resolver)
-        # A curated headline must be cited: drop an open item whose terminal-state citations did not
-        # resolve (it still appears, uncited, in Work by Project).
-        if not citations:
-            continue
-        items.append({"text": state.summary, "citations": citations})
-    return items[:_EXECUTIVE_SUMMARY_OPEN_ITEM_LIMIT]
-
-
-def _significant_work_items(
-    ordered: tuple[_ProjectInput, ...],
-) -> list[tuple[int, str, WorkItem]]:
-    flat: list[tuple[int, str, WorkItem]] = []
-    index = 0
-    for project_input in ordered:
-        project_key = project_input.project.project_key
-        for item in _work_items_in_significance_order(project_input.work_items):
-            flat.append((index, project_key, item))
-            index += 1
-    return flat
-
-
-def _terminal_state_for(item: WorkItem, disposition: str) -> WorkItemTerminalState | None:
-    return next((state for state in item.terminal_states if state.type == disposition), None)
 
 
 def _resolve_refs(

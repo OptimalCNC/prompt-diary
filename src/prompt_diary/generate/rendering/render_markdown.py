@@ -137,7 +137,7 @@ def _tag_suffix(tags: tuple[Tag, ...]) -> str:
 def _render_list(block: ListBlock, *, level: int) -> list[str]:
     """Serialize a list.
 
-    A list of *leaves* (Prose — outcomes, observations, the Executive Summary) renders as
+    A list of *leaves* (Prose — outcomes, observations, synthesized judgments) renders as
     ``-``/``1.`` bullets. A list whose items are *clusters* (a work-item ``Group``) renders each
     item as its own deepening sub-heading block instead: a heading cannot sit on a bullet line, so
     the heading form is the faithful Markdown for a titled cluster. The two never mix in one list.

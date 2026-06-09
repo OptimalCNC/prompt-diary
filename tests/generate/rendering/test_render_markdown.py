@@ -2,10 +2,9 @@
 
 ``render_report`` reads the finalized model, builds the abstract layout, serializes it per the
 doc's Block→Markdown mapping, and writes ``report.md`` to the workspace root. These tests pin the
-header line, the scoped Executive Summary citations, the unscoped Work-by-Project citations, the
-folded ``<details>`` toggles, the judgment sections, the four Empty fallbacks, and — most
-importantly — the no-new-claims invariant: every claim-bearing string the renderer emits is sourced
-verbatim from the model.
+header line, the unscoped Work-by-Project citations, the folded ``<details>`` toggles, the
+judgment sections, the three Empty fallbacks, and — most importantly — the no-new-claims invariant:
+every claim-bearing string the renderer emits is sourced verbatim from the model.
 """
 
 from __future__ import annotations
@@ -78,20 +77,10 @@ def test_render_header_status_window_confidence_line(tmp_path: Path) -> None:
     ) in text
 
 
-# --- executive summary (scoped citations) -----------------------------------------------------
-
-
-def test_render_executive_summary_outcomes_with_scoped_citations(tmp_path: Path) -> None:
+def test_render_does_not_emit_executive_summary(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
-    assert "## Executive Summary" in text
-    # The model text is Markdown-neutralized: the intraword ``_`` in turn_ref/chain_ref is
-    # backslash-escaped (renders literally), so the golden carries ``turn\_ref`` / ``chain\_ref``.
-    assert (
-        "- Top-level turn\\_ref adopted; chain\\_ref removed from the evidence surface. "
-        "[ReportGenerator · S0001:2-8]"
-    ) in text
-    assert "- Three-layer QA strategy delivered. [ReportGenerator · S0002:2-6]" in text
+    assert "## Executive Summary" not in text
 
 
 # --- work by project (unscoped citations, tags, toggles) --------------------------------------
@@ -152,7 +141,6 @@ def test_render_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path)
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
         "overall_confidence": "high",
-        "executive_summary": {"top_outcomes": [], "open_items": []},
         "projects": [
             {
                 "project_key": "k",
@@ -261,13 +249,13 @@ def test_render_team_learning_section(tmp_path: Path) -> None:
 # --- empty report -----------------------------------------------------------------------------
 
 
-def test_render_empty_report_renders_four_fallbacks(tmp_path: Path) -> None:
+def test_render_empty_report_renders_three_fallbacks(tmp_path: Path) -> None:
     text = _render_empty(tmp_path)
 
-    assert "- No supported work claims found for this report window." in text
     assert "- No supported project-level work items found for this report window." in text
     assert "- Insufficient supported engagement evidence for this report window." in text
     assert "- No supported reusable agent-driving pattern found." in text
+    assert "No supported work claims found for this report window." not in text
     assert "Overall confidence: n/a" in text
 
 
@@ -297,9 +285,6 @@ def test_render_no_new_claims_every_outcome_and_observation_in_model(tmp_path: P
     # both the single-block and callout escapes. The converse (no extra claims) rests on the
     # layout/render structure.
     claims: list[str] = []
-    summary = report["executive_summary"]
-    claims += [entry["text"] for entry in summary["top_outcomes"]]
-    claims += [entry["text"] for entry in summary["open_items"]]
     for project in report["projects"]:
         claims.append(project["summary"]["text"])
         for item in project["work_items"]:
@@ -511,7 +496,7 @@ def _two_project_report() -> dict[str, Any]:
 
     Both projects use ``S0001:2-8`` so the only thing that disambiguates a cross-project citation is
     its project label. Work-by-Project citations are unscoped (project implied by the group), while
-    Executive Summary / Engagement / Team Learning citations are scoped with the project label.
+    Engagement / Team Learning citations are scoped with the project label.
     """
 
     def citation(project_key: str) -> dict[str, str]:
@@ -557,13 +542,6 @@ def _two_project_report() -> dict[str, Any]:
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
         "overall_confidence": "high",
-        "executive_summary": {
-            "top_outcomes": [
-                {"text": "Alpha outcome.", "citations": [citation("alpha-key")]},
-                {"text": "Beta outcome.", "citations": [citation("beta-key")]},
-            ],
-            "open_items": [],
-        },
         "projects": [
             project("alpha-key", "Alpha", "Alpha outcome."),
             project("beta-key", "Beta", "Beta outcome."),
@@ -626,9 +604,6 @@ def test_render_cross_project_citations_scoped_with_distinct_labels(tmp_path: Pa
     # label, while a Work-by-Project citation under a project group stays unscoped.
     text = render_markdown(build_layout(_two_project_report()))
 
-    # Executive Summary: scoped with the correct, distinct project labels.
-    assert "- Alpha outcome. [Alpha · S0001:2-8]" in text
-    assert "- Beta outcome. [Beta · S0001:2-8]" in text
     # Engagement observations: scoped, distinct labels per project.
     assert "- Alpha direction. · high [Alpha · S0001:2-8]" in text
     assert "- Beta review. · high [Beta · S0001:2-8]" in text

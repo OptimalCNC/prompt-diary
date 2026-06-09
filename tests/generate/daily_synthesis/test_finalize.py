@@ -95,7 +95,6 @@ def _report_with_items(work_items: list[dict[str, Any]]) -> dict[str, Any]:
         "status": "final",
         "window": {"start": "a", "end": "b", "timezone": "Asia/Shanghai"},
         "overall_confidence": None,
-        "executive_summary": {"top_outcomes": [], "open_items": []},
         "projects": [
             {
                 "project_key": PROJECT_KEY,
@@ -360,6 +359,32 @@ def test_finalize_rejects_citation_for_non_committed_turn(tmp_path: Path) -> Non
     ]
 
 
+def test_finalize_ignores_legacy_executive_summary_citations(tmp_path: Path) -> None:
+    workspace = _roll_up_workspace(tmp_path)
+    report = _report_with_items([_material_item(confidence="high", outcome_confidences=["high"])])
+    report["executive_summary"] = {
+        "top_outcomes": [
+            {
+                "text": "stale legacy headline",
+                "citations": [
+                    {
+                        "project_key": PROJECT_KEY,
+                        "session_ref": "S9999",
+                        "turn_ref": "T9999",
+                        "lines": "99-100",
+                    }
+                ],
+            }
+        ],
+        "open_items": [{"text": "", "citations": []}],
+    }
+    _write_report(workspace, report)
+
+    result = finalize_daily_report_via_api(workspace)
+
+    assert finalize_result_to_dict(result)["status"] == "finalized"
+
+
 # --- validation: a no-outcome material item's terminal claim must be cited --------------------
 
 
@@ -483,22 +508,6 @@ def test_finalize_rejects_pattern_with_empty_citations(tmp_path: Path) -> None:
     assert "team_learning.patterns[0].citations" in _invalid_paths(tmp_path, mutate)
 
 
-def test_finalize_rejects_exec_top_outcome_without_text_or_citations(tmp_path: Path) -> None:
-    def mutate(report: dict[str, Any]) -> None:
-        report["executive_summary"]["top_outcomes"] = [{"text": "", "citations": []}]
-
-    paths = _invalid_paths(tmp_path, mutate)
-    assert "executive_summary.top_outcomes[0]" in paths
-    assert "executive_summary.top_outcomes[0].citations" in paths
-
-
-def test_finalize_rejects_exec_open_item_with_empty_citations(tmp_path: Path) -> None:
-    def mutate(report: dict[str, Any]) -> None:
-        report["executive_summary"]["open_items"] = [{"text": "still open", "citations": []}]
-
-    assert "executive_summary.open_items[0].citations" in _invalid_paths(tmp_path, mutate)
-
-
 # --- empty report -----------------------------------------------------------------------------
 
 
@@ -524,7 +533,6 @@ def test_finalize_empty_report_does_not_require_judgment_slots(tmp_path: Path) -
         "status": "final",
         "window": {"start": "a", "end": "b", "timezone": "Asia/Shanghai"},
         "overall_confidence": None,
-        "executive_summary": {"top_outcomes": [], "open_items": []},
         "projects": [
             {
                 "project_key": PROJECT_KEY,

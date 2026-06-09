@@ -186,7 +186,7 @@ def _render_one(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
 def _render_list(block: ListBlock, *, heading_level: int) -> list[dict[str, Any]]:
     """Serialize a list: prose items become list-item blocks, group items become toggles.
 
-    A list of *leaves* (Prose — outcomes, observations, the Executive Summary) renders as bulleted /
+    A list of *leaves* (Prose — outcomes, observations, synthesized judgments) renders as bulleted /
     numbered list items. A list whose items are *clusters* (a work-item ``Group``) renders each as a
     native ``toggle`` instead — the faithful Notion form for a titled, collapsible record. The two
     never mix in one list.

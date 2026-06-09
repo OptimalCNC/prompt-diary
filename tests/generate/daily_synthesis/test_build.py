@@ -1,10 +1,10 @@
 """Tests for the deterministic daily-report Build step.
 
 Build assembles every deterministic field of ``daily-report.json`` from the prepared workspace and
-the per-project ``project-synthesis.json`` envelopes — the header, all of Work by Project except
-the per-project ``summary``, and the whole Executive Summary — and seeds the three synthesize slots
-(per-project ``summary``, ``engagement_assessment``, ``team_learning``) as ``null``. It writes the
-skeleton to the workspace root and returns it.
+the per-project ``project-synthesis.json`` envelopes — the header and all of Work by Project except
+the per-project ``summary`` — and seeds the three synthesize slots (per-project ``summary``,
+``engagement_assessment``, ``team_learning``) as ``null``. It writes the skeleton to the workspace
+root and returns it.
 """
 
 from __future__ import annotations
@@ -215,39 +215,11 @@ def test_build_source_user_messages_lifted_verbatim(tmp_path: Path) -> None:
     ]
 
 
-# --- executive summary ------------------------------------------------------------------------
+def test_build_omits_executive_summary(tmp_path: Path) -> None:
+    assert "executive_summary" not in _build(tmp_path)
 
 
-def test_build_executive_summary_top_outcomes(tmp_path: Path) -> None:
-    summary = _build(tmp_path)["executive_summary"]
-
-    assert summary["top_outcomes"] == [
-        {
-            "text": _W0001_OUTCOME,
-            "citations": [
-                {
-                    "project_key": PROJECT_KEY,
-                    "session_ref": "S0001",
-                    "turn_ref": "T0001",
-                    "lines": "2-8",
-                }
-            ],
-        },
-        {
-            "text": "Three-layer QA strategy delivered.",
-            "citations": [
-                {
-                    "project_key": PROJECT_KEY,
-                    "session_ref": "S0002",
-                    "turn_ref": "T0001",
-                    "lines": "2-6",
-                }
-            ],
-        },
-    ]
-
-
-def test_build_executive_summary_top_outcomes_are_capped(tmp_path: Path) -> None:
+def test_build_keeps_all_work_item_outcomes(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     envelope = _load_envelope(workspace)
     first_item = envelope["work_items"][0]
@@ -264,13 +236,7 @@ def test_build_executive_summary_top_outcomes_are_capped(tmp_path: Path) -> None
 
     report = build_daily_report_via_api(workspace)
 
-    assert [entry["text"] for entry in report["executive_summary"]["top_outcomes"]] == [
-        "Headline outcome 1.",
-        "Headline outcome 2.",
-        "Headline outcome 3.",
-        "Headline outcome 4.",
-        "Headline outcome 5.",
-    ]
+    assert "executive_summary" not in report
     assert [entry["what_changed"] for entry in _by_ref(report, "W0001")["outcomes"]] == [
         "Headline outcome 1.",
         "Headline outcome 2.",
@@ -282,13 +248,7 @@ def test_build_executive_summary_top_outcomes_are_capped(tmp_path: Path) -> None
     ]
 
 
-def test_build_executive_summary_open_items_empty(tmp_path: Path) -> None:
-    summary = _build(tmp_path)["executive_summary"]
-
-    assert summary["open_items"] == []
-
-
-# --- disposition derivation + open items ------------------------------------------------------
+# --- disposition derivation -------------------------------------------------------------------
 
 
 def _disposition_report(tmp_path: Path) -> dict[str, Any]:
@@ -319,79 +279,26 @@ def test_build_work_item_significance_order(tmp_path: Path) -> None:
     assert refs == ["W0002", "W0005", "W0008", "W0001", "W0004", "W0007", "W0003", "W0006"]
 
 
-def test_build_open_items_are_blocked_failed_interrupted_in_order(tmp_path: Path) -> None:
-    summary = _disposition_report(tmp_path)["executive_summary"]
-
-    assert summary["open_items"] == [
-        {
-            "text": "W0002 blocked terminal.",
-            "citations": [
-                {
-                    "project_key": PROJECT_KEY,
-                    "session_ref": "S0001",
-                    "turn_ref": "T0002",
-                    "lines": "4-5",
-                }
-            ],
-        },
-        {
-            "text": "W0008 failed terminal.",
-            "citations": [
-                {
-                    "project_key": PROJECT_KEY,
-                    "session_ref": "S0002",
-                    "turn_ref": "T0001",
-                    "lines": "2-4",
-                }
-            ],
-        },
-        {
-            "text": "W0001 failed terminal.",
-            "citations": [
-                {
-                    "project_key": PROJECT_KEY,
-                    "session_ref": "S0001",
-                    "turn_ref": "T0001",
-                    "lines": "2-3",
-                }
-            ],
-        },
-    ]
-
-
-def test_build_executive_summary_open_items_are_capped(tmp_path: Path) -> None:
+def test_build_interrupted_terminal_still_stays_with_work_item(tmp_path: Path) -> None:
     report = _disposition_report(tmp_path)
-    summary = report["executive_summary"]
 
-    assert [entry["text"] for entry in summary["open_items"]] == [
-        "W0002 blocked terminal.",
-        "W0008 failed terminal.",
-        "W0001 failed terminal.",
-    ]
+    assert "executive_summary" not in report
     assert _by_ref(report, "W0003")["terminal_states"][0]["summary"] == (
         "W0003 interrupted terminal."
     )
 
 
-def test_build_top_outcomes_resorted_by_outcome_confidence(tmp_path: Path) -> None:
-    # Only W0008 (high) and W0006 (low) carry outcomes; the high outcome leads.
-    top = _disposition_report(tmp_path)["executive_summary"]["top_outcomes"]
-
-    assert [entry["text"] for entry in top] == ["W0008 outcome.", "W0006 outcome."]
+# --- uncited entries --------------------------------------------------------------------------
 
 
-# --- executive summary excludes uncited entries -----------------------------------------------
-
-
-def test_build_executive_summary_omits_uncited_entries(tmp_path: Path) -> None:
-    # A curated headline must be cited. The lone work item's outcome and failed terminal carry no
-    # evidence_refs, so both Executive Summary lists are empty even though the item is material.
+def test_build_keeps_uncited_work_item_entries(tmp_path: Path) -> None:
+    # The lone work item's outcome and failed terminal carry no evidence_refs, so their resolved
+    # citations are empty. They still remain in Work by Project.
     workspace = copy_exec_uncited_daily_workspace(tmp_path)
 
     report = build_daily_report_via_api(workspace)
 
-    assert report["executive_summary"] == {"top_outcomes": [], "open_items": []}
-    # The underlying outcome still appears, uncited, in Work by Project.
+    assert "executive_summary" not in report
     item = _by_ref(report, "W0001")
     assert item["disposition"] == "failed"
     assert item["outcomes"] == [
@@ -408,7 +315,7 @@ def test_build_empty_workspace_has_no_projects(tmp_path: Path) -> None:
     report = build_daily_report_via_api(workspace)
 
     assert report["projects"] == []
-    assert report["executive_summary"] == {"top_outcomes": [], "open_items": []}
+    assert "executive_summary" not in report
     assert report["engagement_assessment"] is None
     assert report["team_learning"] is None
     assert report["overall_confidence"] is None

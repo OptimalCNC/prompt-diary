@@ -4,13 +4,13 @@ Finalize is the deterministic closing step. It reads the post-pass ``daily-repor
 per-claim confidences of the material work items and the two judgment sections into a single
 ``overall_confidence``, and validates the whole document. A report that has any reportable work item
 must have every project-with-reportable-work's ``summary`` filled and both judgment sections
-present; every filled synthesized claim — the project summaries, the engagement and team-learning
-leads and their entries, and the curated Executive Summary headlines — must carry non-empty ``text``
-(where it has one) and at least one citation. A no-outcome material work item renders its terminal
-disposition as the visible claim in Work by Project, so each such terminal state must carry a
-citation too. A project whose work items are all gap/excluded kinds has no committed turn to cite,
-so it is not required to carry a summary. The faithfully-lifted Work-by-Project ``outcomes[]`` are
-exempt from the non-empty-citation rule, as an uncited upstream outcome is legitimate.
+present; every filled synthesized claim — the project summaries and the engagement and
+team-learning leads and their entries — must carry non-empty ``text`` (where it has one) and at
+least one citation. A no-outcome material work item renders its terminal disposition as the visible
+claim in Work by Project, so each such terminal state must carry a citation too. A project whose
+work items are all gap/excluded kinds has no committed turn to cite, so it is not required to carry
+a summary. The faithfully-lifted Work-by-Project ``outcomes[]`` are exempt from the
+non-empty-citation rule, as an uncited upstream outcome is legitimate.
 
 Every stored citation is re-resolved against the prepared workspace as defense-in-depth: the passes
 run in a workspace-write sandbox, so an agent that edits ``daily-report.json`` directly — instead of
@@ -228,16 +228,13 @@ def _required_slot_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteEr
 def _completeness_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
     """Reject a filled synthesized claim that is incomplete — empty ``text`` or no ``citations``.
 
-    Scoped to the SYNTHESIZED claim-bearing fields (per-project summaries, the two judgment leads
-    and their entries) and the curated Executive Summary headlines. A present-but-empty slot would
-    pass the required-slot presence check yet ground no claim, so finalize must reject it. Faithful
-    Work-by-Project ``outcomes[]`` are deliberately not checked: they are uncited lifts of upstream
-    work items, which may legitimately carry no citation — but a no-outcome material item renders
-    its terminal disposition as the visible claim instead, so that terminal state must be cited.
+    Scoped to the SYNTHESIZED claim-bearing fields: per-project summaries and the two judgment leads
+    and their entries. A present-but-empty slot would pass the required-slot presence check yet
+    ground no claim, so finalize must reject it. Faithful Work-by-Project ``outcomes[]`` are
+    deliberately not checked: they are uncited lifts of upstream work items, which may legitimately
+    carry no citation — but a no-outcome material item renders its terminal disposition as the
+    visible claim instead, so that terminal state must be cited.
     """
-    summary = _as_mapping(report.get("executive_summary"))
-    yield from _cited_claim_list(summary.get("top_outcomes"), "executive_summary.top_outcomes")
-    yield from _cited_claim_list(summary.get("open_items"), "executive_summary.open_items")
     yield from _project_summary_completeness(report)
     yield from _terminal_claim_completeness(report)
     yield from _section_completeness(
@@ -291,11 +288,6 @@ def _section_completeness(
         yield from _citations_present(entry, f"{base}.{items_key}[{index}]")
 
 
-def _cited_claim_list(value: object, base: str) -> Iterator[DailyReportWriteError]:
-    for index, entry in enumerate(_as_list(value)):
-        yield from _cited_claim(entry, f"{base}[{index}]")
-
-
 def _cited_claim(value: object, base: str) -> Iterator[DailyReportWriteError]:
     """A synthesized claim must carry non-empty ``text`` and at least one citation."""
     mapping = _as_mapping(value)
@@ -331,9 +323,6 @@ def _citation_errors(
 
 
 def _iter_citations(report: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
-    summary = _as_mapping(report.get("executive_summary"))
-    yield from _cited_list(summary.get("top_outcomes"), "executive_summary.top_outcomes")
-    yield from _cited_list(summary.get("open_items"), "executive_summary.open_items")
     for project_index, project in enumerate(_as_list(report.get("projects"))):
         yield from _project_citations(_as_mapping(project), project_index)
     yield from _section_citations(
@@ -369,11 +358,6 @@ def _section_citations(
     yield from _cited_object(section.get(lead_key), f"{base}.{lead_key}")
     for index, entry in enumerate(_as_list(section.get(items_key))):
         yield from _cited_object(entry, f"{base}.{items_key}[{index}]")
-
-
-def _cited_list(value: object, base: str) -> Iterator[tuple[str, dict[str, Any]]]:
-    for index, entry in enumerate(_as_list(value)):
-        yield from _cited_object(entry, f"{base}[{index}]")
 
 
 def _cited_object(value: object, base: str) -> Iterator[tuple[str, dict[str, Any]]]:

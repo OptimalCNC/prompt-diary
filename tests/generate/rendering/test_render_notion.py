@@ -5,7 +5,7 @@ the doc's Block→Notion mapping, and writes the page payload (title, metadata p
 children) to ``report.notion.json``. These tests pin the title/properties, the heading_2 sections,
 the project heading_3, the work-item ``toggle`` (the idiomatic Notion form for a titled cluster),
 the colored nested work-item subsection labels, the quote vs. callout split, the inline-code
-citations, the four Empty fallbacks, and the two invariants that make Notion rendering faithful and
+citations, the three Empty fallbacks, and the two invariants that make Notion rendering faithful and
 safe:
 
 - **No new claims** — every claim-bearing string the renderer emits is sourced verbatim from the
@@ -148,32 +148,16 @@ def test_render_notion_sections_are_heading_2(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
     assert _plain_texts(children, "heading_2") == [
-        "Executive Summary",
         "Work by Project",
         "Engagement Assessment",
         "Team Learning",
     ]
 
 
-# --- executive summary (scoped, inline-code citations) ----------------------------------------
-
-
-def test_render_notion_executive_summary_bullets_with_scoped_code_citations(
-    tmp_path: Path,
-) -> None:
+def test_render_notion_does_not_emit_executive_summary(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
-    bullets = _of_type(children, "bulleted_list_item")
 
-    # The claim text carries no escaping: the intraword ``_`` in turn_ref/chain_ref is literal.
-    top = next(
-        b
-        for b in bullets
-        if "Top-level turn_ref adopted; chain_ref removed from the evidence surface." in _plain(b)
-    )
-    # The citation is an inline-code run, scoped with the project label, and carries no link.
-    code = _code_runs(top)
-    assert [run["text"]["content"] for run in code] == ["ReportGenerator · S0001:2-8"]
-    assert all("link" not in run["text"] for run in _rich_text(top))
+    assert "Executive Summary" not in _plain_texts(children, "heading_2")
 
 
 # --- work by project (project heading_3, work-item toggle) ------------------------------------
@@ -348,7 +332,7 @@ def test_render_notion_team_learning_pattern_text(tmp_path: Path) -> None:
 # --- empty report -----------------------------------------------------------------------------
 
 
-def test_render_notion_empty_report_renders_four_fallbacks(tmp_path: Path) -> None:
+def test_render_notion_empty_report_renders_three_fallbacks(tmp_path: Path) -> None:
     workspace = empty_daily_workspace(tmp_path)
     build_daily_report_via_api(workspace)
     finalize_daily_report_via_api(workspace)
@@ -358,10 +342,10 @@ def test_render_notion_empty_report_renders_four_fallbacks(tmp_path: Path) -> No
     )
     fallbacks = _plain_texts(payload["children"], "bulleted_list_item")
 
-    assert "No supported work claims found for this report window." in fallbacks
     assert "No supported project-level work items found for this report window." in fallbacks
     assert "Insufficient supported engagement evidence for this report window." in fallbacks
     assert "No supported reusable agent-driving pattern found." in fallbacks
+    assert "No supported work claims found for this report window." not in fallbacks
     assert payload["properties"]["overall_confidence"] == "n/a"
 
 
@@ -375,9 +359,6 @@ def test_render_notion_no_new_claims_every_model_string_present(tmp_path: Path) 
     # Every claim-bearing model string appears verbatim in the rendered blocks (no escaping). The
     # converse — no extra claims — rests on the layout/render structure, as in the Markdown tests.
     claims: list[str] = []
-    summary = report["executive_summary"]
-    claims += [entry["text"] for entry in summary["top_outcomes"]]
-    claims += [entry["text"] for entry in summary["open_items"]]
     for project in report["projects"]:
         claims.append(project["summary"]["text"])
         for item in project["work_items"]:
@@ -507,7 +488,7 @@ def test_render_notion_citation_runs_are_inline_code_no_link(tmp_path: Path) -> 
         )
     )
     section = Section(
-        "Executive Summary", (ListBlock("bullet", (Prose("Cross outcome.", citation),)),)
+        "Engagement Assessment", (ListBlock("bullet", (Prose("Cross outcome.", citation),)),)
     )
 
     payload = render_notion(_doc_with_section(section))
@@ -527,7 +508,9 @@ def test_render_notion_long_citation_content_is_chunked_into_code_runs(tmp_path:
     citation = Citation(
         ({"project_label": long_label, "session_ref": "S0001", "lines": "2-8", "scoped": True},)
     )
-    section = Section("Executive Summary", (ListBlock("bullet", (Prose("Outcome.", citation),)),))
+    section = Section(
+        "Engagement Assessment", (ListBlock("bullet", (Prose("Outcome.", citation),)),)
+    )
 
     payload = render_notion(_doc_with_section(section))
     bullet = _of_type(payload.children, "bulleted_list_item")[0]

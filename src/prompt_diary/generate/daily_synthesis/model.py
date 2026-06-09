@@ -26,9 +26,6 @@ _PATTERN_KINDS = frozenset(item.value for item in TEAM_LEARNING_PATTERN_KINDS)
 # kinds carry no disposition. Ordered most-to-least severe, matching the derivation precedence.
 DISPOSITIONS: tuple[str, ...] = ("completed", "blocked", "interrupted", "failed", "clarification")
 
-# The dispositions whose work items surface as Executive Summary open items: the unfinished ones.
-OPEN_DISPOSITIONS: frozenset[str] = frozenset({"blocked", "failed", "interrupted"})
-
 # The confidence band ranking shared by Build's significance sort and Finalize's roll-up.
 CONFIDENCE_RANK: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
 

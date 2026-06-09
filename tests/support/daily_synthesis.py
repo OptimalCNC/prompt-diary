@@ -62,8 +62,8 @@ def copy_dispositions_daily_workspace(tmp_path: Path) -> Path:
     """Copy the disposition-coverage fixture: one project of material work items per disposition.
 
     Its envelope exercises every disposition branch (failed / blocked / interrupted / completed /
-    clarification, plus failed-wins precedence) and a non-empty Executive Summary ``open_items``.
-    Build does not read evidence cards, so this fixture omits them.
+    clarification, plus failed-wins precedence). Build does not read evidence cards, so this
+    fixture omits them.
     """
     return _copy_workspace(DISPOSITIONS_FIXTURE_ROOT, tmp_path)
 
@@ -92,8 +92,7 @@ def copy_exec_uncited_daily_workspace(tmp_path: Path) -> Path:
     """Copy a workspace whose one material work item has an uncited outcome and terminal state.
 
     Its outcome and ``failed`` terminal carry empty ``evidence_refs``, so their resolved citations
-    are empty. Build keeps the work item in Work by Project (uncited) but omits the would-be
-    Executive Summary headlines, which must be cited.
+    are empty. Build keeps the work item in Work by Project (uncited).
     """
     return _copy_workspace(EXEC_UNCITED_FIXTURE_ROOT, tmp_path)
 
@@ -211,7 +210,6 @@ def seed_daily_report_skeleton(workspace_path: Path) -> Path:
             "timezone": metadata.get("timezone"),
         },
         "overall_confidence": None,
-        "executive_summary": {"top_outcomes": [], "open_items": []},
         "projects": [
             {
                 "project_key": project_key,
@@ -339,8 +337,7 @@ def empty_daily_workspace(tmp_path: Path) -> Path:
     """Build a minimal prepared workspace with metadata but no projects (no work items).
 
     The smallest input that exercises the empty-report path: ``load_prepared_workspace`` returns no
-    projects, Build emits an empty ``projects`` list and empty executive summary, and Finalize sees
-    no work items.
+    projects, Build emits an empty ``projects`` list, and Finalize sees no work items.
     """
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

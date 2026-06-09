@@ -14,10 +14,9 @@ those same strings placed into blocks.
 Cross-project citation scoping is decided here. Session refs are assigned per project, so a bare
 ``S0001:lines`` is ambiguous across projects. Inside **Work by Project** (rendered under a project
 group) a citation is *unscoped* — the project is implied by the enclosing group. In the
-cross-project sections (**Executive Summary**, **Engagement Assessment**, **Team Learning**) a
-citation is *scoped* with its project label, resolved from the report's ``projects[]`` by the
-citation's ``project_key``. ``build_layout`` sets ``scoped`` on every ref and resolves its
-``project_label`` accordingly.
+cross-project sections (**Engagement Assessment** and **Team Learning**) a citation is *scoped* with
+its project label, resolved from the report's ``projects[]`` by the citation's ``project_key``.
+``build_layout`` sets ``scoped`` on every ref and resolves its ``project_label`` accordingly.
 """
 
 from __future__ import annotations
@@ -160,7 +159,6 @@ _MATERIAL = "material_work_item"
 _RANGE_DASH = "\u2013"
 
 # Empty-state fallback bullets, verbatim from the doc's Markdown Rendering "Empty" list.
-_EXEC_SUMMARY_FALLBACK = "No supported work claims found for this report window."
 _WORK_FALLBACK = "No supported project-level work items found for this report window."
 _ENGAGEMENT_FALLBACK = "Insufficient supported engagement evidence for this report window."
 _TEAM_LEARNING_FALLBACK = "No supported reusable agent-driving pattern found."
@@ -224,7 +222,6 @@ def build_layout(report: dict[str, Any]) -> Document:
         title=f"Prompt Diary Report — {_str(report.get('report_date'))}",
         properties=_properties(report),
         children=(
-            _executive_summary_section(report, labels),
             _work_by_project_section(report, labels),
             _engagement_section(report, labels),
             _team_learning_section(report, labels),
@@ -256,35 +253,6 @@ def _project_labels(report: dict[str, Any]) -> dict[str, str]:
         mapping = _mapping(project)
         labels[_str(mapping.get("project_key"))] = _str(mapping.get("project_label"))
     return labels
-
-
-# --- Executive Summary ------------------------------------------------------------------------
-
-
-def _executive_summary_section(report: dict[str, Any], labels: dict[str, str]) -> Section:
-    summary = _mapping(report.get("executive_summary"))
-    top = _list(summary.get("top_outcomes"))
-    open_items = _list(summary.get("open_items"))
-    if not top and not open_items:
-        return Section("Executive Summary", (Empty(_EXEC_SUMMARY_FALLBACK),))
-    return Section(
-        "Executive Summary",
-        (
-            _claim_list(top, labels, scoped=True),
-            _claim_list(open_items, labels, scoped=True),
-        ),
-    )
-
-
-def _claim_list(entries: list[Any], labels: dict[str, str], *, scoped: bool) -> ListBlock:
-    return ListBlock(
-        "bullet",
-        tuple(_claim_prose(_mapping(entry), labels, scoped=scoped) for entry in entries),
-    )
-
-
-def _claim_prose(entry: dict[str, Any], labels: dict[str, str], *, scoped: bool) -> Prose:
-    return Prose(_str(entry.get("text")), _citation(entry.get("citations"), labels, scoped=scoped))
 
 
 # --- Work by Project --------------------------------------------------------------------------

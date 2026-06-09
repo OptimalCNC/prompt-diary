@@ -67,10 +67,6 @@ evidence and cannot ground a claim.
   "status": "final",
   "window": {"start": "2026-05-28T00:00:00+08:00", "end": "2026-05-29T00:00:00+08:00", "timezone": "Asia/Shanghai"},
   "overall_confidence": "high",
-  "executive_summary": {
-    "top_outcomes": [{"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]}],
-    "open_items": [{"text": "…", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0002", "lines": "9-12"}]}]
-  },
   "projects": [{
     "project_key": "ReportGenerator-e6ff7eeda632",
     "project_label": "ReportGenerator",
@@ -192,11 +188,8 @@ its `source_user_messages` — is lifted/resolved input, not output fields.
 Another `synthesize`-heavy judgment lens, grounded by mandatory `Citation`s and seeded deterministically
 by `process_outcome` (reuse) and repeated `failed` / `blocked` terminal states (avoid).
 
-The Executive Summary carries no synthesized fields — it is projected deterministically (select a
-bounded headline set by significance, lift text, resolve citations; see
-[AI Synthesis Workflow](#ai-synthesis-workflow)). Evidence-quality signals (confidence, limits,
-citations) are not a section of their own — they render inline on each claim, so their provenance
-lives with whichever section carries them.
+Evidence-quality signals (confidence, limits, citations) are not a section of their own — they
+render inline on each claim, so their provenance lives with whichever section carries them.
 
 ## Rendering
 
@@ -224,8 +217,7 @@ Notion (rendering consumes the model afterwards — see [Rendering](./rendering.
 
 1. **Build (code).** Assemble every deterministic field from `project-synthesis.json` and the evidence
    cards, with no AI: the header (`report_date` / `status` / `window`), all of **Work by Project**
-   except the project `summary`, and the entire **Executive Summary** (select up to five top outcomes
-   and up to three open items by the significance sort, lift their text, resolve citations).
+   except the project `summary`.
 2. **Synthesize (agent passes).** Fill the remaining `synthesize` fields through the validating tools
    below.
 3. **Finalize (code).** Derive `overall_confidence` as a roll-up over the per-claim confidences
@@ -236,11 +228,8 @@ Notion (rendering consumes the model afterwards — see [Rendering](./rendering.
    workspace: a citation is rejected unless it carries its four keys, names a committed turn of its
    own project, and carries the exact line span the session index resolves that turn to.
 
-Two deterministic-rule choices are fixed for the MVP, both tunable later:
+One deterministic-rule choice is fixed for the MVP and tunable later:
 
-- **Executive Summary is capped.** Build emits up to five material outcomes and up to three open
-  items, ordered by significance. Completeness stays in **Work by Project**; the summary stays a
-  30-second digest.
 - **`overall_confidence` is the mean of the per-claim confidence bands.** Finalize averages the
   bands of the material work items and their outcomes, plus the engagement and team-learning
   judgments, and bands the mean at 2.5 (`high`) / 1.5 (`medium`). It is a simple roll-up, not a

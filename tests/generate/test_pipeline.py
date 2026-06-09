@@ -917,11 +917,6 @@ def _write_daily_synthesis(workspace_path: Path) -> None:
                 "timezone": "Asia/Shanghai",
             },
             "overall_confidence": "low",
-            "executive_summary": {
-                "top_outcomes": [],
-                "main_risks": [],
-                "confidence_limits": [],
-            },
             "outcome_overview": [],
             "projects": [],
             "verification_evidence_quality": {
@@ -961,10 +956,6 @@ def _write_rendering(workspace_path: Path) -> None:
                 "Window: 2026-05-12T00:00:00+08:00 to 2026-05-13T00:00:00+08:00 Asia/Shanghai",
                 "Overall Confidence: low",
                 "",
-                "## Executive Summary",
-                "- No supported work claims found for this report window.",
-                "## Outcome Overview",
-                "- No supported outcomes found for this report window.",
                 "## Project Details",
                 "- No supported project-level work items found for this report window.",
                 "## Verification / Evidence Quality",
