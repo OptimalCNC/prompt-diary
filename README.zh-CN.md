@@ -27,7 +27,7 @@ report --help
 prompt-diary --help
 report prepare --date 2026-05-12 --timezone Asia/Shanghai
 report generate --date 2026-05-12 --timezone Asia/Shanghai
-report generate render --notion --date 2026-05-12 --timezone Asia/Shanghai
+report generate render --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
 生成报告时，Prompt Diary 会先把每个阶段的产物写到磁盘，再进入下一步；各阶段也可以单独运行：
@@ -38,10 +38,10 @@ report generate project --date 2026-05-12 --timezone Asia/Shanghai --project-key
 report generate daily --date 2026-05-12 --timezone Asia/Shanghai
 ```
 
-配置好 Notion 后，`report generate render --notion` 可以把已经生成的报告作为新记录发布到 Notion 数据库。它会解析
+配置好 Notion 后，`report generate render` 可以把已经生成的报告作为新记录发布到 Notion 数据库。它会解析
 已有工作区，要求其中存在 `daily-report.json`，从该模型重新生成 `report.md` 旁边结构稳定、可复现的
 `report.notion.json`，然后发布该载荷。`report generate` 会把渲染作为流水线的最后一个阶段运行，并在
-传入 `--notion` 时执行同样的发布步骤；默认不发布。若 Notion 未配置，`--notion` 会报错。
+Notion 配置完整时默认执行同样的发布步骤；传入 `--no-notion` 可跳过发布。若 Notion 未配置，`--notion` 会报错。
 先用 `prompt-diary config init` 配置 Notion 集成令牌和目标数据库 ID（见[配置](#配置)）；凭据不会出现在命令行里。
 每次发布都会追加一条新的日期记录；重复发布不会改写或删除已有记录。
 
@@ -76,7 +76,7 @@ prompt-diary config path   # 打印配置文件位置
 配置文件默认放在当前用户的配置目录下（Linux 上是 `~/.config/prompt-diary/config.json`；macOS 和 Windows 使用各自的平台目录），
 也可以用 `PROMPT_DIARY_CONFIG` 指定其他位置。每项设置都会按以下顺序取第一个可用值：CLI 参数（如果有）、环境变量、已保存的配置、内置默认值（如果有）。
 因此，`NOTION_API_KEY` / `NOTION_PAGE_ID` 和 `--reports-root` / `PROMPT_DIARY_HOME` 仍然可以覆盖已保存的配置，这在 CI 中很有用。
-配置完成后（包括通过上述环境变量配置），直接运行 `report generate --notion` 才会发布到 Notion；不带该标志时只生成本地报告。
+配置完成后（包括通过上述环境变量配置），直接运行 `report generate` 会发布到 Notion；传入 `--no-notion` 时只生成本地报告。
 
 ## 开发
 

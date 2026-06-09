@@ -332,7 +332,7 @@ def test_generate_phase_help_shows_effective_default_targeting(
     ) in help_text
 
 
-def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_config() -> None:
+def test_generate_help_shows_default_notion_publish_from_config() -> None:
     save_config(StoredConfig(notion_api_key="cfg-tok", notion_page_id="cfg-db"))
 
     result = CliRunner().invoke(app, ["generate", "--help"], terminal_width=220)
@@ -340,8 +340,8 @@ def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_confi
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: do not publish. If --notion is passed now, it will publish because "
-        "the Notion token and database id are stored in config" in help_text
+        "Default now: publish because the Notion token and database id are stored in config. "
+        "Pass --no-notion to skip" in help_text
     )
 
 
@@ -351,12 +351,12 @@ def test_generate_help_shows_default_notion_skip_when_missing() -> None:
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: do not publish. If --notion is passed now, it will error because no Notion "
-        "token or database id resolves" in help_text
+        "Default now: do not publish because no Notion token or database id resolves. "
+        "If --notion is passed now, it will error" in help_text
     )
 
 
-def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_env(
+def test_generate_help_shows_default_notion_publish_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
@@ -367,12 +367,12 @@ def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_env(
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: do not publish. If --notion is passed now, it will publish because "
-        "$NOTION_API_KEY and $NOTION_PAGE_ID are set" in help_text
+        "Default now: publish because $NOTION_API_KEY and $NOTION_PAGE_ID are set. "
+        "Pass --no-notion to skip" in help_text
     )
 
 
-def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_mixed_sources(
+def test_generate_help_shows_default_notion_publish_from_mixed_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     save_config(StoredConfig(notion_page_id="cfg-db"))
@@ -383,8 +383,8 @@ def test_generate_help_shows_default_notion_skip_and_explicit_publish_from_mixed
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: do not publish. If --notion is passed now, it will publish because "
-        "the Notion token is from $NOTION_API_KEY and the database id is stored in config"
+        "Default now: publish because the Notion token is from $NOTION_API_KEY and the database "
+        "id is stored in config. Pass --no-notion to skip"
     ) in help_text
 
 
@@ -398,12 +398,12 @@ def test_generate_help_shows_default_notion_skip_when_database_missing(
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: do not publish. If --notion is passed now, it will error because no database "
-        "id resolves" in help_text
+        "Default now: do not publish because no database id resolves. If --notion is passed now, "
+        "it will error" in help_text
     )
 
 
-def test_generate_render_help_shows_notion_publish_is_opt_in(
+def test_generate_render_help_shows_default_notion_publish_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(NOTION_TOKEN_ENV, "env-tok")
@@ -414,8 +414,8 @@ def test_generate_render_help_shows_notion_publish_is_opt_in(
     help_text = _one_line(result.stdout)
     assert result.exit_code == 0
     assert (
-        "Default now: do not publish. If --notion is passed now, it will publish because "
-        "$NOTION_API_KEY and $NOTION_PAGE_ID are set"
+        "Default now: publish because $NOTION_API_KEY and $NOTION_PAGE_ID are set. "
+        "Pass --no-notion to skip"
     ) in help_text
 
 
@@ -637,7 +637,7 @@ def test_generate_notion_flag_fails_fast_when_env_missing(
     assert "NOTION_API_KEY" in result.stderr
 
 
-def test_generate_skips_notion_by_default_even_when_notion_configured(
+def test_generate_publishes_to_notion_by_default_when_configured(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -650,9 +650,18 @@ def test_generate_skips_notion_by_default_even_when_notion_configured(
         del date, today, timezone_name
         return tmp_path, ("prepared",)
 
-    def render_must_not_run(workspace_path: Path, **_kwargs: object) -> NotionRenderResult:
-        del workspace_path
-        raise AssertionError(NO_NOTION_RENDER_FAILED)
+    published: list[tuple[Path, object]] = []
+
+    def render_workspace_report_to_notion(
+        workspace_path: Path, **_kwargs: object
+    ) -> NotionRenderResult:
+        published.append((workspace_path, _kwargs.get("credentials")))
+        return NotionRenderResult(
+            artifact_path=workspace_path / "report.notion.json",
+            page_id="page-x",
+            url="https://notion.so/x",
+            warnings=(),
+        )
 
     monkeypatch.setattr(
         generate_cmd, "workspace_for_generate_target", workspace_for_generate_target
@@ -662,12 +671,15 @@ def test_generate_skips_notion_by_default_even_when_notion_configured(
         "build_generation_workflow",
         lambda: _FakeWorkflow(pipeline_messages=("generated",)),
     )
-    monkeypatch.setattr(generate_cmd, "render_workspace_report_to_notion", render_must_not_run)
+    monkeypatch.setattr(
+        generate_cmd, "render_workspace_report_to_notion", render_workspace_report_to_notion
+    )
 
     result = CliRunner().invoke(app, ["generate", "--date", "2026-05-12"])  # no --notion flag
 
     assert result.exit_code == 0
-    assert result.stdout == "prepared\ngenerated\n"
+    assert result.stdout == "prepared\ngenerated\nPublished report to Notion: https://notion.so/x\n"
+    assert published == [(tmp_path, (Secret("tok"), "db"))]
 
 
 def test_generate_no_notion_skips_publish_even_when_configured(
@@ -750,6 +762,97 @@ def test_generate_render_notion_publishes(
     assert rendered_for == [tmp_path]
     # The publish warning is surfaced on stderr, separate from the stdout publish message.
     assert "Warning: 汇报人 was left empty" in result.stderr
+
+
+def test_generate_render_publishes_to_notion_by_default_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+    rendered_for: list[tuple[Path, object]] = []
+
+    def workspace_for_existing_target(
+        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+    ) -> Path:
+        del date, today, timezone_name
+        return tmp_path
+
+    def render_workspace_report_to_notion(
+        workspace_path: Path, **_kwargs: object
+    ) -> NotionRenderResult:
+        rendered_for.append((workspace_path, _kwargs.get("credentials")))
+        return NotionRenderResult(
+            artifact_path=workspace_path / "report.notion.json",
+            page_id="page-1",
+            url="https://notion.so/page-x",
+            warnings=(),
+        )
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_existing_target", workspace_for_existing_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_messages=("rendered",)),
+    )
+    monkeypatch.setattr(
+        generate_cmd, "render_workspace_report_to_notion", render_workspace_report_to_notion
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["generate", "render", "--date", "2026-05-12", "--timezone", "UTC"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "rendered\nPublished report to Notion: https://notion.so/page-x\n"
+    assert rendered_for == [(tmp_path, (Secret("tok"), "db"))]
+
+
+def test_generate_render_no_notion_skips_publish_even_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NOTION_API_KEY", "tok")
+    monkeypatch.setenv("NOTION_PAGE_ID", "db")
+
+    def workspace_for_existing_target(
+        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+    ) -> Path:
+        del date, today, timezone_name
+        return tmp_path
+
+    def render_must_not_run(workspace_path: Path, **_kwargs: object) -> NotionRenderResult:
+        del workspace_path
+        raise AssertionError(NO_NOTION_RENDER_FAILED)
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_existing_target", workspace_for_existing_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_messages=("rendered",)),
+    )
+    monkeypatch.setattr(generate_cmd, "render_workspace_report_to_notion", render_must_not_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "generate",
+            "render",
+            "--no-notion",
+            "--date",
+            "2026-05-12",
+            "--timezone",
+            "UTC",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "rendered\n"
 
 
 def test_generate_render_requires_existing_workspace(tmp_path: Path) -> None:

@@ -231,8 +231,8 @@ split in two: a pure renderer
 (`rendering/render_notion.py`) that walks the layout into Notion block JSON and writes it to
 `report.notion.json`, and a publisher (`rendering/notion_publish.py`, with the real SDK behind
 `notion_client_adapter.py`) that pushes that payload. `report.notion.json` is a deterministic
-artifact emitted on every run beside `report.md`; `generate render --notion` also regenerates it from
-`daily-report.json` immediately before publishing.
+artifact emitted on every run beside `report.md`; when publishing is enabled, `generate render`
+also regenerates it from `daily-report.json` immediately before publishing.
 
 Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
 
@@ -261,14 +261,14 @@ pathologically long single string with a fixed marker).
 
 ## Publishing
 
-Publish (`generate render --notion`) is an outward-facing, gated step layered on top of the
-deterministic render. The render command resolves an existing workspace, requires
-`daily-report.json`, regenerates `report.notion.json`, then invokes the publisher. The publisher
-reads the integration token and target database id from the stored config (`prompt-diary config
-init`) or the `NOTION_API_KEY` / `NOTION_PAGE_ID` env vars (so credentials never pass on the command
-line) and creates a **new row** per report — re-publishing never edits or deletes an existing row,
-so the user prunes stale rows by hand. `report generate` runs rendering as an in-pipeline phase, and
-`report generate --notion` then publishes through this same path. Property mapping is schema-driven:
+Publishing is an outward-facing, gated step layered on top of the deterministic render. The render
+command resolves an existing workspace, requires `daily-report.json`, regenerates
+`report.notion.json`, then invokes the publisher when publishing is enabled. The publisher reads the
+integration token and target database id from the stored config (`prompt-diary config init`) or the
+`NOTION_API_KEY` / `NOTION_PAGE_ID` env vars (so credentials never pass on the command line) and
+creates a **new row** per report — re-publishing never edits or deletes an existing row, so the user
+prunes stale rows by hand. `report generate` runs rendering as an in-pipeline phase and publishes
+through this same path when Notion publishing is enabled. Property mapping is schema-driven:
 the database's single title-typed property gets the page title, every date-typed property gets the
 report date, the
 configured reporter name (from `config init` — the `汇报人` column by default, retargetable via

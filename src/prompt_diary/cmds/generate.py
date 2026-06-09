@@ -76,13 +76,14 @@ NotionOption = Annotated[
 ]
 
 RenderNotionOption = Annotated[
-    bool,
+    bool | None,
     typer.Option(
-        "--notion",
+        "--notion/--no-notion",
         help=(
             "After rendering, publish the report as a new row in the configured Notion database. "
-            f"Requires configuration (`prompt-diary config init`, or ${NOTION_TOKEN_ENV} and "
-            f"${NOTION_DATABASE_ENV})."
+            "Pass --notion to require publishing (errors if unconfigured) or --no-notion to skip. "
+            f"Configure with `prompt-diary config init`, or ${NOTION_TOKEN_ENV} / "
+            f"${NOTION_DATABASE_ENV}."
         ),
     ),
 ]
@@ -165,8 +166,9 @@ def generate(
         return
     try:
         # Freeze the Notion publish target before the expensive pipeline: the default (unset)
-        # skips publishing, --notion requires configuration (fail-fast), and --no-notion is an
-        # explicit skip. Resolving the credentials here means the target cannot drift mid-run.
+        # publishes only when configured, --notion requires configuration (fail-fast), and
+        # --no-notion is an explicit skip. Resolving the credentials here means the target cannot
+        # drift mid-run.
         notion_target = resolve_notion_publish(notion=notion)
         root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
@@ -204,13 +206,15 @@ def resolve_notion_publish(*, notion: bool | None) -> tuple[Secret, str] | None:
 
     Resolving the credentials here, before the expensive pipeline, both fails fast and freezes the
     publish target so it cannot drift if the stored config changes mid-run. ``True`` (``--notion``)
-    requires configuration and raises otherwise; ``None`` (flag unset) and ``False``
-    (``--no-notion``) skip publishing.
+    requires configuration and raises otherwise; ``False`` (``--no-notion``) skips publishing.
+    ``None`` (flag unset) publishes when configuration is complete and otherwise skips.
     """
-    if notion is not True:
+    if notion is False:
         return None
     configured = notion_is_configured()
     if not configured:
+        if notion is None:
+            return None
         raise PromptDiaryError(_notion_unconfigured_message())
     return resolve_notion_credentials()
 
@@ -305,15 +309,14 @@ def generate_render(
     today: TodayOption = False,
     timezone: TimezoneOption = None,
     quiet: QuietOption = False,
-    notion: RenderNotionOption = False,
+    notion: RenderNotionOption = None,
     reports_root: ReportsRootOption = None,
 ) -> None:
     """Render the report views from daily-report.json, optionally publishing to Notion."""
     try:
         # Resolve the publish target before rendering so --notion fails fast on an unconfigured
-        # machine. Unlike the full pipeline, bare `generate render` never publishes — only an
-        # explicit --notion does — so publishing requires configuration here.
-        notion_target = resolve_notion_publish(notion=True) if notion else None
+        # machine and the default publishes only when configuration is complete.
+        notion_target = resolve_notion_publish(notion=notion)
         root = resolve_reports_root(_group_reports_root(ctx, reports_root))
         workspace_path = workspace_for_existing_target(
             date=date,

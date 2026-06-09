@@ -96,8 +96,8 @@ The user-facing CLI surface should stay thin and map directly to the workflow:
 
 ```text
 prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force] [--quiet]
-prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City] [--quiet]
-prompt-diary generate render [--date YYYY-MM-DD | --today] [--timezone Area/City] [--notion] [--quiet]
+prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City] [--notion | --no-notion] [--quiet]
+prompt-diary generate render [--date YYYY-MM-DD | --today] [--timezone Area/City] [--notion | --no-notion] [--quiet]
 prompt-diary mcp serve
 ```
 
@@ -122,9 +122,10 @@ and that `prepare --force` can refresh it after session updates.
 
 `generate render` runs the rendering phase on an existing workspace for the target date: it requires
 the semantic `daily-report.json` artifact and writes the deterministic `report.md` and
-`report.notion.json` views without any network access. `generate render --notion` renders, then
-publishes `report.notion.json` as a new row in the configured Notion database. `generate --notion`
-runs that publish step after the in-pipeline rendering phase.
+`report.notion.json` views without any network access unless Notion publishing is enabled. For both
+`generate` and `generate render`, publishing is enabled by default when both Notion credentials
+resolve from config or environment, `--no-notion` skips publishing, and `--notion` requires
+publishing and errors when Notion is not configured.
 
 `mcp serve` starts the package MCP server over stdio for integration work. The server exposes
 `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and `write_work_item`.

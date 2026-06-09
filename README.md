@@ -66,8 +66,9 @@ By default, `report generate` first resolves the timezone, then targets the prev
 in that timezone: the most recent completed day. It prepares the workspace if it is missing,
 generates the report, and renders `report.md` and `report.notion.json`. The timezone is resolved
 from `--timezone`, then `PROMPT_DIARY_TIMEZONE`, then `TZ`, then the system timezone, then UTC.
-Notion publishing is opt-in: pass `--notion` to publish a new row in the configured database and
-fail if Notion is not configured.
+Notion publishing is enabled by default when both the Notion token and database id resolve from the
+stored config or environment. Pass `--no-notion` to skip publishing, or pass `--notion` to require
+publishing and fail if Notion is not configured.
 
 Use explicit targeting when needed:
 

@@ -171,25 +171,13 @@ def _reports_root_source(reports_root: Path) -> str:
 
 
 def _notion_default_help(param: click.Option) -> str:
-    if "--no-notion" in param.secondary_opts:
-        return _full_generate_notion_default_help()
-    return _render_notion_default_help()
-
-
-def _full_generate_notion_default_help() -> str:
-    return _notion_opt_in_default_help()
-
-
-def _render_notion_default_help() -> str:
-    return _notion_opt_in_default_help()
-
-
-def _notion_opt_in_default_help() -> str:
+    del param
     configured, reason = _notion_configuration_reason()
-    outcome = "publish" if configured else "error"
-    return _ensure_sentence(
-        "Default now: do not publish. "
-        f"If --notion is passed now, it will {outcome} because {reason}"
+    if configured:
+        return _join_sentences(f"Default now: publish because {reason}", "Pass --no-notion to skip")
+    return _join_sentences(
+        f"Default now: do not publish because {reason}",
+        "If --notion is passed now, it will error",
     )
 
 
