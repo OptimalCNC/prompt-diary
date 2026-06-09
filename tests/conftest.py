@@ -12,16 +12,46 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="run opt-in Codex MCP integration contract tests",
     )
+    parser.addoption(
+        "--run-notion-published",
+        action="store_true",
+        default=False,
+        help="run opt-in live Notion publish tests",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if cast("bool", config.getoption("--run-codex-mcp")):
+    _skip_unless_enabled(
+        config=config,
+        items=items,
+        option="--run-codex-mcp",
+        marker="codex_mcp",
+        reason="need --run-codex-mcp option to run",
+    )
+    _skip_unless_enabled(
+        config=config,
+        items=items,
+        option="--run-notion-published",
+        marker="notion_published",
+        reason="need --run-notion-published option to run",
+    )
+
+
+def _skip_unless_enabled(
+    *,
+    config: pytest.Config,
+    items: list[pytest.Item],
+    option: str,
+    marker: str,
+    reason: str,
+) -> None:
+    if cast("bool", config.getoption(option)):
         return
 
-    skip_codex_mcp = pytest.mark.skip(reason="need --run-codex-mcp option to run")
+    skip_marker = pytest.mark.skip(reason=reason)
     for item in items:
-        if item.get_closest_marker("codex_mcp") is not None:
-            item.add_marker(skip_codex_mcp)
+        if item.get_closest_marker(marker) is not None:
+            item.add_marker(skip_marker)
 
 
 @pytest.fixture(autouse=True)

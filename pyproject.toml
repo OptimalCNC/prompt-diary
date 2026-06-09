@@ -40,6 +40,7 @@ addopts = [
 ]
 markers = [
     "codex_mcp: opt-in Codex MCP integration contract tests",
+    "notion_published: opt-in live Notion publish tests requiring NOTION_API_KEY and NOTION_PAGE_ID",
 ]
 
 [tool.coverage.run]
