@@ -24,6 +24,7 @@ from prompt_diary.config import (
     save_config,
 )
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.language import CONTENT_LANGUAGE_ENV
 from prompt_diary.paths import REPORTS_HOME_ENV
 from prompt_diary.secret import Secret
 
@@ -66,7 +67,12 @@ def test_load_config_returns_empty_when_missing() -> None:
 
 def test_save_then_load_roundtrips(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(CONFIG_PATH_ENV, str(tmp_path / "nested" / "config.json"))
-    stored = StoredConfig(reports_root="/data", notion_api_key="tok", notion_page_id="db")
+    stored = StoredConfig(
+        reports_root="/data",
+        content_language="zh-Hans",
+        notion_api_key="tok",
+        notion_page_id="db",
+    )
     written = save_config(stored)
     assert written == tmp_path / "nested" / "config.json"
     assert written.exists()
@@ -216,11 +222,38 @@ def test_stored_config_repr_redacts_the_token() -> None:
     # A loaded config is a frame local in many functions; its repr (logged, or rendered by a
     # locals-capturing traceback) must not surface the stored token, while non-secret fields stay
     # visible for debugging.
-    rendered = repr(StoredConfig(notion_api_key="supersecrettoken", notion_page_id="db-1"))
+    rendered = repr(
+        StoredConfig(
+            content_language="zh-Hans",
+            notion_api_key="supersecrettoken",
+            notion_page_id="db-1",
+        )
+    )
     assert "supersecrettoken" not in rendered  # the token is redacted...
     assert "db-1" in rendered  # ...but the database id (not a secret) is shown
+    assert "zh-Hans" in rendered  # content language is not a secret
     assert "notion_api_key" in rendered  # the field still appears, just with its value masked
     assert "notion_api_key=None" in repr(StoredConfig())  # an unset token renders plainly as None
+
+
+# --- resolve_content_language --------------------------------------------------------------------
+
+
+def test_resolve_content_language_uses_config_when_no_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CONTENT_LANGUAGE_ENV, raising=False)
+    save_config(StoredConfig(content_language="zh-Hans"))
+    assert config.resolve_content_language().tag.value == "zh-Hans"
+
+
+def test_resolve_content_language_invalid_config_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CONTENT_LANGUAGE_ENV, raising=False)
+    save_config(StoredConfig(content_language="fr"))
+    with pytest.raises(PromptDiaryError, match="en, zh-Hans, zh-Hant"):
+        config.resolve_content_language()
 
 
 # --- resolve_reports_root ------------------------------------------------------------------------

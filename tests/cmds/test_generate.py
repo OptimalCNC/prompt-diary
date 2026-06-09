@@ -9,6 +9,7 @@ from prompt_diary.cmds.generate import (
     resolve_notion_publish,
 )
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_language import LanguageNormAgentSessionFactory
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
 from prompt_diary.secret import Secret
 
@@ -33,7 +34,8 @@ def test_build_generation_workflow_builds_workspace_aware_codex_runners(tmp_path
     factory = workflow.build_agent_factory(tmp_path)
     runners = workflow.build_phase_runners(factory)
 
-    assert isinstance(factory, CodexAgentSessionFactory)
+    assert isinstance(factory, LanguageNormAgentSessionFactory)
+    assert isinstance(factory.inner, CodexAgentSessionFactory)
     assert set(runners) == {
         "evidence_extraction",
         "project_synthesis",
@@ -46,7 +48,7 @@ def test_build_generation_workflow_builds_workspace_aware_codex_runners(tmp_path
         assert cast("_HasAgentFactory", runners[kind]).agent_factory is factory
     assert not hasattr(runners["rendering"], "agent_factory")
 
-    overrides = _backend_config(factory).mcp_config_overrides
+    overrides = _backend_config(factory.inner).mcp_config_overrides
     assert 'mcp_servers.prompt_diary.command="report"' in overrides
 
 

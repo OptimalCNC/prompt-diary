@@ -6,6 +6,7 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 from prompt_diary.agent import AgentConfig, AgentTurnResult
+from prompt_diary.generate.agent_language import LanguageNormAgentSessionFactory
 from prompt_diary.generate.pipeline import (
     ArtifactSpec,
     GeneratePipelineRunner,
@@ -15,8 +16,9 @@ from prompt_diary.generate.pipeline import (
     TaskResult,
     TaskSpec,
 )
+from prompt_diary.language import GENERATED_AGENTS_MARKER, LanguageNorm
 from prompt_diary.progress.reporter import NULL_REPORTER
-from tests.agent_fakes import FakeAgentSessionFactory
+from tests.agent_fakes import FakeAgentRunner, FakeAgentSessionFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -100,6 +102,67 @@ def test_fake_runner_records_prompts(tmp_path: Path) -> None:
     asyncio.run(run())
 
     assert factory.runners[0].prompts == ["hello"]
+
+
+@dataclass
+class _RecordingFactory:
+    """Records runner calls and verifies AGENTS.md exists before delegation."""
+
+    entered: int = 0
+    exited: int = 0
+    configs: list[AgentConfig] = field(default_factory=list)
+    saw_agents_before_runner: bool = False
+
+    async def __aenter__(self) -> _RecordingFactory:
+        self.entered += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> bool | None:
+        del exc_type, exc, traceback
+        self.exited += 1
+
+    async def runner(self, config: AgentConfig) -> FakeAgentRunner:
+        self.saw_agents_before_runner = GENERATED_AGENTS_MARKER in (
+            config.working_directory / "AGENTS.md"
+        ).read_text(encoding="utf-8")
+        self.configs.append(config)
+        return FakeAgentRunner(config=config, script=_ok_turn)
+
+
+def test_language_factory_writes_agents_and_merges_developer_instructions(
+    tmp_path: Path,
+) -> None:
+    inner = _RecordingFactory()
+    factory = LanguageNormAgentSessionFactory(
+        inner=inner,
+        workspace_path=tmp_path,
+        language=LanguageNorm.from_tag("zh-Hans"),
+    )
+
+    async def run() -> None:
+        async with factory:
+            await factory.runner(
+                AgentConfig(
+                    working_directory=tmp_path,
+                    developer_instructions="Phase-specific instruction.",
+                )
+            )
+
+    asyncio.run(run())
+
+    assert inner.entered == 1
+    assert inner.exited == 1
+    assert inner.saw_agents_before_runner is True
+    merged = inner.configs[0].developer_instructions
+    assert merged is not None
+    assert merged.startswith("Phase-specific instruction.\n\n")
+    assert "Translate generated natural-language content values" in merged
+    assert "zh-Hans" in merged
 
 
 @dataclass

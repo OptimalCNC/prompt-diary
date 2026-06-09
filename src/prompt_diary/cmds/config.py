@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Annotated, TypeVar
 
 import typer
 from msgspec import structs
@@ -16,10 +16,12 @@ from prompt_diary.config import (
     StoredConfig,
     config_path,
     load_config,
+    resolve_content_language,
     save_config,
 )
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.rendering.notion_client_adapter import build_notion_validator
+from prompt_diary.language import CONTENT_LANGUAGE_ENV, parse_content_language
 from prompt_diary.paths import REPORTS_HOME_ENV, platform_data_dir
 from prompt_diary.secret import Secret
 
@@ -40,6 +42,7 @@ def register(app: typer.Typer) -> None:
     config_app.command(name="init")(config_init)
     config_app.command(name="show")(config_show)
     config_app.command(name="path")(config_path_command)
+    config_app.command(name="language")(config_language)
     app.add_typer(config_app, name="config")
 
 
@@ -91,6 +94,7 @@ def config_show() -> None:
     """Print the stored configuration (the Notion token is masked) and the config file path."""
     try:
         config = load_config()
+        language = resolve_content_language()
         # Show the resolved default folder, not an opaque label, so the user sees the real path.
         data_folder = config.reports_root or f"{platform_data_dir()} (default; not configured)"
     except PromptDiaryError as exc:
@@ -99,11 +103,12 @@ def config_show() -> None:
     typer.echo(f"Notion integration token (NOTION_API_KEY): {_mask(config.notion_api_key)}")
     typer.echo(f"Notion database id (NOTION_PAGE_ID): {config.notion_page_id or '(unset)'}")
     typer.echo(f"Reporter name (汇报人 column): {config.notion_reporter or '(unset)'}")
+    typer.echo(f"Content language ({CONTENT_LANGUAGE_ENV}): {language.tag.value}")
     typer.echo(f"Data folder: {data_folder}")
     overrides = [
         env
-        for env in (NOTION_TOKEN_ENV, NOTION_DATABASE_ENV, REPORTS_HOME_ENV)
-        if os.environ.get(env)
+        for env in (NOTION_TOKEN_ENV, NOTION_DATABASE_ENV, REPORTS_HOME_ENV, CONTENT_LANGUAGE_ENV)
+        if _has_env_override(env)
     ]
     if overrides:
         typer.echo(
@@ -114,6 +119,18 @@ def config_show() -> None:
 def config_path_command() -> None:
     """Print the config file path."""
     typer.echo(str(config_path()))
+
+
+def config_language(
+    tag: Annotated[str, typer.Argument(help="Content language tag: en, zh-Hans, or zh-Hant.")],
+) -> None:
+    """Save the default content language for generated report values."""
+    try:
+        language = parse_content_language(tag)
+        path = save_config(structs.replace(load_config(), content_language=language.tag.value))
+    except PromptDiaryError as exc:
+        exit_with_error(exc)
+    typer.echo(f"Saved content language {language.tag.value} to {path}")
 
 
 def _prompt_token(current: str | None) -> tuple[Secret, NotionIdentity]:
@@ -205,3 +222,8 @@ def _describe_database(database: NotionDatabaseInfo) -> str:
 
 def _mask(token: str | None) -> str:
     return f"set ({len(token)} chars)" if token else "(unset)"
+
+
+def _has_env_override(name: str) -> bool:
+    value = os.environ.get(name)
+    return value is not None and bool(value.strip())

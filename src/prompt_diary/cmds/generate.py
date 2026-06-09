@@ -24,10 +24,12 @@ from prompt_diary.config import (
     NOTION_DATABASE_ENV,
     NOTION_TOKEN_ENV,
     notion_is_configured,
+    resolve_content_language,
     resolve_notion_credentials,
     resolve_reports_root,
 )
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_language import LanguageNormAgentSessionFactory
 from prompt_diary.generate.daily_synthesis import DailySynthesisRunner
 from prompt_diary.generate.evidence_extraction import EvidenceExtractionRunner
 from prompt_diary.generate.project_synthesis import ProjectSynthesisRunner
@@ -100,14 +102,19 @@ def build_generation_workflow() -> GenerateWorkspaceWorkflow:
 
     def build_agent_factory(workspace_path: Path) -> AgentSessionFactory:
         codex_path = shutil.which("codex")
-        return CodexAgentSessionFactory(
-            CodexBackendConfig(
+        inner = CodexAgentSessionFactory(
+            backend_config=CodexBackendConfig(
                 codex_bin=Path(codex_path) if codex_path is not None else None,
                 mcp_config_overrides=(
                     *prompt_diary_mcp_overrides(workspace_path),
                     *codex_clean_startup_overrides(default_codex_home()),
                 ),
-            )
+            ),
+        )
+        return LanguageNormAgentSessionFactory(
+            inner=inner,
+            workspace_path=workspace_path,
+            language=resolve_content_language(),
         )
 
     def build_phase_runners(factory: AgentSessionFactory) -> dict[TaskKind, PhaseRunner]:

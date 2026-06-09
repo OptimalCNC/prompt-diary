@@ -57,10 +57,13 @@ The three agent phase runners hold an injected `AgentSessionFactory` but do not 
 lifecycle. Backend ownership lives at the run scope: `GenerateWorkspaceWorkflow` enters one shared
 factory once per run (inside `asyncio.run`), and every agent task mints its own conversation off that
 shared backend via `factory.runner(config)`. The composition root
-`cmds/generate.py::build_generation_workflow()` constructs one `CodexAgentSessionFactory`, passes it
-to the three agent phase runners, and sets it as the workflow's `agent_factory`; the rendering runner
-is deterministic and takes no agent factory. `GeneratePipelineRunner` itself is agent-agnostic — it
-schedules tasks and calls `PhaseRunner.run`; backend and agent wiring are the workflow's concern.
+`cmds/generate.py::build_generation_workflow()` constructs one `CodexAgentSessionFactory`, wraps it
+with the Prompt Diary content-language injector, passes the wrapper to the three agent phase
+runners, and sets it as the workflow's `agent_factory`; the rendering runner is deterministic and
+takes no agent factory. The wrapper writes the generated workspace `AGENTS.md` and appends the
+same rendered language norm to every `AgentConfig.developer_instructions` before minting a
+conversation. `GeneratePipelineRunner` itself is agent-agnostic — it schedules tasks and calls
+`PhaseRunner.run`; backend and agent wiring are the workflow's concern.
 
 A phase runner therefore does not need to be an async context manager to obtain its backend: the
 shared `AgentSessionFactory` is entered once at the workflow scope, above the pipeline. The pipeline

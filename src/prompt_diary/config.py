@@ -21,6 +21,11 @@ from msgspec import structs
 
 from prompt_diary import paths
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.language import (
+    CONTENT_LANGUAGE_ENV,
+    LanguageNorm,
+    resolve_content_language_setting,
+)
 from prompt_diary.secret import REDACTED, Secret
 
 CONFIG_PATH_ENV = "PROMPT_DIARY_CONFIG"
@@ -39,6 +44,7 @@ class StoredConfig(msgspec.Struct, omit_defaults=True):
     """User configuration persisted to disk. A new integration adds a field here."""
 
     reports_root: str | None = None
+    content_language: str | None = None
     notion_api_key: str | None = None
     notion_page_id: str | None = None
     notion_reporter: str | None = None
@@ -142,6 +148,14 @@ def resolve_reports_root(explicit: Path | None) -> Path:
     if stored:
         return Path(stored).expanduser()
     return paths.platform_data_dir()
+
+
+def resolve_content_language() -> LanguageNorm:
+    """Resolve the typed content language: env, then config, then English."""
+    return resolve_content_language_setting(
+        env_value=_env(CONTENT_LANGUAGE_ENV),
+        config_value=load_config().content_language,
+    )
 
 
 def notion_is_configured() -> bool:

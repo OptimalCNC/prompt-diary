@@ -39,10 +39,20 @@ prompt-diary config show   # print the configuration (token masked) and the file
 prompt-diary config path   # print the config file location
 ```
 
+Set the language for Codex-generated natural-language report content with:
+
+```bash
+prompt-diary config language zh-Hans
+PROMPT_DIARY_CONTENT_LANGUAGE=zh-Hans report generate
+```
+
 The config file lives under the per-user config directory (`~/.config/prompt-diary/config.json` on
 Linux; the platform equivalent on macOS and Windows), overridable with `PROMPT_DIARY_CONFIG`.
 Environment variables still override stored credentials and settings when present, including
-`NOTION_API_KEY`, `NOTION_PAGE_ID`, and `PROMPT_DIARY_HOME`.
+`NOTION_API_KEY`, `NOTION_PAGE_ID`, `PROMPT_DIARY_HOME`, and
+`PROMPT_DIARY_CONTENT_LANGUAGE`. Content language supports `en`, `zh-Hans`, and `zh-Hant`. It
+applies to generated natural-language content values; deterministic renderer-owned labels,
+headings, fallbacks, and Notion metadata banners remain English in this release.
 
 ### Generate a report
 

@@ -36,6 +36,19 @@ into the runtime prompt, so the enum values have one Python source of truth.
 
 The Jinja2 dependency and template file loading are implementation details hidden from callers.
 
+## Runtime Language Norm
+
+Content-language instructions are injected outside the phase prompt templates. The generation
+composition root wraps the Codex agent factory so evidence extraction, project synthesis, and daily
+synthesis all receive the same rendered norm through `AgentConfig.developer_instructions`; the
+wrapper also writes a generated `AGENTS.md` into the prepared workspace before the first agent
+conversation is minted.
+
+The norm applies to Codex-generated natural-language content values. It tells agents to preserve
+JSON keys, MCP tool names, enum values, IDs, citations, paths, commands, code identifiers, and
+verbatim source text. Deterministic renderer-owned labels, headings, fallbacks, and Notion metadata
+banners are not localized by this mechanism.
+
 ## CLI
 
 The `report prompts` subcommand group prints rendered prompts to stdout:

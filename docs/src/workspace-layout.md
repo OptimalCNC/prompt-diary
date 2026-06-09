@@ -29,6 +29,7 @@ like this:
 <reports-root>/
 ├── work/
 │   └── 2026-05-12/
+│       ├── AGENTS.md       # generated runtime instructions for Codex-backed generation
 │       ├── metadata.json
 │       └── projects/
 │           └── ReportGenerator-e6ff7eeda632/
@@ -53,6 +54,11 @@ the platform equivalent on macOS and Windows). Override it with `--reports-root 
 over `PROMPT_DIARY_HOME` over the stored config over the default data directory. The private audit
 manifest for the same date lives beside `work/` at
 `<reports-root>/private/<YYYY-MM-DD>/audit.manifest.json`.
+
+`AGENTS.md` is generated lazily during Codex-backed generation, not during preparation. It carries
+Prompt Diary's runtime language norm for generated report content and contains a generated marker;
+generation replaces only marker-owned copies and refuses to overwrite an unmarked user-authored
+file.
 
 Preparation excludes root sessions whose recorded project root resolves inside the resolved reports
 root. Those sessions are Prompt Diary's own generation side effects, not user-authored project work.

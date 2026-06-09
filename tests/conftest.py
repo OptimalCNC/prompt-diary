@@ -41,3 +41,4 @@ def _isolate_prompt_diary_config(  # pyright: ignore[reportUnusedFunction]
     monkeypatch.setenv("PROMPT_DIARY_CONFIG", str(config_dir / "config.json"))
     monkeypatch.delenv("NOTION_API_KEY", raising=False)
     monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
+    monkeypatch.delenv("PROMPT_DIARY_CONTENT_LANGUAGE", raising=False)
