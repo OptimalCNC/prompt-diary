@@ -152,19 +152,29 @@ def _prompt_token(current: str | None) -> tuple[Secret, NotionIdentity]:
         "Notion integration token (NOTION_API_KEY)",
         hide_input=True,
         current=current,
+        keep_description="saved token",
         validate=_verify,
     )
     return Secret(raw), identity
 
 
 def _prompt_until_valid(
-    text: str, *, hide_input: bool, current: str | None, validate: Callable[[str], _T]
+    text: str,
+    *,
+    hide_input: bool,
+    current: str | None,
+    validate: Callable[[str], _T],
+    keep_description: str | None = None,
 ) -> tuple[str, _T]:
     """Prompt until a non-empty value passes ``validate``; return it with its result."""
     # show_default=False is essential: Typer/Click would otherwise render the default in the visible
     # prompt text, which for the hidden token prompt would print the stored secret. The hint conveys
     # the keep-current affordance instead; an empty entry still returns the default.
-    hint = " [enter to keep current]" if current else ""
+    if current:
+        description = keep_description or ("saved value" if hide_input else current)
+        hint = f" [enter to keep {description}]"
+    else:
+        hint = ""
     while True:
         value = typer.prompt(
             f"{text}{hint}", hide_input=hide_input, default=current or "", show_default=False
@@ -183,7 +193,9 @@ def _prompt_until_valid(
 def _prompt_reports_root(current: StoredConfig) -> str | None:
     """Prompt for the data folder; return ``None`` when the user keeps the per-user data dir."""
     default_dir = platform_data_dir()
-    entered = typer.prompt("Data folder", default=current.reports_root or str(default_dir)).strip()
+    entered = typer.prompt(
+        f"Data folder ({REPORTS_HOME_ENV})", default=current.reports_root or str(default_dir)
+    ).strip()
     if Path(entered).expanduser() == default_dir:
         return None
     return entered
@@ -201,20 +213,20 @@ def _prompt_content_language() -> str:
     return language.tag.value
 
 
-def _prompt_reporter(current: StoredConfig) -> str | None:
-    """Prompt for the free-form reporter name written into the 汇报人 column; optional.
+def _prompt_reporter(current: StoredConfig) -> str:
+    """Prompt for the free-form reporter name written into the 汇报人 column; required.
 
     The name is a personal label (like ``git config user.name``), not a credential, so it is not
     validated and not hidden. It is written into the 汇报人 text column at publish time. Pressing
-    enter keeps the current value, or skips when none is stored.
+    enter keeps the stored value when one exists.
     """
-    hint = f" [keep {current.notion_reporter}]" if current.notion_reporter else " (enter to skip)"
-    entered = typer.prompt(
-        f"Reporter name for the 汇报人 column{hint}",
-        default=current.notion_reporter or "",
-        show_default=False,
-    ).strip()
-    return entered or None
+    entered, _ = _prompt_until_valid(
+        "Reporter name (汇报人 column)",
+        hide_input=False,
+        current=current.notion_reporter,
+        validate=lambda value: value,
+    )
+    return entered
 
 
 def _describe_identity(identity: NotionIdentity) -> str:

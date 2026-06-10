@@ -23,16 +23,17 @@ uv tool install prompt-diary
 ### Configuration
 
 Configuration is optional for local-only reports. Run `prompt-diary config init` when you want
-Notion publishing; the same setup can also save a default data folder and reporter name:
+Notion publishing; it also lets you accept or override the data folder and records the required
+reporter name:
 
 ```bash
 prompt-diary config init
 ```
 
 The setup prompts for the Notion integration token, optional data folder, target database id, and
-optional reporter name. Credentials are validated before they are saved, written to a single config
-file with `0600` permissions, and never passed on the command line. Use these commands to inspect
-the stored configuration:
+required reporter name for the `汇报人` column. Credentials are validated before they are saved,
+written to a single config file with `0600` permissions, and never passed on the command line. Use
+these commands to inspect the stored configuration:
 
 ```bash
 prompt-diary config show   # print the configuration (token masked) and the file location

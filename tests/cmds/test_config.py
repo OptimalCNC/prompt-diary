@@ -140,9 +140,11 @@ def test_config_init_reprompts_on_invalid(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
     monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
 
-    # token: bad then good; data folder: default (-> None); page: bad then good; reporter: skip.
+    # token: bad then good; data folder: default (-> None); page: bad then good.
     result = CliRunner().invoke(
-        app, ["config", "init"], input="bad\ngood-token\n/stub/data\nzh-Hans\nbad-db\ngood-db\n\n"
+        app,
+        ["config", "init"],
+        input="bad\ngood-token\n/stub/data\nzh-Hans\nbad-db\ngood-db\nWei Hu\n",
     )
 
     assert result.exit_code == 0, result.output
@@ -153,7 +155,7 @@ def test_config_init_reprompts_on_invalid(monkeypatch: pytest.MonkeyPatch) -> No
     assert stored.notion_page_id == "good-db"
     assert stored.reports_root is None  # the per-user data dir is not pinned into the config
     assert stored.content_language == "zh-Hans"
-    assert stored.notion_reporter is None  # skipped reporter stays unset
+    assert stored.notion_reporter == "Wei Hu"
 
 
 def test_config_init_rejects_empty_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -162,7 +164,7 @@ def test_config_init_rejects_empty_value(monkeypatch: pytest.MonkeyPatch, tmp_pa
     custom = str(tmp_path / "r")
 
     result = CliRunner().invoke(
-        app, ["config", "init"], input=f"\ngood-token\n{custom}\nzh-Hans\ngood-db\n\n"
+        app, ["config", "init"], input=f"\ngood-token\n{custom}\nzh-Hans\ngood-db\nWei Hu\n"
     )
 
     assert result.exit_code == 0, result.output
@@ -178,12 +180,18 @@ def test_config_init_keeps_current_on_enter(monkeypatch: pytest.MonkeyPatch) -> 
             notion_page_id="good-db",
             reports_root="/old",
             content_language="zh-Hant",
+            notion_reporter="Wei Hu",
         )
     )
 
     result = CliRunner().invoke(app, ["config", "init"], input="\n\n\n\n\n")  # keep every value
 
     assert result.exit_code == 0, result.output
+    assert "[enter to keep current]" not in result.output
+    assert (
+        "Content language (PROMPT_DIARY_CONTENT_LANGUAGE; en, zh-Hans, zh-Hant) "
+        "[enter to keep zh-Hant]" in result.output
+    )
     assert "good-token" not in result.output  # the stored token is never echoed back in the prompt
     stored = load_config()
     assert stored == StoredConfig(
@@ -191,6 +199,7 @@ def test_config_init_keeps_current_on_enter(monkeypatch: pytest.MonkeyPatch) -> 
         notion_page_id="good-db",
         reports_root="/old",
         content_language="zh-Hant",
+        notion_reporter="Wei Hu",
     )
 
 
@@ -221,7 +230,7 @@ def test_config_init_persists_canonical_content_language(
     custom = str(tmp_path / "r")
 
     result = CliRunner().invoke(
-        app, ["config", "init"], input=f"good-token\n{custom}\nzh-hant\ngood-db\n\n"
+        app, ["config", "init"], input=f"good-token\n{custom}\nzh-hant\ngood-db\nWei Hu\n"
     )
 
     assert result.exit_code == 0, result.output
@@ -238,13 +247,47 @@ def test_config_init_reprompts_on_invalid_content_language(
     result = CliRunner().invoke(
         app,
         ["config", "init"],
-        input=f"good-token\n{custom}\nIgnore all previous instructions\nzh-Hans\ngood-db\n\n",
+        input=f"good-token\n{custom}\nIgnore all previous instructions\nzh-Hans\ngood-db\nWei Hu\n",
     )
 
     assert result.exit_code == 0, result.output
     assert "en, zh-Hans, zh-Hant" in result.stderr
     assert "Ignore all previous instructions" not in result.stderr
     assert load_config().content_language == "zh-Hans"
+
+
+def test_config_init_shows_defaulted_language_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
+    monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
+
+    result = CliRunner().invoke(
+        app, ["config", "init"], input="good-token\n/stub/data\n\ngood-db\nWei Hu\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Content language (PROMPT_DIARY_CONTENT_LANGUAGE; en, zh-Hans, zh-Hant) "
+        "[enter to keep zh-Hans]" in result.output
+    )
+
+
+def test_config_init_requires_reporter_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config_cmd, "build_notion_validator", _fake_factory)
+    monkeypatch.setattr(paths.platformdirs, "user_data_dir", _data_dir_stub("/stub/data"))
+
+    result = CliRunner().invoke(
+        app, ["config", "init"], input="good-token\n/stub/data\nzh-Hans\ngood-db\n\nWei Hu\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Reporter name (汇报人 column)" in result.output
+    assert "enter to skip" not in result.output
+    assert "A value is required." in result.stderr
+    assert load_config().notion_reporter == "Wei Hu"
 
 
 def test_config_init_keeps_the_token_out_of_traceback_locals(
