@@ -101,6 +101,19 @@ _PRESERVATION_ROWS = (
 )
 
 
+_SYNTHESIS_STYLE_RULES = (
+    "Apply this style to all agent-generated output during report generation, including assistant "
+    "responses that are not captured in report artifacts.",
+    "Use a pragmatic, straightforward tone.",
+    "Be direct and concise.",
+    "Do not be friendly, chatty, complimentary, or verbose.",
+    "Use simple words when they are as accurate as complex words.",
+    "State evidence, uncertainty, blockers, and limits plainly.",
+    "Do not hide uncertainty or soften evidence limits.",
+    "Make every sentence serve work communication, faithful engagement reading, or team learning.",
+)
+
+
 def parse_content_language(value: str) -> LanguageNorm:
     """Parse a content-language tag, rejecting unsupported values."""
     stripped = value.strip()
@@ -133,7 +146,7 @@ def render_language_instructions(language: LanguageNorm) -> str:
         *_PRESERVATION_ROWS,
     )
     rendered_rows = "\n".join(f"| {content_class} | {rule} |" for content_class, rule in row_items)
-    return "\n".join(
+    language_instructions = "\n".join(
         (
             "Prompt Diary content language norm",
             "",
@@ -144,6 +157,10 @@ def render_language_instructions(language: LanguageNorm) -> str:
             rendered_rows,
         )
     )
+    style_instructions = "\n".join(
+        ("Prompt Diary synthesis style norm", "", *[f"- {rule}" for rule in _SYNTHESIS_STYLE_RULES])
+    )
+    return f"{language_instructions}\n\n{style_instructions}"
 
 
 def render_generated_agents_file(language: LanguageNorm) -> str:

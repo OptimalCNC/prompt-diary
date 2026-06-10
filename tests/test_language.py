@@ -109,6 +109,17 @@ def test_rendered_language_instructions_keep_english_rules_for_english() -> None
     assert "Preserve verbatim source text" in rendered
 
 
+def test_rendered_language_instructions_include_synthesis_style_norm() -> None:
+    rendered = render_language_instructions(LanguageNorm.from_tag("en"))
+
+    assert "Prompt Diary synthesis style norm" in rendered
+    assert "Apply this style to all agent-generated output during report generation" in rendered
+    assert "Use a pragmatic, straightforward tone." in rendered
+    assert "Do not be friendly, chatty, complimentary, or verbose." in rendered
+    assert "Use simple words when they are as accurate as complex words." in rendered
+    assert "Do not hide uncertainty or soften evidence limits." in rendered
+
+
 def test_generated_agents_file_is_written_with_marker(tmp_path: Path) -> None:
     path = write_generated_agents_file(tmp_path, LanguageNorm.from_tag("zh-Hans"))
 
@@ -116,6 +127,7 @@ def test_generated_agents_file_is_written_with_marker(tmp_path: Path) -> None:
     content = path.read_text(encoding="utf-8")
     assert GENERATED_AGENTS_MARKER in content
     assert "zh-Hans" in content
+    assert "Prompt Diary synthesis style norm" in content
 
 
 def test_generated_agents_file_replaces_marker_owned_file(tmp_path: Path) -> None:

@@ -47,6 +47,14 @@ description says otherwise.
 Project-scoped phases receive an explicit `project_key` and session references; they do not change
 the process current working directory to the project folder.
 
+Before each Codex-backed generation conversation starts, Prompt Diary injects runtime developer
+instructions into the agent thread and writes the same generated `AGENTS.md` in the prepared
+workspace. These instructions include the selected content language and the synthesis style norm:
+agent-generated output should be pragmatic, straightforward, concise, plain-worded, and explicit
+about evidence limits. The style norm applies to all generation-agent output, including assistant
+responses that are not captured in report artifacts. It does not rewrite source material, schema
+tokens, citations, paths, commands, code identifiers, or deterministic renderer-owned text.
+
 ```mermaid
 flowchart TD
     workspace[/Prepared Workspace/]
