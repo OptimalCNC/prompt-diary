@@ -82,7 +82,7 @@ def test_runner_renders_both_views(tmp_path: Path) -> None:
     assert result.status == "success"
     assert _report_md(workspace).read_text(encoding="utf-8").strip()
     payload = json.loads(_report_notion(workspace).read_text(encoding="utf-8"))
-    assert payload["title"] == "Prompt Diary Report — 2026-05-28"
+    assert payload["title"] == "Evidence Tools and QA Strategy"
     assert payload["children"]
 
 
@@ -129,7 +129,7 @@ def test_runner_replaces_stale_views_before_rendering(tmp_path: Path) -> None:
         encoding="utf-8"
     )
     payload = json.loads(_report_notion(workspace).read_text(encoding="utf-8"))
-    assert payload["title"] == "Prompt Diary Report — 2026-05-28"
+    assert payload["title"] == "Evidence Tools and QA Strategy"
 
 
 def test_runner_renders_empty_report_fallbacks(tmp_path: Path) -> None:

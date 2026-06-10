@@ -7,10 +7,12 @@ from prompt_diary.generate.daily_synthesis.model import (
     InvalidDailyReportInput,
     ParsedEngagement,
     ParsedProjectSummary,
+    ParsedReportTitle,
     ParsedTeamLearning,
     derive_disposition,
     parse_engagement,
     parse_project_summary,
+    parse_report_title,
     parse_team_learning,
 )
 from tests.support.daily_synthesis import (
@@ -19,6 +21,7 @@ from tests.support.daily_synthesis import (
     project_citation,
     valid_engagement,
     valid_project_summary,
+    valid_report_title,
     valid_team_learning,
 )
 
@@ -141,6 +144,68 @@ def test_parse_project_summary_rejects_missing_citations() -> None:
     summary["citations"] = []
 
     assert "summary.citations" in _error_paths(parse_project_summary(summary))
+
+
+# --- report title ----------------------------------------------------------------------------
+
+
+def test_parse_report_title_accepts_valid_submission() -> None:
+    result = parse_report_title(valid_report_title())
+
+    assert isinstance(result, ParsedReportTitle)
+    assert result.title.text == "Evidence Tools and QA Strategy"
+    assert result.title.citations[0].project_key == PROJECT_KEY
+
+
+def test_parse_report_title_rejects_blank_text() -> None:
+    title = valid_report_title()
+    title["text"] = "  "
+
+    assert "title.text" in _error_paths(parse_report_title(title))
+
+
+def test_parse_report_title_rejects_multiline_text() -> None:
+    title = valid_report_title()
+    title["text"] = "Evidence Tools\nQA Strategy"
+
+    assert "title.text" in _error_paths(parse_report_title(title))
+
+
+def test_parse_report_title_rejects_overlong_text() -> None:
+    title = valid_report_title()
+    title["text"] = (
+        "Evidence Tools and QA Strategy With Database Publishing Followup Decisions Review"
+    )
+
+    assert "title.text" in _error_paths(parse_report_title(title))
+
+
+def test_parse_report_title_rejects_date_bearing_text() -> None:
+    title = valid_report_title()
+    title["text"] = "Evidence Tools — 2026-05-28"
+
+    assert "title.text" in _error_paths(parse_report_title(title))
+
+
+def test_parse_report_title_rejects_generic_text() -> None:
+    title = valid_report_title()
+    title["text"] = "Prompt Diary Report"
+
+    assert "title.text" in _error_paths(parse_report_title(title))
+
+
+def test_parse_report_title_rejects_missing_citations() -> None:
+    title = valid_report_title()
+    title["citations"] = []
+
+    assert "title.citations" in _error_paths(parse_report_title(title))
+
+
+def test_parse_report_title_rejects_citation_without_project_key() -> None:
+    title = valid_report_title()
+    title["citations"] = [project_citation("S0001", "T0001")]
+
+    assert "title.citations[0].project_key" in _error_paths(parse_report_title(title))
 
 
 # --- engagement ------------------------------------------------------------------------------

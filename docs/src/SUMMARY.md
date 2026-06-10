@@ -10,6 +10,7 @@
     - [Project Synthesizer Prompt](./generate/project-synthesizer-prompt.md)
   - [Daily Report Synthesis](./generate/daily-synthesis.md)
     - [Project Summary Prompt](./generate/project-summary-prompt.md)
+    - [Report Title Prompt](./generate/report-title-prompt.md)
     - [Engagement Prompt](./generate/engagement-prompt.md)
     - [Team Learning Prompt](./generate/team-learning-prompt.md)
   - [Rendering](./generate/rendering.md)

@@ -260,10 +260,15 @@ def build_layout(report: dict[str, Any], *, evidence_chains: tuple[Group, ...] =
     if evidence_chains:
         children.append(Section(EVIDENCE_APPENDIX_TITLE, evidence_chains))
     return Document(
-        title=f"Prompt Diary Report — {_str(report.get('report_date'))}",
+        title=_report_title(report),
         properties=_properties(report),
         children=tuple(children),
     )
+
+
+def _report_title(report: dict[str, Any]) -> str:
+    title = _str(_mapping(report.get("report_title")).get("text"))
+    return title or "Prompt Diary Report"
 
 
 def load_evidence_appendix(*, workspace_path: Path, report: dict[str, Any]) -> tuple[Group, ...]:

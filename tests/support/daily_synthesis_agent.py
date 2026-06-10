@@ -1,10 +1,10 @@
 """Prompt-reading fake agent that fills daily-report slots via the real write_* APIs.
 
 Like :class:`GroupingAgentRunner`, this fake never starts Codex: each turn it detects which pass it
-is running from the tool name named in the prompt (``write_project_summary`` / ``write_engagement``
-/ ``write_team_learning``) and calls the matching real write API with a valid submission derived
-from the workspace's committed evidence — so the runner's slot checks, Finalize, and the Markdown
-render all run against real, validated data.
+is running from the tool name named in the prompt (``write_project_summary`` /
+``write_report_title`` / ``write_engagement`` / ``write_team_learning``) and calls the matching
+real write API with a valid submission derived from the workspace's committed evidence — so the
+runner's slot checks, Finalize, and the Markdown render all run against real, validated data.
 
 A valid submission must cite a committed turn (one carrying an extracted evidence chain). The fake
 reads the committed chains per project from the workspace, cites the first available one (naming its
@@ -23,9 +23,11 @@ from prompt_diary.agent import AgentTurnResult
 from prompt_diary.generate.daily_synthesis.mcp import (
     EngagementWrittenResult,
     ProjectSummaryWrittenResult,
+    ReportTitleWrittenResult,
     TeamLearningWrittenResult,
     write_engagement,
     write_project_summary,
+    write_report_title,
     write_team_learning,
 )
 from prompt_diary.generate.project_synthesis.cards import load_committed_chains
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
 _PROJECT_KEY_RE = re.compile(r"^- Project key: (.+)$", re.MULTILINE)
 
 _SUMMARY = "project_summary"
+_REPORT_TITLE = "report_title"
 _ENGAGEMENT = "engagement"
 _TEAM_LEARNING = "team_learning"
 
@@ -71,6 +74,8 @@ class DailySynthesisAgentRunner:
     def _write(self, pass_name: str, prompt: str) -> None:
         if pass_name == _SUMMARY:
             self._write_summary(prompt)
+        elif pass_name == _REPORT_TITLE:
+            self._write_report_title()
         elif pass_name == _ENGAGEMENT:
             self._write_engagement()
         else:
@@ -90,6 +95,18 @@ class DailySynthesisAgentRunner:
                 summary={
                     "text": f"Summary of {project_key} for the day.",
                     "citations": [_project_citation(chain)],
+                },
+            )
+        )
+
+    def _write_report_title(self) -> None:
+        chain, project_key = _first_committed_across(self.config.working_directory)
+        _ok(
+            write_report_title(
+                workspace_path=self.config.working_directory,
+                title={
+                    "text": "Evidence Tools and QA Strategy",
+                    "citations": [_cross_citation(chain, project_key)],
                 },
             )
         )
@@ -185,6 +202,8 @@ class DailySynthesisAgentSessionFactory:
 def _pass_of(prompt: str) -> str:
     if "write_project_summary" in prompt:
         return _SUMMARY
+    if "write_report_title" in prompt:
+        return _REPORT_TITLE
     if "write_engagement" in prompt:
         return _ENGAGEMENT
     if "write_team_learning" in prompt:
@@ -230,7 +249,12 @@ def _cross_citation(chain: CommittedChain, project_key: str) -> dict[str, str]:
     }
 
 
-_WRITTEN = (ProjectSummaryWrittenResult, EngagementWrittenResult, TeamLearningWrittenResult)
+_WRITTEN = (
+    ProjectSummaryWrittenResult,
+    ReportTitleWrittenResult,
+    EngagementWrittenResult,
+    TeamLearningWrittenResult,
+)
 
 
 def _ok(result: object) -> None:

@@ -76,11 +76,22 @@ def render_report(*, workspace_path: Path) -> Path:
 
 def render_markdown(document: Document) -> str:
     """Serialize a layout :class:`Document` to a Markdown string."""
-    lines: list[str] = [f"# {_escape(document.title)}", "", _properties_line(document.properties)]
+    lines: list[str] = [
+        f"# {_escape(_document_heading(document))}",
+        "",
+        _properties_line(document.properties),
+    ]
     for section in document.children:
         lines.append("")
         lines.extend(_render_block(section, level=_SECTION_BASE_LEVEL))
     return "\n".join(lines) + "\n"
+
+
+def _document_heading(document: Document) -> str:
+    report_date = document.properties.get("report_date", "")
+    if not report_date:
+        return document.title
+    return f"{document.title} — {report_date}"
 
 
 def _properties_line(properties: dict[str, str]) -> str:

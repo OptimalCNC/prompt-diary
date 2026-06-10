@@ -950,7 +950,7 @@ def _write_rendering(workspace_path: Path) -> None:
     (workspace_path / "report.md").write_text(
         "\n".join(
             [
-                "# Prompt Diary Report - 2026-05-12",
+                "# No Supported Work Evidence — 2026-05-12",
                 "",
                 "Status: final",
                 "Window: 2026-05-12T00:00:00+08:00 to 2026-05-13T00:00:00+08:00 Asia/Shanghai",
@@ -983,7 +983,7 @@ def _write_rendering(workspace_path: Path) -> None:
     # pipeline's missing-output check passes (the real runner renders it from the layout).
     _write_json(
         workspace_path / "report.notion.json",
-        {"title": "Prompt Diary Report - 2026-05-12", "properties": {}, "children": []},
+        {"title": "No Supported Work Evidence", "properties": {}, "children": []},
     )
 
 

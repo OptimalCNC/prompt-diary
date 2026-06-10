@@ -101,10 +101,10 @@ def _callouts(blocks: tuple[Block, ...]) -> list[Callout]:
 def test_layout_document_title_and_properties(tmp_path: Path) -> None:
     document = build_layout(_finalized_report(tmp_path))
 
-    assert document.title == "Prompt Diary Report — 2026-05-28"
+    assert document.title == "Evidence Tools and QA Strategy"
     assert document.properties == {
         # ``report_date`` is carried for the Notion renderer's Date column; the Markdown header
-        # ignores it (it reads only status/window/overall_confidence).
+        # combines it with the document title for the standalone file heading.
         "report_date": "2026-05-28",
         "status": "final",
         # The window range uses an en dash (U+2013), built here as an escape to keep the source
@@ -246,6 +246,7 @@ def _no_outcome_material_report() -> dict[str, Any]:
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
+        "report_title": {"text": "Blocked Dependency Review", "citations": [citation]},
         "overall_confidence": "high",
         "projects": [
             {

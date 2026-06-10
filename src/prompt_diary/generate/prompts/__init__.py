@@ -236,6 +236,11 @@ def project_summary_prompt(*, project_key: str, project_json: str, work_items: s
     )
 
 
+def report_title_prompt(*, context: str) -> str:
+    """Return the whole-report title prompt with substituted workspace values."""
+    return _render("report-title.md", context=context)
+
+
 def engagement_prompt(*, work_items: str, source_user_messages: str) -> str:
     """Return the engagement prompt with substituted workspace values."""
     return _render(

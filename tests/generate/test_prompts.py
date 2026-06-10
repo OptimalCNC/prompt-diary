@@ -12,6 +12,7 @@ from prompt_diary.generate.prompts import (
     project_summary_prompt,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
+    report_title_prompt,
     team_learning_prompt,
 )
 
@@ -145,6 +146,26 @@ def test_project_summary_prompt() -> None:
     assert "W0001" in result
 
 
+def test_report_title_prompt() -> None:
+    result = report_title_prompt(
+        context=(
+            "report_date: 2026-05-28\n"
+            "status: final\n"
+            "**ReportGenerator-e6ff7eeda632 · W0001**\n"
+            "summary: Simplified the evidence tools and designed the QA approach.\n"
+            "title: Simplify the MCP evidence tools and drop chain_ref\n"
+            "cite: ReportGenerator-e6ff7eeda632/S0001/T0001"
+        ),
+    )
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "write_report_title" in result
+    assert "must not include the report date" in result
+    assert "Prompt Diary Report" in result
+    assert "chain_ref" in result
+
+
 def test_engagement_prompt() -> None:
     result = engagement_prompt(
         work_items="**W0001** material_work_item: simplified the MCP evidence tools.",
@@ -214,6 +235,14 @@ def test_cli_prompts_project_summary() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["prompts", "project-summary"])
+
+    assert result.exit_code == 0
+
+
+def test_cli_prompts_report_title() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["prompts", "report-title"])
 
     assert result.exit_code == 0
 

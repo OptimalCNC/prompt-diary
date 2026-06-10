@@ -2,10 +2,11 @@
 
 The Build step assembles every deterministic field of ``daily-report.json`` — the header and all of
 Work by Project except each project's ``summary`` — directly from the prepared workspace and the
-per-project ``project-synthesis.json`` envelopes, with no AI. The three ``synthesize`` slots
-(per-project ``summary``, ``engagement_assessment``, ``team_learning``) are seeded ``null`` for the
-agent passes to patch, and ``overall_confidence`` is left ``null`` for Finalize to fill. The
-assembled report is written to the workspace root and returned.
+per-project ``project-synthesis.json`` envelopes, with no AI. The ``synthesize`` slots
+(per-project ``summary``, ``report_title``, ``engagement_assessment``, ``team_learning``) are
+seeded ``null`` for the agent passes to patch, and ``overall_confidence`` is left ``null`` for
+Finalize to fill. Empty reports get a deterministic title because there is no citable work for a
+title pass. The assembled report is written to the workspace root and returned.
 
 Every claim-bearing field is lifted verbatim from a validated upstream work item or resolved
 through the session index, so a built report cannot drift from its evidence: the work-item view
@@ -23,6 +24,7 @@ from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.daily_synthesis.citations import CitationResolver
 from prompt_diary.generate.daily_synthesis.model import (
     CONFIDENCE_RANK,
+    REPORTABLE_WORK_ITEM_KINDS,
     derive_disposition,
 )
 from prompt_diary.generate.project_synthesis.model import (
@@ -42,6 +44,7 @@ __all__ = ["build_daily_report"]
 
 _REPORT_NAME = "daily-report.json"
 _MATERIAL = "material_work_item"
+_EMPTY_REPORT_TITLE = "No Supported Work Evidence"
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,7 @@ def build_daily_report(*, workspace_path: Path) -> dict[str, Any]:
         "report_date": workspace.report_date,
         "status": workspace.status,
         "window": _window(workspace_path, workspace.timezone),
+        "report_title": _initial_report_title(project_views),
         "overall_confidence": None,
         "projects": project_views,
         "engagement_assessment": None,
@@ -124,6 +128,19 @@ def _project_view(item: _ProjectInput, resolver: CitationResolver) -> dict[str, 
         "work_items": [_work_item_view(wi, project_key, resolver) for wi in ordered_items],
         "source_user_messages": item.source_user_messages,
     }
+
+
+def _initial_report_title(projects: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if any(_has_reportable_work_item(project) for project in projects):
+        return None
+    return {"text": _EMPTY_REPORT_TITLE, "citations": []}
+
+
+def _has_reportable_work_item(project: dict[str, Any]) -> bool:
+    return any(
+        _as_mapping(work_item).get("kind") in REPORTABLE_WORK_ITEM_KINDS
+        for work_item in _as_list(project.get("work_items"))
+    )
 
 
 def _work_items_in_significance_order(work_items: tuple[WorkItem, ...]) -> list[WorkItem]:

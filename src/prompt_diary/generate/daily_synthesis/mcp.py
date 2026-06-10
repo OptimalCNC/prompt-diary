@@ -1,10 +1,11 @@
 """Transport-independent daily synthesis MCP tool APIs.
 
 Each write tool patches one synthesize slot in the workspace-root ``daily-report.json``: the
-per-project ``projects[p].summary``, the top-level ``engagement_assessment``, or the top-level
-``team_learning``. A deterministic Build step seeds the file with those three slots set to ``null``;
-the write tools require that skeleton (and the slot they patch) to exist and only ever replace their
-own slot, so a re-run is idempotent rather than additive.
+per-project ``projects[p].summary``, the top-level ``report_title``, the top-level
+``engagement_assessment``, or the top-level ``team_learning``. A deterministic Build step seeds the
+file with those slots set to ``null``; the write tools require that skeleton (and the slot they
+patch) to exist and only ever replace their own slot, so a re-run is idempotent rather than
+additive.
 
 A write is checked before it touches disk: the submission is parsed with the model's chain-only
 parsers, then every citation must name a committed (evidence-bearing) turn of its project — a turn
@@ -27,9 +28,11 @@ from prompt_diary.generate.daily_synthesis.model import (
     EngagementAssessment,
     InvalidDailyReportInput,
     ProjectSummary,
+    ReportTitle,
     TeamLearning,
     parse_engagement,
     parse_project_summary,
+    parse_report_title,
     parse_team_learning,
 )
 from prompt_diary.generate.project_synthesis.cards import (
@@ -50,12 +53,15 @@ __all__ = [
     "DailyReportWriteError",
     "EngagementWrittenResult",
     "ProjectSummaryWrittenResult",
+    "ReportTitleWrittenResult",
     "TeamLearningWrittenResult",
     "WriteEngagementResult",
     "WriteProjectSummaryResult",
+    "WriteReportTitleResult",
     "WriteTeamLearningResult",
     "write_engagement",
     "write_project_summary",
+    "write_report_title",
     "write_team_learning",
 ]
 
@@ -68,6 +74,13 @@ class ProjectSummaryWrittenResult:
 
     status: Literal["written"]
     project_key: str
+
+
+@dataclass(frozen=True)
+class ReportTitleWrittenResult:
+    """Successful whole-report title write result."""
+
+    status: Literal["written"]
 
 
 @dataclass(frozen=True)
@@ -93,6 +106,7 @@ class DailyReportInvalidResult:
 
 
 WriteProjectSummaryResult: TypeAlias = ProjectSummaryWrittenResult | DailyReportInvalidResult
+WriteReportTitleResult: TypeAlias = ReportTitleWrittenResult | DailyReportInvalidResult
 WriteEngagementResult: TypeAlias = EngagementWrittenResult | DailyReportInvalidResult
 WriteTeamLearningResult: TypeAlias = TeamLearningWrittenResult | DailyReportInvalidResult
 
@@ -168,6 +182,38 @@ def write_project_summary(
     }
     _write_report(workspace_path, report)
     return ProjectSummaryWrittenResult("written", project_key)
+
+
+def write_report_title(
+    *,
+    workspace_path: Path,
+    title: dict[str, object],
+) -> WriteReportTitleResult:
+    """Validate and patch the top-level ``report_title`` slot in the daily report."""
+    report = _read_report(workspace_path)
+    if report is None:
+        return _missing_report()
+    if "report_title" not in report:
+        return _missing_slot("report_title")
+
+    parsed = parse_report_title(cast("dict[str, Any]", title))
+    if isinstance(parsed, InvalidDailyReportInput):
+        return DailyReportInvalidResult("invalid", parsed.errors)
+    report_title = parsed.title
+
+    scope = _CitationScope(
+        CitationResolver.from_workspace(load_prepared_workspace(workspace_path)), workspace_path
+    )
+    resolved, errors = _resolve_report_title_citations(report_title, scope)
+    if errors:
+        return DailyReportInvalidResult("invalid", tuple(errors))
+
+    report["report_title"] = {
+        "text": report_title.text,
+        "citations": [citation.to_json() for citation in resolved],
+    }
+    _write_report(workspace_path, report)
+    return ReportTitleWrittenResult("written")
 
 
 def write_engagement(
@@ -268,6 +314,24 @@ def _resolve_project_summary_citations(
         if hit is None:
             errors.append(
                 DailyReportWriteError(path, _uncovered_project_message(citation), _SCOPE_HINT)
+            )
+            continue
+        resolved.append(hit)
+    return resolved, errors
+
+
+def _resolve_report_title_citations(
+    title: ReportTitle,
+    scope: _CitationScope,
+) -> tuple[list[ResolvedCitation], list[DailyReportWriteError]]:
+    resolved: list[ResolvedCitation] = []
+    errors: list[DailyReportWriteError] = []
+    for index, citation in enumerate(title.citations):
+        path = f"title.citations[{index}]"
+        hit = _resolve_named(citation, scope)
+        if hit is None:
+            errors.append(
+                DailyReportWriteError(path, _uncovered_named_message(citation), _SCOPE_HINT)
             )
             continue
         resolved.append(hit)

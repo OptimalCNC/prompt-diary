@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from prompt_diary.generate.daily_synthesis.mcp import (
         WriteEngagementResult,
         WriteProjectSummaryResult,
+        WriteReportTitleResult,
         WriteTeamLearningResult,
     )
 
@@ -148,6 +149,14 @@ def valid_project_summary() -> dict[str, Any]:
     }
 
 
+def valid_report_title() -> dict[str, Any]:
+    """A valid whole-report title submission for the basic fixture."""
+    return {
+        "text": "Evidence Tools and QA Strategy",
+        "citations": [cross_citation("S0001", "T0001")],
+    }
+
+
 def valid_engagement() -> dict[str, Any]:
     """A valid engagement submission (overall_reading / observations / limits) for the fixture."""
     return {
@@ -209,6 +218,7 @@ def seed_daily_report_skeleton(workspace_path: Path) -> Path:
             "end": window_local.get("end"),
             "timezone": metadata.get("timezone"),
         },
+        "report_title": None,
         "overall_confidence": None,
         "projects": [
             {
@@ -267,6 +277,20 @@ def call_write_project_summary_api(
     )
 
 
+def call_write_report_title_api(
+    *,
+    workspace_path: Path,
+    title: dict[str, Any] | None = None,
+) -> WriteReportTitleResult:
+    # Imported lazily so this shared module keeps importing before the write-tool module exists.
+    from prompt_diary.generate.daily_synthesis.mcp import write_report_title  # noqa: PLC0415
+
+    return write_report_title(
+        workspace_path=workspace_path,
+        title=valid_report_title() if title is None else title,
+    )
+
+
 def call_write_engagement_api(
     *,
     workspace_path: Path,
@@ -314,11 +338,12 @@ def build_daily_report_via_api(workspace_path: Path) -> dict[str, Any]:
 
 
 def fill_synthesize_slots(workspace_path: Path, *, project_key: str = PROJECT_KEY) -> None:
-    """Fill the three synthesize slots with the ``valid_*`` builders via the Stage-1 write tools."""
+    """Fill the synthesize slots with the ``valid_*`` builders via the write tools."""
     assert_project_summary_written(
         call_write_project_summary_api(workspace_path=workspace_path, project_key=project_key),
         project_key=project_key,
     )
+    assert_report_title_written(call_write_report_title_api(workspace_path=workspace_path))
     assert_engagement_written(call_write_engagement_api(workspace_path=workspace_path))
     assert_team_learning_written(call_write_team_learning_api(workspace_path=workspace_path))
 
@@ -384,12 +409,15 @@ def result_to_dict(result: object) -> dict[str, Any]:
         DailyReportInvalidResult,
         EngagementWrittenResult,
         ProjectSummaryWrittenResult,
+        ReportTitleWrittenResult,
         TeamLearningWrittenResult,
     )
 
     if isinstance(result, ProjectSummaryWrittenResult):
         return {"status": result.status, "project_key": result.project_key}
-    if isinstance(result, (EngagementWrittenResult, TeamLearningWrittenResult)):
+    if isinstance(
+        result, (ReportTitleWrittenResult, EngagementWrittenResult, TeamLearningWrittenResult)
+    ):
         return {"status": result.status}
     if isinstance(result, DailyReportInvalidResult):
         return {
@@ -408,6 +436,11 @@ def assert_project_summary_written(result: object, *, project_key: str = PROJECT
     payload = result_to_dict(result)
     assert payload["status"] == "written"
     assert payload["project_key"] == project_key
+
+
+def assert_report_title_written(result: object) -> None:
+    payload = result_to_dict(result)
+    assert payload["status"] == "written"
 
 
 def assert_engagement_written(result: object) -> None:

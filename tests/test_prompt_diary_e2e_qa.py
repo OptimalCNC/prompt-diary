@@ -86,7 +86,7 @@ def test_cli_generate_reuses_existing_workspace_from_env_roots(
     assert (workspace / "report.md").exists()
     assert phase_runner.events[-1] == "render"
     report_text = (workspace / "report.md").read_text(encoding="utf-8")
-    assert "# Prompt Diary Report - 2020-01-02" in report_text
+    assert "# No Supported Work Evidence — 2020-01-02" in report_text
     assert "Status: final" in report_text
 
 
@@ -343,7 +343,7 @@ class WritingPhaseRunner:
                 output_path.write_text(
                     "\n".join(
                         [
-                            f"# Prompt Diary Report - {TARGET_DATE}",
+                            f"# No Supported Work Evidence — {TARGET_DATE}",
                             "",
                             "Status: final",
                         ]

@@ -17,9 +17,11 @@ from tests.support.daily_synthesis import (
     assert_engagement_written,
     assert_invalid_result,
     assert_project_summary_written,
+    assert_report_title_written,
     assert_team_learning_written,
     call_write_engagement_api,
     call_write_project_summary_api,
+    call_write_report_title_api,
     call_write_team_learning_api,
     copy_basic_daily_workspace,
     cross_citation,
@@ -31,6 +33,7 @@ from tests.support.daily_synthesis import (
     seed_daily_report_skeleton,
     valid_engagement,
     valid_project_summary,
+    valid_report_title,
     valid_team_learning,
 )
 
@@ -179,6 +182,92 @@ def test_write_project_summary_rejects_gap_turn_citation(tmp_path: Path) -> None
     result = call_write_project_summary_api(workspace_path=workspace, summary=summary)
 
     assert_invalid_result(result, path="summary.citations[0]")
+
+
+# --- write_report_title ----------------------------------------------------------------------
+
+
+def test_write_report_title_patches_slot_with_resolved_citations(tmp_path: Path) -> None:
+    workspace = _seeded_workspace(tmp_path)
+
+    result = call_write_report_title_api(workspace_path=workspace)
+
+    assert_report_title_written(result)
+    title = load_daily_report(workspace)["report_title"]
+    assert title["text"] == valid_report_title()["text"]
+    assert title["citations"] == [
+        {"project_key": PROJECT_KEY, "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}
+    ]
+
+
+def test_write_report_title_requires_existing_skeleton(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+
+    result = call_write_report_title_api(workspace_path=workspace)
+
+    assert_invalid_result(result, path="daily_report")
+    assert not daily_report_path(workspace).exists()
+
+
+def test_write_report_title_rejects_structural_parse_error(tmp_path: Path) -> None:
+    workspace = _seeded_workspace(tmp_path)
+    before = daily_report_text(workspace)
+    title = valid_report_title()
+    title["text"] = "Prompt Diary Report"
+
+    result = call_write_report_title_api(workspace_path=workspace, title=title)
+
+    assert_invalid_result(result, path="title.text")
+    assert daily_report_text(workspace) == before
+
+
+def test_write_report_title_rejects_citation_without_project_key(tmp_path: Path) -> None:
+    workspace = _seeded_workspace(tmp_path)
+    title = valid_report_title()
+    title["citations"] = [project_citation("S0001", "T0001")]
+
+    result = call_write_report_title_api(workspace_path=workspace, title=title)
+
+    assert_invalid_result(result, path="title.citations[0].project_key")
+
+
+def test_write_report_title_rejects_unresolvable_citation(tmp_path: Path) -> None:
+    workspace = _seeded_workspace(tmp_path)
+    before = daily_report_text(workspace)
+    title = valid_report_title()
+    title["citations"] = [cross_citation("S0001", "T9999")]
+
+    result = call_write_report_title_api(workspace_path=workspace, title=title)
+
+    assert_invalid_result(result, path="title.citations[0]")
+    assert daily_report_text(workspace) == before
+
+
+def test_write_report_title_requires_report_title_slot_in_skeleton(tmp_path: Path) -> None:
+    workspace = _seeded_workspace(tmp_path)
+    report = load_daily_report(workspace)
+    del report["report_title"]
+    daily_report_path(workspace).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+    result = call_write_report_title_api(workspace_path=workspace)
+
+    assert_invalid_result(result, path="daily_report")
+
+
+def test_write_report_title_rerun_replaces_slot(tmp_path: Path) -> None:
+    workspace = _seeded_workspace(tmp_path)
+    call_write_report_title_api(workspace_path=workspace)
+    second = valid_report_title()
+    second["text"] = "Second Evidence Headline"
+    second["citations"] = [cross_citation("S0002", "T0001")]
+
+    result = call_write_report_title_api(workspace_path=workspace, title=second)
+
+    assert_report_title_written(result)
+    title = load_daily_report(workspace)["report_title"]
+    assert isinstance(title, dict)
+    assert title["text"] == "Second Evidence Headline"
+    assert title["citations"][0]["lines"] == "2-6"
 
 
 # --- write_engagement ------------------------------------------------------------------------

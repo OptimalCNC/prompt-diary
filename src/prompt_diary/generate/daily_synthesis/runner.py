@@ -1,7 +1,7 @@
 """Daily synthesis phase runner.
 
 Orchestrates the whole daily-synthesis phase for one prepared workspace: it runs the deterministic
-Build step, drives the focused agent passes that fill the three ``synthesize`` slots, runs the
+Build step, drives the focused agent passes that fill the ``synthesize`` slots, runs the
 deterministic Finalize, and returns the task result. It builds only the model
 (``daily-report.json``); the separate Rendering phase projects that model into the reader-facing
 views. Build, Finalize, and the write tools own all validation and resolution; this runner only
@@ -31,12 +31,14 @@ from prompt_diary.generate.daily_synthesis.finalize import (
 from prompt_diary.generate.daily_synthesis.inputs import (
     build_project_summary_inputs,
     build_report_inputs,
+    build_report_title_inputs,
 )
 from prompt_diary.generate.daily_synthesis.model import REPORTABLE_WORK_ITEM_KINDS
 from prompt_diary.generate.pipeline import TaskResult
 from prompt_diary.generate.prompts import (
     engagement_prompt,
     project_summary_prompt,
+    report_title_prompt,
     team_learning_prompt,
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
@@ -88,6 +90,9 @@ class DailySynthesisRunner:
                 return failure
 
         if _has_any_work_item(report):
+            failure = await self._run_report_title(workspace_path, task)
+            if failure is not None:
+                return failure
             failure = await self._run_report_passes(workspace_path, task)
             if failure is not None:
                 return failure
@@ -120,6 +125,14 @@ class DailySynthesisRunner:
         )
         if _project_summary(workspace_path, project_key) is None:
             return _failed(task, _summary_not_written_message(project_key))
+        return None
+
+    async def _run_report_title(self, workspace_path: Path, task: TaskSpec) -> TaskResult | None:
+        inputs = build_report_title_inputs(workspace_path=workspace_path)
+        runner = await self._new_runner(workspace_path)
+        await runner.turn(report_title_prompt(context=inputs.context))
+        if _slot(workspace_path, "report_title") is None:
+            return _failed(task, _section_not_written_message("report_title"))
         return None
 
     async def _run_report_passes(self, workspace_path: Path, task: TaskSpec) -> TaskResult | None:

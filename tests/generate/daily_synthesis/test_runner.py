@@ -71,6 +71,7 @@ def test_runner_fills_all_slots(tmp_path: Path) -> None:
 
     assert result.status == "success"
     report = load_daily_report(workspace)
+    assert report["report_title"] is not None
     assert report["projects"][0]["summary"] is not None
     assert report["engagement_assessment"] is not None
     assert report["team_learning"] is not None
@@ -87,14 +88,15 @@ def test_runner_returns_the_model_output_artifact(tmp_path: Path) -> None:
 
 
 def test_runner_runs_one_pass_per_project_plus_two(tmp_path: Path) -> None:
-    # The basic fixture has one work-bearing project: one summary pass + engagement + team-learning.
+    # The basic fixture has one work-bearing project: one summary pass + title + engagement +
+    # team-learning.
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
 
     _run(factory, workspace)
 
-    assert len(factory.runners) == 3
-    assert len(factory.prompts) == 3
+    assert len(factory.runners) == 4
+    assert len(factory.prompts) == 4
 
 
 def _summary_pass_project_keys(factory: DailySynthesisAgentSessionFactory) -> list[str]:
@@ -109,15 +111,15 @@ def _summary_pass_project_keys(factory: DailySynthesisAgentSessionFactory) -> li
 
 
 def test_runner_two_projects_runs_two_summaries_plus_two(tmp_path: Path) -> None:
-    # Two work-bearing projects: one summary pass each, plus the shared engagement and
-    # team-learning passes — four passes total, each summary pass naming a distinct project.
+    # Two work-bearing projects: one summary pass each, plus the shared title, engagement, and
+    # team-learning passes — five passes total, each summary pass naming a distinct project.
     workspace = copy_two_projects_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
 
     result = _run(factory, workspace)
 
     assert result.status == "success"
-    assert len(factory.runners) == 4
+    assert len(factory.runners) == 5
     assert sorted(_summary_pass_project_keys(factory)) == [
         TWO_PROJECTS_KEY_A,
         TWO_PROJECTS_KEY_B,
@@ -136,8 +138,23 @@ def test_runner_two_projects_fills_both_summaries(tmp_path: Path) -> None:
         project["project_key"]: project["summary"] is not None for project in report["projects"]
     }
     assert summaries == {TWO_PROJECTS_KEY_A: True, TWO_PROJECTS_KEY_B: True}
+    assert report["report_title"] is not None
     assert report["engagement_assessment"] is not None
     assert report["team_learning"] is not None
+
+
+def test_runner_report_title_prompt_uses_summary_context(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    factory = DailySynthesisAgentSessionFactory()
+
+    _run(factory, workspace)
+
+    title_prompts = [prompt for prompt in factory.prompts if "write_report_title" in prompt]
+    assert len(title_prompts) == 1
+    prompt = title_prompts[0]
+    assert f"Summary of {PROJECT_KEY} for the day." in prompt
+    assert "Simplify the MCP evidence tools and drop chain_ref" in prompt
+    assert "Please simplify the MCP evidence tools" not in prompt
 
 
 def test_runner_uses_a_fresh_conversation_per_pass(tmp_path: Path) -> None:
@@ -147,7 +164,7 @@ def test_runner_uses_a_fresh_conversation_per_pass(tmp_path: Path) -> None:
     _run(factory, workspace)
 
     # Each pass is its own agent conversation, each running exactly one turn.
-    assert [len(runner.prompts) for runner in factory.runners] == [1, 1, 1]
+    assert [len(runner.prompts) for runner in factory.runners] == [1, 1, 1, 1]
 
 
 def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
@@ -194,7 +211,19 @@ def test_runner_fails_when_engagement_pass_writes_nothing(tmp_path: Path) -> Non
 
     assert result.status == "failed"
     assert any("engagement_assessment" in error for error in result.errors)
-    # The summary pass ran, the engagement pass ran (and wrote nothing), team-learning never ran.
+    # Summary and title ran, the engagement pass ran (and wrote nothing), team-learning never ran.
+    assert len(factory.runners) == 3
+
+
+def test_runner_fails_when_report_title_pass_writes_nothing(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    factory = DailySynthesisAgentSessionFactory(skip_pass=frozenset({"report_title"}))
+
+    result = _run(factory, workspace)
+
+    assert result.status == "failed"
+    assert any("report_title" in error for error in result.errors)
+    # The title pass ran after the summary and blocked later report-level passes.
     assert len(factory.runners) == 2
 
 
@@ -206,7 +235,7 @@ def test_runner_fails_when_team_learning_pass_writes_nothing(tmp_path: Path) -> 
 
     assert result.status == "failed"
     assert any("team_learning" in error for error in result.errors)
-    assert len(factory.runners) == 3
+    assert len(factory.runners) == 4
 
 
 def test_runner_build_raises_on_corrupt_envelope(tmp_path: Path) -> None:

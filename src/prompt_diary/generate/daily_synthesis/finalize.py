@@ -3,14 +3,14 @@
 Finalize is the deterministic closing step. It reads the post-pass ``daily-report.json``, rolls the
 per-claim confidences of the material work items and the two judgment sections into a single
 ``overall_confidence``, and validates the whole document. A report that has any reportable work item
-must have every project-with-reportable-work's ``summary`` filled and both judgment sections
-present; every filled synthesized claim — the project summaries and the engagement and
-team-learning leads and their entries — must carry non-empty ``text`` (where it has one) and at
-least one citation. A no-outcome material work item renders its terminal disposition as the visible
-claim in Work by Project, so each such terminal state must carry a citation too. A project whose
-work items are all gap/excluded kinds has no committed turn to cite, so it is not required to carry
-a summary. The faithfully-lifted Work-by-Project ``outcomes[]`` are exempt from the
-non-empty-citation rule, as an uncited upstream outcome is legitimate.
+must have ``report_title`` filled, every project-with-reportable-work's ``summary`` filled, and both
+judgment sections present; every filled synthesized claim — the report title, project summaries,
+and the engagement and team-learning leads and their entries — must carry non-empty ``text`` (where
+it has one) and at least one citation. A no-outcome material work item renders its terminal
+disposition as the visible claim in Work by Project, so each such terminal state must carry a
+citation too. A project whose work items are all gap/excluded kinds has no committed turn to cite,
+so it is not required to carry a summary. The faithfully-lifted Work-by-Project ``outcomes[]`` are
+exempt from the non-empty-citation rule, as an uncited upstream outcome is legitimate.
 
 Every stored citation is re-resolved against the prepared workspace as defense-in-depth: the passes
 run in a workspace-write sandbox, so an agent that edits ``daily-report.json`` directly — instead of
@@ -204,6 +204,8 @@ def _has_reportable_work_item(project: dict[str, Any]) -> bool:
 
 
 def _required_slot_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
+    if report.get("report_title") is None:
+        yield DailyReportWriteError("report_title", _missing_title_message(), _TITLE_HINT)
     for index, project in enumerate(_as_list(report.get("projects"))):
         mapping = _as_mapping(project)
         # Only a project with reportable work owes a summary: a gap-only / excluded-only project has
@@ -235,6 +237,7 @@ def _completeness_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteErr
     carry no citation — but a no-outcome material item renders its terminal disposition as the
     visible claim instead, so that terminal state must be cited.
     """
+    yield from _report_title_completeness(report)
     yield from _project_summary_completeness(report)
     yield from _terminal_claim_completeness(report)
     yield from _section_completeness(
@@ -264,6 +267,12 @@ def _terminal_claim_completeness(report: dict[str, Any]) -> Iterator[DailyReport
             base = f"projects[{project_index}].work_items[{item_index}].terminal_states"
             for state_index, state in enumerate(_as_list(item.get("terminal_states"))):
                 yield from _citations_present(state, f"{base}[{state_index}]")
+
+
+def _report_title_completeness(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
+    if report.get("report_title") is None:
+        return
+    yield from _cited_claim(report.get("report_title"), "report_title")
 
 
 def _project_summary_completeness(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
@@ -323,6 +332,7 @@ def _citation_errors(
 
 
 def _iter_citations(report: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+    yield from _cited_object(report.get("report_title"), "report_title")
     for project_index, project in enumerate(_as_list(report.get("projects"))):
         yield from _project_citations(_as_mapping(project), project_index)
     yield from _section_citations(
@@ -397,6 +407,10 @@ def _missing_summary_message(project_key: str) -> str:
     return f"project {project_key!r} has work items but no summary"
 
 
+def _missing_title_message() -> str:
+    return "a report with work items must have a non-null report_title"
+
+
 def _missing_section_message(section: str) -> str:
     return f"a report with work items must have a non-null {section}"
 
@@ -418,6 +432,7 @@ def _empty_citations_message(path: str) -> str:
 
 
 _SUMMARY_HINT = "run the per-project summary pass before finalize"
+_TITLE_HINT = "run the report title pass before finalize"
 _SECTION_HINT = "run the engagement and team-learning passes before finalize"
 _CITATION_HINT = "a stored citation must carry project_key, session_ref, turn_ref, and lines"
 _CLAIM_TEXT_HINT = "a synthesized claim renders its text; it must not be empty"

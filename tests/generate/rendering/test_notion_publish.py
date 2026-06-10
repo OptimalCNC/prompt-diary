@@ -19,6 +19,7 @@ import pytest
 
 from prompt_diary.config import ReporterTarget
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.rendering import notion_publish
 from prompt_diary.generate.rendering.notion_publish import (
     publish_report,
     publish_workspace_report,
@@ -102,7 +103,7 @@ def _schema() -> dict[str, Any]:
 
 def _payload(children: list[dict[str, Any]]) -> NotionPagePayload:
     return NotionPagePayload(
-        title="Prompt Diary Report — 2026-05-28",
+        title="Evidence Tools and QA Strategy",
         properties={
             "report_date": "2026-05-28",
             "status": "final",
@@ -254,7 +255,7 @@ def test_publish_maps_title_and_date_but_leaves_managed_and_text_columns() -> No
 
     create = next(call for call in client.calls if call[0] == "create")
     properties = create[2]
-    assert properties["Name"] == {"title": [_run("Prompt Diary Report — 2026-05-28")]}
+    assert properties["Name"] == {"title": [_run("Evidence Tools and QA Strategy")]}
     # The date column gets the report date. The Notion-managed created_time column is left alone
     # (Notion auto-fills it, with time). The text column stays empty without a reporter.
     assert properties["Date"] == {"date": {"start": "2026-05-28"}}
@@ -824,7 +825,7 @@ def test_publish_workspace_report_publishes_the_rendered_artifact(tmp_path: Path
 
     assert result.page_id == "page-1"
     create = next(call for call in client.calls if call[0] == "create")
-    assert create[2]["Name"]["title"][0]["text"]["content"] == "Prompt Diary Report — 2026-05-28"
+    assert create[2]["Name"]["title"][0]["text"]["content"] == "Evidence Tools and QA Strategy"
     # The real report is deep and wide; every request still respects Notion's request-shape limits.
     _assert_published_request_limits(client)
     # A known model claim from the basic fixture reached the appended blocks.
@@ -908,6 +909,30 @@ def test_publish_raises_when_append_result_lacks_a_block_id() -> None:
 
     with pytest.raises(PromptDiaryError, match="partial row"):
         publish_report(client=client, database_id="db", payload=_payload([deep]))
+
+
+def test_required_first_level_block_id_raises_when_role_index_is_missing() -> None:
+    append_tree_result = vars(notion_publish)["_AppendTreeResult"]
+    required_first_level_block_id = vars(notion_publish)["_required_first_level_block_id"]
+
+    with pytest.raises(PromptDiaryError, match="Evidence Chains heading"):
+        required_first_level_block_id(
+            append_tree_result(first_level_block_ids=("blk-1",)),
+            index=1,
+            role="Evidence Chains heading",
+        )
+
+
+def test_required_first_level_block_id_raises_when_role_id_is_empty() -> None:
+    append_tree_result = vars(notion_publish)["_AppendTreeResult"]
+    required_first_level_block_id = vars(notion_publish)["_required_first_level_block_id"]
+
+    with pytest.raises(PromptDiaryError, match="table of contents block"):
+        required_first_level_block_id(
+            append_tree_result(first_level_block_ids=("",)),
+            index=0,
+            role="table of contents block",
+        )
 
 
 def test_publish_wraps_a_retrieve_or_create_failure_with_an_actionable_message() -> None:

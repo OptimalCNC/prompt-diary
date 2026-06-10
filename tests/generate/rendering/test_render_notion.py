@@ -101,7 +101,7 @@ def _children_of(toggle: dict[str, Any]) -> list[dict[str, Any]]:
 def _doc_with_section(section: Section) -> Document:
     """A minimal layout Document wrapping one section, for renderer unit tests."""
     return Document(
-        "Prompt Diary Report — 2026-05-28",
+        "Renderer Escaping Review",
         {"status": "final", "window": "w", "overall_confidence": "high", "report_date": "d"},
         (section,),
     )
@@ -140,10 +140,10 @@ def test_render_notion_writes_payload_to_workspace_root(tmp_path: Path) -> None:
 def test_render_notion_title_and_properties(tmp_path: Path) -> None:
     payload, _ = _render_basic(tmp_path)
 
-    assert payload["title"] == "Prompt Diary Report — 2026-05-28"
+    assert payload["title"] == "Evidence Tools and QA Strategy"
     assert payload["properties"] == {
         # ``report_date`` is added to the layout properties for the Notion Date column; the Markdown
-        # header (which reads only status/window/overall_confidence) is unaffected.
+        # renderer may also show it in its standalone file heading.
         "report_date": "2026-05-28",
         "status": "final",
         # The window range uses an en dash (U+2013), built here as an escape (as in test_layout).

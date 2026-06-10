@@ -61,7 +61,7 @@ def test_render_report_writes_report_md_to_workspace_root(tmp_path: Path) -> Non
 
     assert path.name == "report.md"
     assert path.parent == path.parent  # path is under the workspace root
-    assert text.startswith("# Prompt Diary Report — 2026-05-28\n")
+    assert text.startswith("# Evidence Tools and QA Strategy — 2026-05-28\n")
 
 
 # --- header -----------------------------------------------------------------------------------
@@ -70,12 +70,24 @@ def test_render_report_writes_report_md_to_workspace_root(tmp_path: Path) -> Non
 def test_render_header_status_window_confidence_line(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
-    assert "# Prompt Diary Report — 2026-05-28" in text
+    assert "# Evidence Tools and QA Strategy — 2026-05-28" in text
     assert (
         "Status: final · "
         "Window: 2026-05-28T00:00:00+08:00\u20132026-05-29T00:00:00+08:00, Asia/Shanghai · "
         "Overall confidence: medium"
     ) in text
+
+
+def test_render_header_omits_date_when_document_has_no_report_date() -> None:
+    text = render_markdown(
+        Document(
+            title="Evidence Tools and QA Strategy",
+            properties={"status": "final"},
+            children=(),
+        )
+    )
+
+    assert text.startswith("# Evidence Tools and QA Strategy\n")
 
 
 def test_render_does_not_emit_executive_summary(tmp_path: Path) -> None:
@@ -145,6 +157,7 @@ def test_render_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path)
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
+        "report_title": {"text": "Blocked Dependency Review", "citations": [citation]},
         "overall_confidence": "high",
         "projects": [
             {
@@ -395,8 +408,13 @@ def test_render_markdown_is_pure_function_of_layout(tmp_path: Path) -> None:
 def _doc_with_section(section: Section) -> Document:
     """A minimal layout Document wrapping one section, for renderer-escaping unit tests."""
     return Document(
-        "Prompt Diary Report — 2026-05-28",
-        {"status": "final", "window": "w", "overall_confidence": "high"},
+        "Renderer Escaping Review",
+        {
+            "report_date": "2026-05-28",
+            "status": "final",
+            "window": "w",
+            "overall_confidence": "high",
+        },
         (section,),
     )
 
@@ -612,6 +630,7 @@ def _two_project_report() -> dict[str, Any]:
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
+        "report_title": {"text": "Cross Project Delivery", "citations": [citation("alpha-key")]},
         "overall_confidence": "high",
         "projects": [
             project("alpha-key", "Alpha", "Alpha outcome."),

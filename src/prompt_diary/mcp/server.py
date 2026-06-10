@@ -13,6 +13,7 @@ from prompt_diary.generate.daily_synthesis.mcp import write_engagement as write_
 from prompt_diary.generate.daily_synthesis.mcp import (
     write_project_summary as write_project_summary_api,
 )
+from prompt_diary.generate.daily_synthesis.mcp import write_report_title as write_report_title_api
 from prompt_diary.generate.daily_synthesis.mcp import (
     write_team_learning as write_team_learning_api,
 )
@@ -80,6 +81,14 @@ def write_project_summary(
     )
 
 
+def write_report_title(title: dict[str, object]) -> object:
+    """Validate and patch the daily-report title slot from the resolved workspace."""
+    return write_report_title_api(
+        workspace_path=_resolve_workspace(),
+        title=title,
+    )
+
+
 def write_engagement(
     overall_reading: dict[str, object],
     observations: list[object],
@@ -138,6 +147,7 @@ def build_mcp_server() -> FastMCP[None]:
     server.tool()(write_evidence)
     server.tool()(write_work_item)
     server.tool()(write_project_summary)
+    server.tool()(write_report_title)
     server.tool()(write_engagement)
     server.tool()(write_team_learning)
     server.tool()(read_session_lines)

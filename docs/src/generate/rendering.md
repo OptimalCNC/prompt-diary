@@ -60,9 +60,9 @@ Blocks (engine-independent presentation primitives):
 Layout (all sections below are designed):
 
 ```text
-Document  "Prompt Diary Report — {report_date}"
+Document  "{report_title.text}"
   properties: status{final|partial} · window{start–end, tz} · overall_confidence{high|medium|low}
-  needs: report_date, status, window, overall_confidence
+  needs: report_title, report_date, status, window, overall_confidence
 
 Section "Work by Project" — the day's brief and outcomes, grouped by project then work item
   Group per project (ordered by significance)
@@ -219,7 +219,9 @@ not the source of truth for the report's structure or evidence model.
 
 Block → Markdown:
 
-- `Document` → `# {title}` followed by a status / window / overall-confidence line.
+- `Document` → `# {title} — {report_date}` followed by a status / window / overall-confidence line.
+  Markdown is a standalone file, so it includes the date in the H1 even though the semantic title
+  text omits it.
 - `Section` → a `##` heading; nested sections deepen to `###`.
 - `Group` → a `###` subheading carrying the label.
 - `Prose` → a paragraph; an inline `Citation` is appended.
@@ -261,7 +263,8 @@ also regenerates it from `daily-report.json` immediately before publishing.
 Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
 
 - `Document` → the page: its title, plus a `properties` map (report_date, status, window, overall
-  confidence) the publisher maps to database columns.
+  confidence) the publisher maps to database columns. The Notion page title omits `report_date`
+  because database date properties carry it.
 - `Section` → a `heading_2`; a `Group` that is a direct section child (a project, an
   engagement/team-learning dimension) → a `heading_3`.
 - `Group` that is a list item (a work item) → a native **`toggle`** whose label carries the

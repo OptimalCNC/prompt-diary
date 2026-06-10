@@ -13,6 +13,7 @@ from prompt_diary.generate.prompts import (
     project_summary_prompt,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
+    report_title_prompt,
     team_learning_prompt,
 )
 
@@ -40,6 +41,9 @@ WorkItemsOption = Annotated[
 SourceUserMessagesOption = Annotated[
     str, typer.Option(help="Rendered source_user_messages for template substitution.")
 ]
+ReportContextOption = Annotated[
+    str, typer.Option(help="Rendered report-title context for template substitution.")
+]
 
 
 def register(app: typer.Typer) -> None:
@@ -50,6 +54,7 @@ def register(app: typer.Typer) -> None:
     prompts_app.command(name="project-synthesizer")(prompts_project_synthesizer)
     prompts_app.command(name="project-synthesizer-next")(prompts_project_synthesizer_next)
     prompts_app.command(name="project-summary")(prompts_project_summary)
+    prompts_app.command(name="report-title")(prompts_report_title)
     prompts_app.command(name="engagement")(prompts_engagement)
     prompts_app.command(name="team-learning")(prompts_team_learning)
     app.add_typer(prompts_app, name="prompts")
@@ -133,6 +138,14 @@ def prompts_project_summary(
             work_items=work_items,
         )
     )
+
+
+def prompts_report_title(
+    *,
+    context: ReportContextOption = "<REPORT_TITLE_CONTEXT>",
+) -> None:
+    """Print the report-title prompt."""
+    typer.echo(report_title_prompt(context=context))
 
 
 def prompts_engagement(

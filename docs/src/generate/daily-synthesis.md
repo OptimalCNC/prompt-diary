@@ -46,15 +46,15 @@ versus deterministically built.
 The concrete `daily-report.json` schema is **frozen** below — it is the union of the abstract
 layout's `needs`. `synthesize` fields (see [Field Provenance](#field-provenance)) are written by the
 agent passes; every other field is built deterministically by code. The phase writes one
-`daily-report.json`: code lays down the deterministic skeleton with the three `synthesize` slots set
-to `null`, each pass patches its own slot through its validating tool, and a finalize step fills
+`daily-report.json`: code lays down the deterministic skeleton with the `synthesize` slots set to
+`null`, each pass patches its own slot through its validating tool, and a finalize step fills
 `overall_confidence` and validates the whole document (see [AI Synthesis Workflow](#ai-synthesis-workflow)).
 
 Citations are stored **resolved** as `{project_key, session_ref, turn_ref, lines}`, where `lines` is
 the cited indexed turn's line range (for example `"2-8"`); the report citation format `S0001:2-8` is
 `session_ref:lines`, scoped to its project. Session refs are assigned per project, so every stored
 citation carries `project_key` to stay unambiguous across projects. The per-project summary pass
-submits `{session_ref, turn_ref}` (its project is the tool argument); the cross-project engagement
+submits `{session_ref, turn_ref}` (its project is the tool argument); the report-title, engagement,
 and team-learning passes submit `{project_key, session_ref, turn_ref}`. The tools resolve every
 citation to its line range via the session index and reject any turn that is not a committed
 (evidence-bearing) turn of its project — a turn covered only by an evidence-gap item carries no
@@ -66,6 +66,7 @@ evidence and cannot ground a claim.
   "report_date": "2026-05-28",
   "status": "final",
   "window": {"start": "2026-05-28T00:00:00+08:00", "end": "2026-05-29T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+  "report_title": {"text": "Evidence Tools and QA Strategy", "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]},
   "overall_confidence": "high",
   "projects": [{
     "project_key": "ReportGenerator-e6ff7eeda632",
@@ -101,11 +102,12 @@ evidence and cannot ground a claim.
 
 Field shapes follow the [Field Provenance](#field-provenance) tables. Notes on the schema:
 
-- `summary` (per project), `engagement_assessment`, and `team_learning` are `null` in the skeleton
-  and filled by their passes. Finalize requires `summary` non-null for any project with work items,
-  and requires `engagement_assessment` / `team_learning` non-null when the report has any work item;
-  an empty report (no work items) leaves the judgment sections `null`, and they render as
-  `Empty(fallback)`.
+- `summary` (per project), `report_title`, `engagement_assessment`, and `team_learning` are `null`
+  in the skeleton and filled by their passes when there is reportable work. Finalize requires
+  `report_title` and `summary` non-null for any report/project with work items, and requires
+  `engagement_assessment` / `team_learning` non-null when the report has any work item; an empty
+  report uses deterministic `report_title.text` of `No Supported Work Evidence`, leaves the
+  judgment sections `null`, and renders them as `Empty(fallback)`.
 - `disposition` is set only for `material_work_item`s (one of `completed` / `blocked` / `interrupted`
   / `failed` / `clarification`); minor kinds (`no_material_work_item`, `evidence_gap_item`,
   `excluded_with_reason`) carry `null` and fold into "Minor activity".
@@ -119,6 +121,8 @@ Field shapes follow the [Field Provenance](#field-provenance) tables. Notes on t
 - The per-project `summary` carries `text` + `citations` only — its confidence is implicit in the
   work items it rolls up, each of which shows its own `confidence`. `overall_reading` and `takeaways`
   carry their own `confidence` because they are standalone judgments.
+- `report_title.text` is generated title content and must not include the report date; renderers own
+  date presentation through `report_date` metadata.
 - `overall_confidence` is `high` / `medium` / `low` for a report with work items; for an empty report
   (no work items, judgment sections `null`) it is `null` — there are no per-claim confidences to roll
   up — and the header renders it as not applicable.
@@ -157,6 +161,7 @@ AI synthesis workflow.
 | ordering · material/Minor split | `kind` + sort rule | derive |
 | `Citation` | `outcomes[]` / `terminal_states[]` `evidence_refs` → lines via the session index | resolve |
 | project `summary` | the project's work items | **synthesize** |
+| report `title` | project summaries + material work-item outcomes | **synthesize** |
 
 **Engagement Assessment**
 
@@ -217,7 +222,8 @@ Notion (rendering consumes the model afterwards — see [Rendering](./rendering.
 
 1. **Build (code).** Assemble every deterministic field from `project-synthesis.json` and the evidence
    cards, with no AI: the header (`report_date` / `status` / `window`), all of **Work by Project**
-   except the project `summary`.
+   except the project `summary`. If there is no reportable work, seed the deterministic
+   `report_title` value `No Supported Work Evidence`.
 2. **Synthesize (agent passes).** Fill the remaining `synthesize` fields through the validating tools
    below.
 3. **Finalize (code).** Derive `overall_confidence` as a roll-up over the per-claim confidences
@@ -242,12 +248,15 @@ Each pass reads only its substrate and writes only its fields:
 | Pass | × | Reads | Writes (through its tool) |
 | --- | --- | --- | --- |
 | **Per-project summary** | N_projects | one project's work items | `projects[p].summary {text, citations}` |
+| **Report title** | 1 | report metadata + project summaries + material work-item outcome context | `report_title {text, citations}` |
 | **Engagement** | 1 | all work items + their `source_user_messages` | `overall_reading`, `observations[]`, `limits[]` |
 | **Team Learning** | 1 | all work-item arcs + `source_user_messages` | `takeaways`, `patterns[]`, `limits[]` |
 
 Per-project is the project-synthesis pattern one level up — an aggregate within a project, blind to
-other projects. Engagement and Team Learning are whole-report aggregates because their judgments span
-work items (engagement is per-person; team-learning recurrence is cross-item).
+other projects. The report-title pass runs after project summaries so its context is compact and
+already synthesized; it does not read raw user messages. Engagement and Team Learning are
+whole-report aggregates because their judgments span work items (engagement is per-person;
+team-learning recurrence is cross-item).
 
 ### Tool contracts
 
@@ -259,6 +268,9 @@ and resolved to line ranges via the session index, so a citation that does not r
 - **`write_project_summary(project_key, summary)`** — `summary: {text, citations}`. Rejects an empty
   `text`, empty `citations`, a citation that names a turn with no committed evidence in this project,
   or a citation whose submitted `project_key` names a different project.
+- **`write_report_title(title)`** — `title: {text, citations}`. Rejects an empty, multiline,
+  date-bearing, generic, or uncited title. Citations must name `project_key` because the title is a
+  whole-report field.
 - **`write_engagement(overall_reading, observations, limits)`** — `overall_reading: {text, citations,
   confidence}`, `observations: [{dimension, statement, citations, confidence} …]`, `limits: [str …]`.
   Rejects an empty `overall_reading.text`, any uncited `overall_reading` or observation, or a
@@ -279,5 +291,6 @@ server, which today exposes `prompt_diary_ping`, `read_session_lines`, `write_ev
 
 Each pass has its own focused, view-agnostic prompt under `src/prompt_diary/generate/prompts/`, loaded
 at runtime by the orchestrator: [Project Summary Prompt](./project-summary-prompt.md),
-[Engagement Prompt](./engagement-prompt.md), and [Team Learning Prompt](./team-learning-prompt.md).
-These replace the single pre-redesign `daily-synthesizer` prompt.
+[Report Title Prompt](./report-title-prompt.md), [Engagement Prompt](./engagement-prompt.md), and
+[Team Learning Prompt](./team-learning-prompt.md). These replace the single pre-redesign
+`daily-synthesizer` prompt.

@@ -6,6 +6,9 @@ item with :func:`parse_work_item`, and renders the readable strings the passes n
 
 - the per-project summary pass receives one project's ``project.json`` text and a rendering of that
   project's work items;
+- the report-title pass receives compact report metadata, project summaries, material work-item
+  titles, outcomes, terminal states, limits, and citation handles from the partially synthesized
+  ``daily-report.json``;
 - the engagement and team-learning passes receive ALL projects' work items, each labelled with its
   ``project_key`` (session refs repeat across projects, so a cross-project citation must name the
   project), and every project's ``source_user_messages``, each labelled with its project, turn, and
@@ -41,8 +44,10 @@ if TYPE_CHECKING:
 __all__ = [
     "ProjectSummaryInputs",
     "ReportInputs",
+    "ReportTitleInputs",
     "build_project_summary_inputs",
     "build_report_inputs",
+    "build_report_title_inputs",
 ]
 
 _EMPTY_WORK_ITEMS = "(No synthesized work items for this project.)"
@@ -67,6 +72,13 @@ class ReportInputs:
     source_user_messages: str
 
 
+@dataclass(frozen=True)
+class ReportTitleInputs:
+    """Rendered-ready compact context for the whole-report title pass."""
+
+    context: str
+
+
 def build_project_summary_inputs(*, workspace_path: Path, project_key: str) -> ProjectSummaryInputs:
     """Build the summary pass inputs for one project from its envelope."""
     workspace = load_prepared_workspace(workspace_path)
@@ -78,6 +90,18 @@ def build_project_summary_inputs(*, workspace_path: Path, project_key: str) -> P
         project_json=_normalized_json(project_dir / "project.json"),
         work_items=_render_project_work_items(work_items),
     )
+
+
+def build_report_title_inputs(*, workspace_path: Path) -> ReportTitleInputs:
+    """Build compact title-pass context from the partially synthesized daily report."""
+    report = _read_daily_report(workspace_path)
+    lines = [
+        f"report_date: {_as_str(report.get('report_date'))}",
+        f"status: {_as_str(report.get('status'))}",
+    ]
+    for project in _as_list(report.get("projects")):
+        lines.extend(_render_title_project(_as_mapping(project)))
+    return ReportTitleInputs(context="\n".join(lines))
 
 
 def build_report_inputs(*, workspace_path: Path) -> ReportInputs:
@@ -147,6 +171,68 @@ def _render_messages(entry: object, project_key: str) -> str:
     return f"{header}\n{body}"
 
 
+def _render_title_project(project: dict[str, Any]) -> list[str]:
+    project_key = _as_str(project.get("project_key"))
+    project_label = _as_str(project.get("project_label"))
+    lines = ["", f"project: {project_key}", f"label: {project_label}"]
+    summary = _as_mapping(project.get("summary"))
+    if summary:
+        lines.append(f"summary: {_as_str(summary.get('text'))}")
+        lines.extend(_render_cite_handles(summary.get("citations")))
+    for item in _as_list(project.get("work_items")):
+        item_lines = _render_title_work_item(_as_mapping(item), project_key)
+        if item_lines:
+            lines.extend(item_lines)
+    return lines
+
+
+def _render_title_work_item(item: dict[str, Any], project_key: str) -> list[str]:
+    if item.get("kind") != "material_work_item":
+        return []
+    lines = [
+        f"work_item: {project_key} · {_as_str(item.get('work_item_ref'))}",
+        f"title: {_as_str(item.get('title'))}",
+        f"disposition: {_as_str(item.get('disposition'))}",
+        f"confidence: {_as_str(item.get('confidence'))}",
+    ]
+    outcomes = _as_list(item.get("outcomes"))
+    if outcomes:
+        lines.append("outcomes:")
+        for outcome in outcomes:
+            outcome_mapping = _as_mapping(outcome)
+            lines.append(
+                "- "
+                f"{_as_str(outcome_mapping.get('what_changed'))} "
+                f"(confidence: {_as_str(outcome_mapping.get('confidence'))})"
+            )
+            lines.extend(_render_cite_handles(outcome_mapping.get("citations")))
+    else:
+        terminal_states = _as_list(item.get("terminal_states"))
+        if terminal_states:
+            lines.append("terminal states:")
+            for state in terminal_states:
+                state_mapping = _as_mapping(state)
+                lines.append(f"- {_as_str(state_mapping.get('summary'))}")
+                lines.extend(_render_cite_handles(state_mapping.get("citations")))
+    limits = _as_list(item.get("limits"))
+    if limits:
+        lines.append("limits:")
+        lines.extend(f"- {limit}" for limit in limits if isinstance(limit, str))
+    return lines
+
+
+def _render_cite_handles(value: object) -> list[str]:
+    handles: list[str] = []
+    for citation in _as_list(value):
+        mapping = _as_mapping(citation)
+        project_key = _as_str(mapping.get("project_key"))
+        session_ref = _as_str(mapping.get("session_ref"))
+        turn_ref = _as_str(mapping.get("turn_ref"))
+        if project_key and session_ref and turn_ref:
+            handles.append(f"cite: {project_key}/{session_ref}/{turn_ref}")
+    return handles
+
+
 def _render_turns(turns: tuple[Any, ...]) -> str:
     return ", ".join(f"{ref.session_ref}/{ref.turn_ref}" for ref in turns)
 
@@ -168,6 +254,12 @@ def _read_envelope(workspace_path: Path, project_key: str) -> dict[str, Any]:
     path = workspace_path / "projects" / project_key / "project-synthesis.json"
     if not path.exists():  # pragma: no cover - a synthesized project always has an envelope
         return {}
+    raw: object = json.loads(path.read_text(encoding="utf-8"))
+    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+
+
+def _read_daily_report(workspace_path: Path) -> dict[str, Any]:
+    path = workspace_path / "daily-report.json"
     raw: object = json.loads(path.read_text(encoding="utf-8"))
     return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
 

@@ -3,8 +3,8 @@
 Finalize reads the post-pass ``daily-report.json``, rolls the per-claim confidences of the material
 work items and the two judgment sections into ``overall_confidence``, validates that a report with
 work items has its synthesize slots filled and that every stored citation is well shaped, and on
-success writes the finalized report. A missing required slot or a malformed citation is rejected
-without writing.
+success writes the finalized report. A missing required title/slot or a malformed citation is
+rejected without writing.
 """
 
 from __future__ import annotations
@@ -94,6 +94,7 @@ def _report_with_items(work_items: list[dict[str, Any]]) -> dict[str, Any]:
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "a", "end": "b", "timezone": "Asia/Shanghai"},
+        "report_title": {"text": "Blocked Dependency Review", "citations": [_citation()]},
         "overall_confidence": None,
         "projects": [
             {
@@ -265,6 +266,7 @@ def test_finalize_rejects_unfilled_slots(tmp_path: Path) -> None:
     assert payload["status"] == "invalid"
     paths = [error["path"] for error in payload["errors"]]
     # Finalize uses the project list index in projects[...] paths, not the project_key.
+    assert "report_title" in paths
     assert "projects[0].summary" in paths
     assert "engagement_assessment" in paths
     assert "team_learning" in paths
@@ -284,6 +286,32 @@ def test_finalize_rejects_missing_engagement_only(tmp_path: Path) -> None:
     assert payload["status"] == "invalid"
     paths = [error["path"] for error in payload["errors"]]
     assert paths == ["engagement_assessment"]
+
+
+def test_finalize_rejects_missing_report_title_only(tmp_path: Path) -> None:
+    workspace = _built_and_filled(tmp_path)
+    report = load_daily_report(workspace)
+    report["report_title"] = None
+
+    _write_report(workspace, report)
+    result = finalize_daily_report_via_api(workspace)
+
+    payload = finalize_result_to_dict(result)
+    assert payload["status"] == "invalid"
+    assert [error["path"] for error in payload["errors"]] == ["report_title"]
+
+
+def test_finalize_rejects_uncited_report_title(tmp_path: Path) -> None:
+    workspace = _built_and_filled(tmp_path)
+    report = load_daily_report(workspace)
+    report["report_title"]["citations"] = []
+
+    _write_report(workspace, report)
+    result = finalize_daily_report_via_api(workspace)
+
+    payload = finalize_result_to_dict(result)
+    assert payload["status"] == "invalid"
+    assert [error["path"] for error in payload["errors"]] == ["report_title.citations"]
 
 
 def test_finalize_rejects_missing_team_learning_only(tmp_path: Path) -> None:
@@ -520,6 +548,10 @@ def test_finalize_empty_report_is_valid_with_null_confidence(tmp_path: Path) -> 
     assert finalize_result_to_dict(result) == {"status": "finalized", "overall_confidence": None}
     report = load_daily_report(workspace)
     assert report["overall_confidence"] is None
+    assert report["report_title"] == {
+        "text": "No Supported Work Evidence",
+        "citations": [],
+    }
     assert report["engagement_assessment"] is None
     assert report["team_learning"] is None
 
@@ -532,6 +564,7 @@ def test_finalize_empty_report_does_not_require_judgment_slots(tmp_path: Path) -
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "a", "end": "b", "timezone": "Asia/Shanghai"},
+        "report_title": {"text": "No Supported Work Evidence", "citations": []},
         "overall_confidence": None,
         "projects": [
             {
@@ -565,6 +598,10 @@ def test_finalize_gap_only_project_does_not_require_summary(tmp_path: Path) -> N
     assert finalize_result_to_dict(result) == {"status": "finalized", "overall_confidence": None}
     report = load_daily_report(workspace)
     assert report["projects"][0]["summary"] is None
+    assert report["report_title"] == {
+        "text": "No Supported Work Evidence",
+        "citations": [],
+    }
     assert report["engagement_assessment"] is None
     assert report["team_learning"] is None
 

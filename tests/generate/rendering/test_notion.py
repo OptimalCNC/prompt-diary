@@ -125,7 +125,7 @@ def test_render_workspace_report_to_notion_regenerates_payload_before_publishing
 
     create = next(call for call in client.calls if call[0] == "create")
     title = create[2]["Name"]["title"][0]["text"]["content"]
-    assert title == "Prompt Diary Report — 2026-05-28"
+    assert title == "Evidence Tools and QA Strategy"
     assert stale.read_text(encoding="utf-8") != '{"title": "stale"}\n'
     assert result.artifact_path == stale
     assert result.page_id == "page-1"

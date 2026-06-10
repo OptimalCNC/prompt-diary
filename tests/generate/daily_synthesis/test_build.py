@@ -3,8 +3,8 @@
 Build assembles every deterministic field of ``daily-report.json`` from the prepared workspace and
 the per-project ``project-synthesis.json`` envelopes — the header and all of Work by Project except
 the per-project ``summary`` — and seeds the three synthesize slots (per-project ``summary``,
-``engagement_assessment``, ``team_learning``) as ``null``. It writes the skeleton to the workspace
-root and returns it.
+``report_title``, ``engagement_assessment``, ``team_learning``) as ``null``. It writes the skeleton
+to the workspace root and returns it.
 """
 
 from __future__ import annotations
@@ -87,9 +87,21 @@ def test_build_header_lifts_metadata(tmp_path: Path) -> None:
 def test_build_seeds_synthesize_slots_null(tmp_path: Path) -> None:
     report = _build(tmp_path)
 
+    assert report["report_title"] is None
     assert _project(report)["summary"] is None
     assert report["engagement_assessment"] is None
     assert report["team_learning"] is None
+
+
+def test_build_empty_report_seeds_deterministic_title(tmp_path: Path) -> None:
+    workspace = empty_daily_workspace(tmp_path)
+
+    report = build_daily_report_via_api(workspace)
+
+    assert report["report_title"] == {
+        "text": "No Supported Work Evidence",
+        "citations": [],
+    }
 
 
 def test_build_writes_rereadable_report(tmp_path: Path) -> None:

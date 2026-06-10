@@ -14,12 +14,15 @@ from tests.support.daily_synthesis import (
 from tests.support.daily_synthesis import (
     assert_engagement_written,
     assert_project_summary_written,
+    assert_report_title_written,
     assert_team_learning_written,
     call_write_project_summary_api,
+    call_write_report_title_api,
     copy_basic_daily_workspace,
     seed_daily_report_skeleton,
     valid_engagement,
     valid_project_summary,
+    valid_report_title,
     valid_team_learning,
 )
 from tests.support.daily_synthesis import (
@@ -330,6 +333,57 @@ def test_write_project_summary_mcp_invalid_result_matches_api_shape(
 
     assert mcp_result == daily_result_to_dict(api_result)
     assert_daily_invalid(mcp_result, path="summary.text")
+
+
+def test_write_report_title_is_registered_by_mcp_server() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+
+    assert "write_report_title" in [tool.name for tool in tools]
+
+
+def test_write_report_title_mcp_input_shape_contains_contract_fields() -> None:
+    server = mcp_server.build_mcp_server()
+    tools = asyncio.run(server.list_tools())
+    write_tool = next(tool for tool in tools if tool.name == "write_report_title")
+
+    properties = write_tool.inputSchema["properties"]
+    assert {"title"} <= set(properties)
+    assert {"title"} <= set(write_tool.inputSchema["required"])
+
+
+def test_write_report_title_mcp_success_returns_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    seed_daily_report_skeleton(workspace)
+    monkeypatch.chdir(workspace)
+    server = mcp_server.build_mcp_server()
+
+    result = asyncio.run(
+        _call_mcp_tool(server, "write_report_title", {"title": valid_report_title()})
+    )
+
+    assert_report_title_written(result)
+
+
+def test_write_report_title_mcp_invalid_result_matches_api_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_workspace = copy_basic_daily_workspace(tmp_path / "api")
+    mcp_workspace = copy_basic_daily_workspace(tmp_path / "mcp")
+    seed_daily_report_skeleton(api_workspace)
+    seed_daily_report_skeleton(mcp_workspace)
+    invalid = valid_report_title()
+    invalid["text"] = "Prompt Diary Report"
+    api_result = call_write_report_title_api(workspace_path=api_workspace, title=invalid)
+    monkeypatch.chdir(mcp_workspace)
+    server = mcp_server.build_mcp_server()
+
+    mcp_result = asyncio.run(_call_mcp_tool(server, "write_report_title", {"title": invalid}))
+
+    assert mcp_result == daily_result_to_dict(api_result)
+    assert_daily_invalid(mcp_result, path="title.text")
 
 
 def test_write_engagement_is_registered_by_mcp_server() -> None:
