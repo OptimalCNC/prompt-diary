@@ -7,9 +7,9 @@ finalized ``daily-report.json``, builds the layout, renders it, and atomically w
 to the workspace root.
 
 The renderer only reads model strings carried by the layout blocks — it never reaches back to the
-report, the evidence cards, or the work items, and it synthesizes no prose of its own. The "no new
+report or the work items, and it synthesizes no prose of its own. The "no new
 claims" guarantee is therefore structural: a block's text is rendered as-is, a citation is formatted
-from its stored ``session_ref``/``lines``, and verbatim user messages are quoted and escaped as
+from its stored ``session_ref``/``turn_ref``, and verbatim user messages are quoted and escaped as
 untrusted display content, never interpreted.
 
 Every model-derived display string is session-derived and therefore a prompt-injection surface:
@@ -20,7 +20,7 @@ verbatim user messages — through one escaper: it HTML-escapes, backslash-escap
 punctuation, and neutralizes a leading ``#`` so none of that activates. Single-block strings
 (headings, prose) additionally collapse embedded newlines so one model string cannot open a second
 block; callout text keeps its newlines because every callout line is re-prefixed with ``>``. Only
-renderer-controlled tokens (the resolved ``session_ref``/``lines``, the controlled disposition /
+renderer-controlled tokens (the resolved ``session_ref``/``turn_ref``, the controlled disposition /
 confidence tags, the status / window / overall-confidence metadata, and the fixed Empty fallbacks)
 stay on the plain HTML-escape — they cannot carry free model text.
 """
@@ -36,6 +36,7 @@ from prompt_diary.generate.rendering.layout import (
     Citation,
     Document,
     Empty,
+    EvidenceChainEntry,
     Group,
     ListBlock,
     Prose,
@@ -43,6 +44,7 @@ from prompt_diary.generate.rendering.layout import (
     Tag,
     Toggle,
     build_layout,
+    load_evidence_appendix,
 )
 
 if TYPE_CHECKING:
@@ -67,7 +69,8 @@ _MARKDOWN_PUNCTUATION = ("`", "*", "_", "[", "]", "(", ")", "!")
 def render_report(*, workspace_path: Path) -> Path:
     """Render the workspace's ``daily-report.json`` to ``report.md`` and return the written path."""
     report = _load_json(workspace_path / _REPORT_NAME)
-    text = render_markdown(build_layout(report))
+    evidence_chains = load_evidence_appendix(workspace_path=workspace_path, report=report)
+    text = render_markdown(build_layout(report, evidence_chains=evidence_chains))
     return _write_atomic(workspace_path / _OUTPUT_NAME, text)
 
 
@@ -103,6 +106,8 @@ def _render_block(block: Block, *, level: int) -> list[str]:
         return _render_callout(block)
     if isinstance(block, Empty):
         return [f"- {_escape(block.fallback)}"]
+    if isinstance(block, EvidenceChainEntry):
+        return _render_evidence_entry(block, level=level)
     # ``Tag`` and ``Citation`` never render standalone: a Tag rides on its Group heading and a
     # Citation is appended to its Prose, so this branch is unreachable for a well-formed layout.
     return []  # pragma: no cover
@@ -164,6 +169,21 @@ def _render_toggle(block: Toggle, *, level: int) -> list[str]:
     return lines
 
 
+def _render_evidence_entry(block: EvidenceChainEntry, *, level: int) -> list[str]:
+    del level
+    label = _escape(_ref_label(block.session_ref, block.turn_ref))
+    lines: list[str] = [f'<details id="{block.anchor}">', f"<summary>{label}</summary>", ""]
+    lines.extend(f"- {_prose_line(item)}" for item in block.items)
+    if block.messages:
+        lines.append("")
+        for index, message in enumerate(block.messages):
+            if index:
+                lines.append("")
+            lines.extend(_render_callout(message))
+    lines.extend(("", "</details>"))
+    return lines
+
+
 def _render_callout(block: Callout) -> list[str]:
     # Every callout carries model-derived text — a verbatim user message ("quote") or session
     # derived model prose such as a work-item limit. Both are Markdown-neutralized (HTML-escape +
@@ -178,10 +198,11 @@ def _render_callout(block: Callout) -> list[str]:
 def _escape(text: str) -> str:
     """HTML-escape a string so any embedded ``&``/``<``/``>`` renders as literal text.
 
-    The base escape for the renderer-controlled tokens — the resolved ``session_ref``/``lines``, the
-    controlled disposition / confidence tags, the status / window / overall-confidence metadata, and
-    the fixed Empty fallbacks — so embedded HTML such as ``</details>`` cannot prematurely close a
-    toggle or otherwise break the report structure. Free model text instead goes through
+    The base escape for the renderer-controlled tokens — the resolved ``session_ref`` /
+    ``turn_ref``, the controlled disposition / confidence tags, the status / window /
+    overall-confidence metadata, and the fixed Empty fallbacks — so embedded HTML such as
+    ``</details>`` cannot prematurely close a toggle or otherwise break the report structure. Free
+    model text instead goes through
     :func:`_escape_markdown` / :func:`_escape_inline`, which build on this. The renderer's own
     Markdown punctuation is added around the escaped string, never escaped.
     """
@@ -236,17 +257,26 @@ def _prose_line(block: Prose) -> str:
 
 
 def _citation_text(citation: Citation) -> str:
-    return "[" + "; ".join(_ref_text(ref) for ref in citation.refs) + "]"
+    return "; ".join(_ref_text(ref) for ref in citation.refs)
 
 
 def _ref_text(ref: dict[str, Any]) -> str:
-    # ``session_ref``/``lines`` are resolver-produced tokens (e.g. ``S0001``, ``2-8``), so the plain
-    # HTML-escape suffices. The scoped ``project_label`` is a model-derived string, so it is
-    # Markdown-neutralized like any other display label.
-    body = f"{_escape(_ref_str(ref, 'session_ref'))}:{_escape(_ref_str(ref, 'lines'))}"
+    # ``session_ref``/``turn_ref`` are resolver-produced tokens (e.g. ``S0001``, ``T0001``), so
+    # the plain HTML-escape suffices. The scoped ``project_label`` is a model-derived string, so it
+    # is Markdown-neutralized like any other display label.
+    body = _ref_label(_ref_str(ref, "session_ref"), _ref_str(ref, "turn_ref"))
     if ref.get("scoped"):
-        return f"{_escape_inline(_ref_str(ref, 'project_label'))} · {body}"
-    return body
+        body = f"{_escape_inline(_ref_str(ref, 'project_label'))} · {_escape(body)}"
+    else:
+        body = _escape(body)
+    anchor = _ref_str(ref, "anchor")
+    if anchor:
+        return f"[{body}](#{anchor})"
+    return f"[{body}]"
+
+
+def _ref_label(session_ref: str, turn_ref: str) -> str:
+    return f"{session_ref}/{turn_ref}" if turn_ref else session_ref
 
 
 def _ref_str(ref: dict[str, Any], key: str) -> str:

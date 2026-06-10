@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from prompt_diary.generate.rendering.layout import (
     Callout,
     Document,
+    EvidenceChainEntry,
     Group,
     ListBlock,
     Prose,
@@ -93,8 +94,12 @@ def test_render_work_by_project_group_and_summary(tmp_path: Path) -> None:
     assert "### ReportGenerator" in text
     # The project summary joins its two citations, unscoped (project implied by the section).
     assert (
-        "Simplified the evidence tools and designed the QA approach. [S0001:2-8; S0002:2-6]"
+        "Simplified the evidence tools and designed the QA approach. "
+        "[S0001/T0001](#evidence-reportgenerator-e6ff7eeda632-s0001-t0001); "
+        "[S0002/T0001](#evidence-reportgenerator-e6ff7eeda632-s0002-t0001)"
     ) in text
+    assert "S0001:2-8" not in text
+    assert "S0002:2-6" not in text
 
 
 def test_render_work_item_heading_with_tags_and_unscoped_outcome(tmp_path: Path) -> None:
@@ -106,7 +111,7 @@ def test_render_work_item_heading_with_tags_and_unscoped_outcome(tmp_path: Path)
     # as a tag (it may differ from the work item's), before the citation.
     assert (
         "- Top-level turn\\_ref adopted; chain\\_ref removed from the evidence surface. "
-        "· high [S0001:2-8]"
+        "· high [S0001/T0001](#evidence-reportgenerator-e6ff7eeda632-s0001-t0001)"
     ) in text
 
 
@@ -174,7 +179,7 @@ def test_render_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path)
 
     assert "#### Blocked item — blocked · high" in text
     # The terminal-state summary renders as the bullet claim, carrying its unscoped citation.
-    assert "- Blocked on a missing dependency. [S0001:2-8]" in text
+    assert "- Blocked on a missing dependency. [S0001/T0001]" in text
 
 
 def test_render_minor_activity_toggle(tmp_path: Path) -> None:
@@ -208,14 +213,16 @@ def test_render_engagement_section(tmp_path: Path) -> None:
     # line as ``· medium`` before the scoped citation (it is not left unhedged).
     assert (
         "The user framed concrete goals and approved results. "
-        "· medium [ReportGenerator · S0001:2-8]"
+        "· medium [ReportGenerator · S0001/T0001]"
+        "(#evidence-reportgenerator-e6ff7eeda632-s0001-t0001)"
     ) in text
     assert "### Direction" in text
     # The observation carries its own confidence inline, before the scoped citation; the intraword
     # ``_`` in chain_ref is Markdown-neutralized to ``chain\_ref``.
     assert (
         "- Asked to simplify the evidence tools and drop chain\\_ref. "
-        "· medium [ReportGenerator · S0001:2-8]" in text
+        "· medium [ReportGenerator · S0001/T0001]"
+        "(#evidence-reportgenerator-e6ff7eeda632-s0001-t0001)" in text
     )
     # The agent-named limit and the standing limit are distinct blockquote paragraphs (``> a\n>\n>
     # b``), not fused into one run-on line.
@@ -233,8 +240,9 @@ def test_render_team_learning_section(tmp_path: Path) -> None:
     assert "## Team Learning" in text
     # The takeaways is a standalone judgment, so its own confidence renders inline on the lead line.
     assert (
-        "Capturing a reusable QA approach is worth promoting. · low [ReportGenerator · S0002:2-6]"
-        in text
+        "Capturing a reusable QA approach is worth promoting. "
+        "· low [ReportGenerator · S0002/T0001]"
+        "(#evidence-reportgenerator-e6ff7eeda632-s0002-t0001)" in text
     )
     assert "### Reuse" in text
     # The pattern renders statement — rationale · recurrence · confidence · citation, all lifted.
@@ -242,7 +250,8 @@ def test_render_team_learning_section(tmp_path: Path) -> None:
         "- A three-layer QA strategy was written down as a repeatable approach. "
         "— A reusable checklist lowers the attention cost of future QA work. "
         "· recurrence: single sighting; likely to recur for future test design "
-        "· low [ReportGenerator · S0002:2-6]"
+        "· low [ReportGenerator · S0002/T0001]"
+        "(#evidence-reportgenerator-e6ff7eeda632-s0002-t0001)"
     ) in text
 
 
@@ -257,6 +266,68 @@ def test_render_empty_report_renders_three_fallbacks(tmp_path: Path) -> None:
     assert "- No supported reusable agent-driving pattern found." in text
     assert "No supported work claims found for this report window." not in text
     assert "Overall confidence: n/a" in text
+    assert "## Evidence Chains" not in text
+
+
+def test_render_evidence_appendix_has_anchors_and_structured_summaries(tmp_path: Path) -> None:
+    _, text, _ = _render_basic(tmp_path)
+
+    assert "## Evidence Chains" in text
+    assert "### ReportGenerator" in text
+    assert "#### S0001" not in text
+    assert '<details id="evidence-reportgenerator-e6ff7eeda632-s0001-t0001">' in text
+    assert "<summary>S0001/T0001</summary>" in text
+    assert (
+        "- Trigger: User asked to simplify the MCP evidence tools and remove chain\\_ref." in text
+    )
+    assert (
+        "- Agent reactions: Updated the MCP tools page, evidence contract, and extractor prompt."
+        in text
+    )
+    assert "- Outcomes: Top-level turn\\_ref adopted; chain\\_ref removed." in text
+    assert "- Observed checks: None recorded." in text
+    assert (
+        "- Terminal state: material\\_result: Extraction surface updated to turn\\_ref identity."
+        in text
+    )
+    assert "- Materiality: material" in text
+    assert "> Please simplify the MCP evidence tools and drop chain\\_ref." in text
+    assert "lines" not in text
+
+
+def test_render_evidence_appendix_separates_multiple_raw_messages(tmp_path: Path) -> None:
+    del tmp_path
+    entry = EvidenceChainEntry(
+        project_key="k",
+        session_ref="S0001",
+        turn_ref="T0001",
+        target={"project_key": "k", "session_ref": "S0001", "turn_ref": "T0001"},
+        anchor="evidence-k-s0001-t0001",
+        items=(Prose("Trigger: two-message evidence card"),),
+        messages=(Callout("quote", "first message"), Callout("quote", "second message")),
+    )
+    document = _doc_with_section(Section("Evidence Chains", (Group("Proj", (entry,)),)))
+
+    text = render_markdown(document)
+
+    assert "> first message\n\n> second message" in text
+
+
+def test_render_omits_missing_evidence_entries_without_inventing_content(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    build_daily_report_via_api(workspace)
+    fill_synthesize_slots(workspace)
+    finalize_daily_report_via_api(workspace)
+    (workspace / "projects" / "ReportGenerator-e6ff7eeda632" / "evidence" / "S0002.json").unlink()
+
+    text = render_report(workspace_path=workspace).read_text(encoding="utf-8")
+
+    assert "[S0001/T0001](#evidence-reportgenerator-e6ff7eeda632-s0001-t0001)" in text
+    assert "[S0002/T0001](#evidence-reportgenerator-e6ff7eeda632-s0002-t0001)" not in text
+    assert "[S0002/T0001]" in text
+    appendix = text.split("## Evidence Chains", maxsplit=1)[1]
+    assert "User asked to design the evidence-extraction QA approach." not in appendix
+    assert 'id="evidence-reportgenerator-e6ff7eeda632-s0002-t0001"' not in text
 
 
 # --- no new claims ----------------------------------------------------------------------------
@@ -494,9 +565,9 @@ def test_render_work_item_limit_markdown_is_neutralized(tmp_path: Path) -> None:
 def _two_project_report() -> dict[str, Any]:
     """A minimal finalized report spanning two projects with the same session ref in each.
 
-    Both projects use ``S0001:2-8`` so the only thing that disambiguates a cross-project citation is
-    its project label. Work-by-Project citations are unscoped (project implied by the group), while
-    Engagement / Team Learning citations are scoped with the project label.
+    Both projects use ``S0001/T0001`` so the only thing that disambiguates a cross-project citation
+    is its project label. Work-by-Project citations are unscoped (project implied by the group),
+    while Engagement / Team Learning citations are scoped with the project label.
     """
 
     def citation(project_key: str) -> dict[str, str]:
@@ -600,21 +671,21 @@ def _two_project_report() -> dict[str, Any]:
 def test_render_cross_project_citations_scoped_with_distinct_labels(tmp_path: Path) -> None:
     del tmp_path
     # The only test that exercises scoping with >1 project: both projects share the session ref
-    # S0001:2-8, so a cross-project citation is only unambiguous because it carries its own project
-    # label, while a Work-by-Project citation under a project group stays unscoped.
+    # S0001/T0001, so a cross-project citation is only unambiguous because it carries its own
+    # project label, while a Work-by-Project citation under a project group stays unscoped.
     text = render_markdown(build_layout(_two_project_report()))
 
     # Engagement observations: scoped, distinct labels per project.
-    assert "- Alpha direction. · high [Alpha · S0001:2-8]" in text
-    assert "- Beta review. · high [Beta · S0001:2-8]" in text
+    assert "- Alpha direction. · high [Alpha · S0001/T0001]" in text
+    assert "- Beta review. · high [Beta · S0001/T0001]" in text
     # Team Learning patterns: scoped, distinct labels per project.
     assert (
         "Alpha pattern. — Alpha rationale. · recurrence: Alpha recurrence. "
-        "· high [Alpha · S0001:2-8]"
+        "· high [Alpha · S0001/T0001]"
     ) in text
     assert (
-        "Beta pattern. — Beta rationale. · recurrence: Beta recurrence. · high [Beta · S0001:2-8]"
+        "Beta pattern. — Beta rationale. · recurrence: Beta recurrence. · high [Beta · S0001/T0001]"
     ) in text
     # Work by Project: citations under each project group are unscoped (no label, no " · " prefix).
-    assert "- Alpha outcome. · high [S0001:2-8]" in text
-    assert "- Beta outcome. · high [S0001:2-8]" in text
+    assert "- Alpha outcome. · high [S0001/T0001]" in text
+    assert "- Beta outcome. · high [S0001/T0001]" in text

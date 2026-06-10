@@ -10,8 +10,10 @@ nothing is added. Because rendering is deterministic, the "no new claims" guaran
 not a rule the synthesizer must remember.
 
 Rendering reads `daily-report.json` from the prepared workspace root and writes its outputs beside
-it. It does not read sessions, evidence cards, or work items; an output that reads those, or
-introduces content absent from the model, is a rendering bug.
+it. It may also read prepared evidence cards under `projects/*/evidence/<session_ref>.json` to
+render the evidence appendix and link citations to the matching evidence-card toggle. It does not
+read raw sessions or project-synthesis work items; an output that reads those, or introduces
+claim-bearing content absent from the model or evidence cards, is a rendering bug.
 
 Rendering turns `daily-report.json` into its outputs through an intermediate, engine-independent
 **abstract layout**:
@@ -25,9 +27,9 @@ The abstract layout is the single source of truth for the report's *structure* �
 their order, and the blocks inside them — written without any engine's syntax. Each engine renderer
 walks the layout and serializes its blocks into that engine's constructs, degrading gracefully where
 an engine lacks one. Rendering stays deterministic and adds no judgment: every claim, citation,
-confidence value, and evidence-quality signal in a view comes from the model through the layout. A
-view that reads sessions, evidence cards, or work items, or introduces content absent from the
-model, is a rendering bug.
+confidence value, and evidence-quality signal in a view comes from the model or the renderer-loaded
+evidence appendix through the layout. A view that reads raw sessions or work items, or introduces
+claim-bearing content absent from the model or evidence cards, is a rendering bug.
 
 Each block also declares the model data it consumes (`needs:`). Those needs are the layout's claim
 on the contract — the union of every `needs` is what `daily-report.json` must carry — so settling
@@ -48,11 +50,12 @@ Blocks (engine-independent presentation primitives):
   group-by, and filter-by keys. Rows bind to a model collection.
 - `Tag(value, scale)` — one controlled value from a named scale (materiality, disposition,
   confidence, type); the key that filtering and sorting use.
-- `Citation(refs)` — one or more evidence references resolving to `{session, lines}`.
+- `Citation(refs)` — one or more evidence references resolving to `{session, turn}`.
 - `Callout(tone)` — set-apart emphasis for limits, warnings, or gaps.
 - `Toggle(label)` — a collapsible region for top-level records or renderer-specific folding;
   renderers may degrade nested labels to plain content when that better fits the target engine.
 - `Empty(fallback)` — explicit empty-state when a section's data is absent.
+- `EvidenceChainEntry(target)` — one evidence-chain appendix card addressable by citations.
 
 Layout (all sections below are designed):
 
@@ -121,6 +124,21 @@ Section "Team Learning" — reusable, promotable, and avoidable patterns in how 
          judged from each work item's arc — trigger → corrections (covered_turns / source_user_messages)
            → agent_reaction → outcomes / terminal_states — reading message quality in context;
            seeded by process_outcome (reuse), repeated failed/blocked + non-converging loops (avoid)
+
+Section "Evidence Chains" — rendered only when prepared evidence cards contain committed chains
+  Group per project
+    EvidenceChainEntry {session_ref}/{turn_ref} — citation target for that cited turn
+      List(bullet)
+        Trigger: trigger.summary
+        Agent reactions: agent_reactions[].summary, or "None recorded."
+        Outcomes: outcomes[].summary, or "None recorded."
+        Observed checks: observed_checks[].summary, or "None recorded."
+        Terminal state: terminal_state.type + terminal_state.summary
+        Materiality: materiality
+      Quote blocks: trigger.quoted_messages[].text
+  needs: evidence/<session_ref>.json → { evidence_chains[] → {turn_ref, trigger.summary,
+         agent_reactions[].summary, outcomes[].summary, observed_checks[].summary,
+         terminal_state.{type, summary}, materiality, trigger.quoted_messages[].text} }
 
 rule: any Section whose data is empty renders as Empty(fallback)
 ```
@@ -210,18 +228,24 @@ Block → Markdown:
   the layout's default sort (material first), group-by renders as a leading column or repeated
   sub-tables, and filtering is left to the reader's text search.
 - `Tag` → plain text, optionally a marker such as ● material / ○ non-material.
-- `Citation` → `S0001:45-52`, the project-scoped session ref and line range.
+- `Citation` → `[S0001/T0001](#evidence-...)`, the project-scoped session/turn ref linked to the
+  evidence appendix when that target exists. Cross-project citations include the project label:
+  `[Project · S0001/T0001](#evidence-...)`. When an evidence card is missing, the citation degrades
+  to unlinked `[S0001/T0001]` rather than inventing an appendix entry.
 - `Callout` → a blockquote.
 - `Toggle` → a `<details><summary>` block (HTML-in-Markdown), collapsed by default.
+- `EvidenceChainEntry` → an anchored collapsed details entry labeled by `S0001/T0001`, with
+  structured summary bullets and raw quoted user messages inside. Raw evidence-card line spans are
+  not rendered.
 - `Empty` → the section's fallback bullet:
   - Work by Project: `- No supported project-level work items found for this report window.`
   - Engagement Assessment: `- Insufficient supported engagement evidence for this report window.`
   - Team Learning: `- No supported reusable agent-driving pattern found.`
 
-Every concrete work claim in a claim-bearing section cites lines inside exactly one indexed turn
-using the report citation format from the
-[Evidence Contract](./evidence-contract.md#session-evidence-cards). The renderer must not add
-claim-bearing prose absent from `daily-report.json`.
+Every concrete work claim in a claim-bearing section cites exactly one indexed turn using the report
+citation format from the [Evidence Contract](./evidence-contract.md#session-evidence-cards). The
+renderer must not add claim-bearing prose absent from `daily-report.json` or the structured evidence
+appendix fields.
 
 ## Notion Rendering
 
@@ -245,19 +269,27 @@ Block → Notion (the idiomatic mapping, not 1:1 with Markdown):
   Notion form for a titled cluster in a list.
 - `Prose` → a `paragraph`, or a `bulleted_list_item` / `numbered_list_item` inside a list; its
   confidence tags and `Citation` ride in the same rich text.
-- `Citation` → an inline-`code` run (e.g. `ReportGenerator · S0001:2-8`), never a link — workspace
-  session references have no Notion URL.
+- `Citation` → plain rich text carrying internal link-target metadata in `report.notion.json`
+  (e.g. `ReportGenerator · S0001/T0001` as the unlinked fallback label). The pure renderer does not
+  know Notion block ids; the publisher resolves those targets after appending evidence-card toggles
+  and sends native Notion evidence-block mentions where the API accepts them. If Notion rejects the
+  native mention shape, the publisher falls back to normal rich-text links to the same
+  evidence-card toggle URL.
 - `Toggle` → a colored label callout followed by its children; only work-item `Group` list items
   become native Notion toggles. Work-item subsections (`Context and Response`, `User Messages`,
   `Outcomes`, and limits) are separated by divider blocks. `Callout` tone `quote` (a verbatim user
   message) → a `quote` block, tone `limit` → a `callout` block with a warning icon; `Empty` → the
   Markdown view's fallback text.
+- `Evidence Chains` → a toggleable `heading_1` in the deterministic artifact. Project labels render
+  as `heading_2`, and individual evidence cards render as compact toggles labeled by `S0001/T0001`
+  with internal target metadata, structured summary bullets, and raw quoted user messages inside.
 
 Safety is structural: every model-derived string is placed only in a plain rich-text `text.content`
-(never a `link` or other interpreted field), and Notion stores content literally, so no escaping is
-needed and a session-derived string cannot forge structure. Notion's content limits are honored in
-the payload (each `text.content` ≤ 2000 chars; each block's rich-text array ≤ 100 runs, truncating a
-pathologically long single string with a fixed marker).
+(never a model-provided `link` or other interpreted field), and Notion stores content literally, so
+no escaping is needed and a session-derived string cannot forge structure. Citation links are
+publisher-generated URLs to renderer-owned evidence blocks, not model-provided URLs. Notion's
+content limits are honored in the payload (each `text.content` ≤ 2000 chars; each block's rich-text
+array ≤ 100 runs, truncating a pathologically long single string with a fixed marker).
 
 ## Publishing
 
@@ -288,9 +320,21 @@ reports fall back to append batches that still respect ≤100 top-level children
 elements per request, inlining leaf-only children and recursing only when returned block ids are
 needed for deeper descendants.
 
-The previously open questions are resolved: citations render as inline code (no link); a run always
-appends a new page (never in place); `partial` versus `final` `status` shows in the color-coded
-metadata banner (and in the `status` column if the database has one); and the `汇报人` reporter is a
-configured free-form name (like `git config user.name`, not a Notion user) written into a text
-column. Deferred: find-or-create of the target database, and database-schema introspection beyond
-property-type matching.
+When the Notion artifact contains linked citations, the publisher cannot use the create-with-body
+fast path because citation links need evidence toggle block ids. It uses an anchor-first
+publish path instead: create the report page without children, append the metadata banner and table
+of contents, append the `Evidence Chains` heading section while capturing evidence toggle block ids,
+hydrate citation rich-text runs into native evidence-block mentions, and insert the main report body
+after the table of contents and before the evidence appendix with Notion's `after` insertion
+parameter. Internal metadata keys are stripped before any block is sent to Notion. If the pinned
+Notion API rejects native evidence-block mentions, the publisher falls back to normal rich-text links
+to the same evidence toggle URLs with a warning. If Notion rejects insertion with `after`, the
+publisher falls back to unlinked Notion citations with a warning rather than issuing one update
+request per citation.
+
+The previously open questions are resolved: Notion citations link to evidence-card toggles when
+possible; a run always appends a new page (never in place); `partial` versus `final` `status` shows
+in the color-coded metadata banner (and in the `status` column if the database has one); and the
+`汇报人` reporter is a configured free-form name (like `git config user.name`, not a Notion user)
+written into a text column. Deferred: find-or-create of the target database, and database-schema
+introspection beyond property-type matching.

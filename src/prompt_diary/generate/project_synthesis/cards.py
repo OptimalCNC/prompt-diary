@@ -39,6 +39,7 @@ class CommittedChain:
     trigger_summary: str
     reaction_summaries: tuple[str, ...]
     outcomes: tuple[CommittedOutcome, ...]
+    observed_check_summaries: tuple[str, ...]
     terminal_type: str
     terminal_summary: str
     messages: tuple[str, ...]
@@ -97,6 +98,10 @@ def _committed_chain(session_ref: str, raw: dict[str, Any]) -> CommittedChain:
                 summary=_as_str(_as_mapping(item).get("summary")),
             )
             for item in _as_list(raw.get("outcomes"))
+        ),
+        observed_check_summaries=tuple(
+            _as_str(_as_mapping(item).get("summary"))
+            for item in _as_list(raw.get("observed_checks"))
         ),
         terminal_type=_as_str(terminal.get("type")),
         terminal_summary=_as_str(terminal.get("summary")),

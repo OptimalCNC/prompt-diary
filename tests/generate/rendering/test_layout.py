@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+import prompt_diary.generate.rendering.layout as layout_module
 from prompt_diary.generate.rendering.layout import (
     Callout,
     Document,
     Empty,
+    EvidenceChainEntry,
     Group,
     ListBlock,
     Prose,
@@ -25,6 +27,7 @@ from prompt_diary.generate.rendering.layout import (
     Tag,
     Toggle,
     build_layout,
+    load_evidence_appendix,
 )
 from tests.support.daily_synthesis import (
     PROJECT_LABEL,
@@ -48,6 +51,14 @@ def _finalized_report(tmp_path: Path) -> dict[str, Any]:
     fill_synthesize_slots(workspace)
     finalize_daily_report_via_api(workspace)
     return load_daily_report(workspace)
+
+
+def _finalized_workspace(tmp_path: Path) -> Path:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    build_daily_report_via_api(workspace)
+    fill_synthesize_slots(workspace)
+    finalize_daily_report_via_api(workspace)
+    return workspace
 
 
 def _empty_report(tmp_path: Path) -> dict[str, Any]:
@@ -149,6 +160,8 @@ def test_layout_project_summary_prose_unscoped(tmp_path: Path) -> None:
     # Within a project group, citations are unscoped (project implied by the enclosing group).
     assert [ref["scoped"] for ref in summary.citation.refs] == [False, False]
     assert [ref["session_ref"] for ref in summary.citation.refs] == ["S0001", "S0002"]
+    assert [ref["turn_ref"] for ref in summary.citation.refs] == ["T0001", "T0001"]
+    assert all("lines" not in ref for ref in summary.citation.refs)
 
 
 def test_layout_material_work_items_first(tmp_path: Path) -> None:
@@ -276,7 +289,8 @@ def test_layout_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path)
     assert terminal_claim.text == "Blocked on a missing dependency."
     assert terminal_claim.citation is not None
     assert [ref["scoped"] for ref in terminal_claim.citation.refs] == [False]
-    assert terminal_claim.citation.refs[0]["lines"] == "2-8"
+    assert terminal_claim.citation.refs[0]["turn_ref"] == "T0001"
+    assert "lines" not in terminal_claim.citation.refs[0]
     # A terminal state has no per-claim confidence, so (unlike an outcome) it shows no such tag.
     assert terminal_claim.tags == ()
 
@@ -407,3 +421,164 @@ def test_layout_empty_report_overall_confidence_not_applicable(tmp_path: Path) -
     document = build_layout(_empty_report(tmp_path))
 
     assert document.properties["overall_confidence"] == "n/a"
+
+
+# --- evidence appendix ------------------------------------------------------------------------
+
+
+def test_layout_evidence_appendix_groups_cards_by_project_then_direct_entries(
+    tmp_path: Path,
+) -> None:
+    workspace = _finalized_workspace(tmp_path)
+    evidence = load_evidence_appendix(workspace_path=workspace, report=load_daily_report(workspace))
+
+    document = build_layout(load_daily_report(workspace), evidence_chains=evidence)
+
+    assert [section.title for section in document.children] == [
+        "Work by Project",
+        "Engagement Assessment",
+        "Team Learning",
+        "Evidence Chains",
+    ]
+    appendix = _section(document, "Evidence Chains")
+    project = _groups(appendix)[0]
+    assert project.label == "ReportGenerator"
+    entries = [child for child in project.children if isinstance(child, EvidenceChainEntry)]
+    assert [(entry.session_ref, entry.turn_ref) for entry in entries] == [
+        ("S0001", "T0001"),
+        ("S0001", "T0002"),
+        ("S0002", "T0001"),
+    ]
+    first = entries[0]
+    assert first.project_key == "ReportGenerator-e6ff7eeda632"
+    assert first.target == {
+        "project_key": "ReportGenerator-e6ff7eeda632",
+        "session_ref": "S0001",
+        "turn_ref": "T0001",
+    }
+    assert first.anchor == "evidence-reportgenerator-e6ff7eeda632-s0001-t0001"
+    assert [item.text for item in first.items] == [
+        "Trigger: User asked to simplify the MCP evidence tools and remove chain_ref.",
+        "Agent reactions: Updated the MCP tools page, evidence contract, and extractor prompt.",
+        "Outcomes: Top-level turn_ref adopted; chain_ref removed.",
+        "Observed checks: None recorded.",
+        "Terminal state: material_result: Extraction surface updated to turn_ref identity.",
+        "Materiality: material",
+    ]
+    assert [(message.tone, message.text) for message in first.messages] == [
+        ("quote", "Please simplify the MCP evidence tools and drop chain_ref.")
+    ]
+
+
+def test_layout_evidence_appendix_omits_projects_without_loaded_cards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _finalized_workspace(tmp_path)
+
+    def no_chains(workspace_path: Path, project_key: str) -> tuple[Any, ...]:
+        del workspace_path, project_key
+        return ()
+
+    monkeypatch.setattr(layout_module, "load_committed_chains", no_chains)
+
+    assert (
+        load_evidence_appendix(workspace_path=workspace, report=load_daily_report(workspace)) == ()
+    )
+
+
+def test_layout_evidence_appendix_accepts_list_summaries_and_non_sequence_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = _finalized_workspace(tmp_path)
+
+    class _Outcome:
+        summary = "Outcome from fake chain."
+
+    class _Chain:
+        def __init__(self) -> None:
+            self.session_ref = "S9999"
+            self.turn_ref = "T0009"
+            self.materiality = "material"
+            self.trigger_summary = "Trigger from fake chain."
+            self.reaction_summaries = ["Reaction from fake chain."]
+            self.outcomes = [_Outcome()]
+            self.observed_check_summaries = object()
+            self.terminal_type = "material_result"
+            self.terminal_summary = "Terminal from fake chain."
+            self.messages = ["Raw user message from fake chain."]
+
+    def fake_chains(workspace_path: Path, project_key: str) -> tuple[_Chain, ...]:
+        del workspace_path, project_key
+        return (_Chain(),)
+
+    monkeypatch.setattr(layout_module, "load_committed_chains", fake_chains)
+
+    appendix = load_evidence_appendix(workspace_path=workspace, report=load_daily_report(workspace))
+    entry = appendix[0].children[0]
+    assert isinstance(entry, EvidenceChainEntry)
+    assert entry.project_key == "ReportGenerator-e6ff7eeda632"
+    assert entry.target == {
+        "project_key": "ReportGenerator-e6ff7eeda632",
+        "session_ref": "S9999",
+        "turn_ref": "T0009",
+    }
+    assert entry.anchor == "evidence-reportgenerator-e6ff7eeda632-s9999-t0009"
+    assert [item.text for item in entry.items] == [
+        "Trigger: Trigger from fake chain.",
+        "Agent reactions: Reaction from fake chain.",
+        "Outcomes: Outcome from fake chain.",
+        "Observed checks: None recorded.",
+        "Terminal state: material_result: Terminal from fake chain.",
+        "Materiality: material",
+    ]
+    assert [(message.tone, message.text) for message in entry.messages] == [
+        ("quote", "Raw user message from fake chain.")
+    ]
+
+
+def test_layout_ignores_non_evidence_entries_when_collecting_appendix_anchors(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+    document = build_layout(
+        _no_outcome_material_report(),
+        evidence_chains=(Group("Proj", (Prose("not a session group"),)),),
+    )
+    group = _groups(_section(document, "Work by Project"))[0]
+    item = _lists(group.children)[0].items[0]
+    assert isinstance(item, Group)
+    terminal_claim = _prose(_lists(item.children)[0].items)[0]
+
+    assert terminal_claim.citation is not None
+    assert terminal_claim.citation.refs[0]["anchor"] == ""
+
+
+def test_layout_citation_refs_target_evidence_entries_while_retaining_scoped_display(
+    tmp_path: Path,
+) -> None:
+    workspace = _finalized_workspace(tmp_path)
+    report = load_daily_report(workspace)
+    evidence = load_evidence_appendix(workspace_path=workspace, report=report)
+
+    document = build_layout(report, evidence_chains=evidence)
+    group = _groups(_section(document, "Work by Project"))[0]
+    summary = _prose(group.children)[0]
+
+    assert summary.citation is not None
+    assert [ref["turn_ref"] for ref in summary.citation.refs] == ["T0001", "T0001"]
+    assert [ref["anchor"] for ref in summary.citation.refs] == [
+        "evidence-reportgenerator-e6ff7eeda632-s0001-t0001",
+        "evidence-reportgenerator-e6ff7eeda632-s0002-t0001",
+    ]
+    assert [ref["target"] for ref in summary.citation.refs] == [
+        {
+            "project_key": "ReportGenerator-e6ff7eeda632",
+            "session_ref": "S0001",
+            "turn_ref": "T0001",
+        },
+        {
+            "project_key": "ReportGenerator-e6ff7eeda632",
+            "session_ref": "S0002",
+            "turn_ref": "T0001",
+        },
+    ]

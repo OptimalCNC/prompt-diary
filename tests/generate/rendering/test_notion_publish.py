@@ -60,10 +60,25 @@ class _FakeNotionClient:
     ) -> dict[str, Any]:
         self.calls.append(("create", parent, properties, children or []))
         self.counter += 1
-        return {"id": "page-1", "url": "https://notion.so/page-x"}
+        return {"id": f"page-{self.counter}", "url": f"https://notion.so/page-{self.counter}"}
 
-    def append_children(self, *, block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:
-        self.calls.append(("append", block_id, children))
+    def append_children(
+        self,
+        *,
+        block_id: str,
+        children: list[dict[str, Any]],
+        after: str | None = None,
+    ) -> dict[str, Any]:
+        return self._append_children(block_id=block_id, children=children, after=after)
+
+    def _append_children(
+        self,
+        *,
+        block_id: str,
+        children: list[dict[str, Any]],
+        after: str | None,
+    ) -> dict[str, Any]:
+        self.calls.append(("append", block_id, children, after))
         results: list[dict[str, Any]] = []
         for child in children:
             self.counter += 1
@@ -116,6 +131,18 @@ def _appends(client: _FakeNotionClient) -> list[tuple[str, list[dict[str, Any]]]
     return [(call[1], call[2]) for call in client.calls if call[0] == "append"]
 
 
+def _creates(
+    client: _FakeNotionClient,
+) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
+    return [(call[1], call[2], call[3]) for call in client.calls if call[0] == "create"]
+
+
+def _appends_with_after(
+    client: _FakeNotionClient,
+) -> list[tuple[str, list[dict[str, Any]], str | None]]:
+    return [(call[1], call[2], call[3]) for call in client.calls if call[0] == "append"]
+
+
 def _created_body(client: _FakeNotionClient) -> list[dict[str, Any]]:
     create = next(call for call in client.calls if call[0] == "create")
     return cast("list[dict[str, Any]]", create[3])
@@ -134,6 +161,7 @@ def _appended_text(client: _FakeNotionClient) -> str:
         for children in [_created_body(client), *[children for _, children in _appends(client)]]
         for block in _iter_request_blocks(children)
         for run in block[block["type"]].get("rich_text", [])
+        if run["type"] == "text"
     )
 
 
@@ -151,6 +179,47 @@ def _request_children(block: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _request_block_count(blocks: list[dict[str, Any]]) -> int:
     return sum(1 + _request_block_count(_request_children(block)) for block in blocks)
+
+
+def _all_request_runs(blocks: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    for block in _iter_request_blocks(blocks):
+        yield from block[block["type"]].get("rich_text", [])
+
+
+def _internal_link_target() -> dict[str, str]:
+    return {"project_key": "k", "session_ref": "S0001", "turn_ref": "T0001"}
+
+
+def _linked_run(text: str, target: dict[str, str]) -> dict[str, Any]:
+    return {
+        "type": "text",
+        "text": {"content": text},
+        "_prompt_diary_link_target": target,
+    }
+
+
+def _evidence_toggle(
+    target: dict[str, str], children: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    block = _toggle(f"{target['session_ref']}/{target['turn_ref']}", children or [])
+    block["_prompt_diary_evidence_target"] = target
+    return block
+
+
+def _evidence_appendix(target: dict[str, str]) -> dict[str, Any]:
+    block = _heading("Evidence Chains", level=1)
+    block["heading_1"]["is_toggleable"] = True
+    block["heading_1"]["children"] = [
+        _heading("Project K", level=2),
+        _evidence_toggle(target, [_para("Trigger: User asked for the linked work.")]),
+    ]
+    block["_prompt_diary_evidence_appendix"] = True
+    return block
+
+
+def _heading(text: str, *, level: int = 3) -> dict[str, Any]:
+    block_type = f"heading_{level}"
+    return {"object": "block", "type": block_type, block_type: {"rich_text": [_run(text)]}}
 
 
 def _assert_append_request_limits(client: _FakeNotionClient) -> None:
@@ -372,7 +441,7 @@ def test_publish_returns_created_page_id_and_url() -> None:
     result = publish_report(client=client, database_id="db", payload=_payload([]))
 
     assert result.page_id == "page-1"
-    assert result.url == "https://notion.so/page-x"
+    assert result.url == "https://notion.so/page-1"
 
 
 # --- request shaping (depth + breadth limits) --------------------------------------------------
@@ -406,6 +475,243 @@ def test_publish_uses_two_level_requests_without_losing_deep_child_ids() -> None
     assert inner["toggle"]["children"] == [_para("deep leaf")]
     assert "deep leaf" in _appended_text(client)
     assert len(appends) == 2
+
+
+def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix() -> None:
+    client = _FakeNotionClient(_schema())
+    target = _internal_link_target()
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+    payload = _payload([claim, _evidence_appendix(target)])
+
+    publish_report(client=client, database_id="db", payload=payload)
+
+    assert _created_body(client) == []
+    creates = _creates(client)
+    assert len(creates) == 1
+    appends = _appends_with_after(client)
+    assert len(appends) == 4
+    assert appends[0][0] == "page-1"
+    assert appends[0][2] is None
+    assert [block["type"] for block in appends[0][1]] == ["callout", "table_of_contents"]
+    assert appends[1][0] == "page-1"
+    assert [block["type"] for block in appends[1][1]] == ["heading_1"]
+    assert appends[2][0] == "blk-4"
+    assert [block["type"] for block in appends[2][1]] == ["heading_2", "toggle"]
+    assert appends[3][0] == "page-1"
+    assert appends[3][2] == "blk-3"
+    start_body = appends[3][1]
+    assert [block["type"] for block in start_body] == ["paragraph"]
+    linked = next(run for run in _all_request_runs(start_body) if run["type"] == "mention")
+    assert linked == {
+        "type": "mention",
+        "mention": {"type": "page", "page": {"id": "blk-6"}},
+    }
+    for _, children, _ in appends:
+        for block in _iter_request_blocks(children):
+            assert "_prompt_diary_evidence_appendix" not in block
+            assert "_prompt_diary_evidence_target" not in block
+        for run in _all_request_runs(children):
+            assert "_prompt_diary_link_target" not in run
+
+
+def test_publish_linked_citations_without_appendix_warn_and_publish_unlinked() -> None:
+    client = _FakeNotionClient(_schema())
+    target = _internal_link_target()
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+
+    result = publish_report(client=client, database_id="db", payload=_payload([claim]))
+
+    assert any("evidence appendix" in warning for warning in result.warnings)
+    assert _created_body(client) == []
+    appended = _appends_with_after(client)[0][1]
+    citation = next(
+        run for run in _all_request_runs(appended) if run["text"]["content"] == "S0001/T0001"
+    )
+    assert "link" not in citation["text"]
+
+
+def test_publish_linked_citations_warn_when_target_block_is_missing() -> None:
+    client = _FakeNotionClient(_schema())
+    target = _internal_link_target()
+    other_target = {"project_key": "k", "session_ref": "S0002", "turn_ref": "T0001"}
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([claim, _evidence_appendix(other_target)]),
+    )
+
+    assert any("1 Notion citation target" in warning for warning in result.warnings)
+    start_body = next(children for _, children, after in _appends_with_after(client) if after)
+    citation = next(
+        run for run in _all_request_runs(start_body) if run["text"]["content"] == "S0001/T0001"
+    )
+    assert "link" not in citation["text"]
+
+
+def test_publish_linked_citations_fall_back_when_native_block_mention_is_rejected() -> None:
+    class _RejectNativeMention(_FakeNotionClient):
+        def append_children(
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None = None,
+        ) -> dict[str, Any]:
+            if any(run["type"] == "mention" for run in _all_request_runs(children)):
+                self.calls.append(("append", block_id, children, after))
+                raise RuntimeError(_NETWORK_DOWN)
+            return super().append_children(block_id=block_id, children=children, after=after)
+
+    client = _RejectNativeMention(_schema())
+    target = _internal_link_target()
+    missing_target = {"project_key": "k", "session_ref": "S0002", "turn_ref": "T0001"}
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+    claim["paragraph"]["rich_text"].append(_run("; "))
+    claim["paragraph"]["rich_text"].append(_linked_run("S0002/T0001", missing_target))
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([claim, _evidence_appendix(target)]),
+    )
+
+    assert any("native Notion evidence block mention" in warning for warning in result.warnings)
+    assert any("1 Notion citation target" in warning for warning in result.warnings)
+    fallback_body = _appends_with_after(client)[-1][1]
+    citation = next(
+        run for run in _all_request_runs(fallback_body) if run["text"]["content"] == "S0001/T0001"
+    )
+    assert citation["text"]["link"] == {"url": "https://notion.so/page-1#blk-6"}
+    missing = next(
+        run for run in _all_request_runs(fallback_body) if run["text"]["content"] == "S0002/T0001"
+    )
+    assert "link" not in missing["text"]
+
+
+def test_publish_linked_citations_fall_back_when_after_insert_is_rejected() -> None:
+    class _RejectAfter(_FakeNotionClient):
+        def append_children(
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None = None,
+        ) -> dict[str, Any]:
+            if after is not None:
+                self.calls.append(("append", block_id, children, after))
+                raise RuntimeError(_NETWORK_DOWN)
+            return super().append_children(block_id=block_id, children=children, after=after)
+
+    client = _RejectAfter(_schema())
+    target = _internal_link_target()
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([claim, _evidence_appendix(target)]),
+    )
+
+    assert any(
+        "inserting linked report content before the evidence appendix" in warning
+        for warning in result.warnings
+    )
+    fallback_body = _appends_with_after(client)[-1][1]
+    citation = next(
+        run for run in _all_request_runs(fallback_body) if run["text"]["content"] == "S0001/T0001"
+    )
+    assert "link" not in citation["text"]
+
+
+def test_publish_linked_citations_accepts_after_response_with_following_siblings() -> None:
+    class _AfterReturnsFollowingSiblings(_FakeNotionClient):
+        def _append_children(
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None,
+        ) -> dict[str, Any]:
+            response = super()._append_children(block_id=block_id, children=children, after=after)
+            if after is not None:
+                response["results"].append({"id": "already-existing-sibling", "type": "paragraph"})
+            return response
+
+    client = _AfterReturnsFollowingSiblings(_schema())
+    target = _internal_link_target()
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([claim, _evidence_appendix(target)]),
+    )
+
+    assert result.warnings == ()
+    linked_body = _appends_with_after(client)[-1][1]
+    linked = next(run for run in _all_request_runs(linked_body) if run["type"] == "mention")
+    assert linked["mention"] == {"type": "page", "page": {"id": "blk-6"}}
+
+
+def test_publish_linked_citations_skips_untargeted_appendix_toggles() -> None:
+    client = _FakeNotionClient(_schema())
+    target = _internal_link_target()
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+    appendix = _evidence_appendix(target)
+    appendix["heading_1"]["children"].insert(
+        0,
+        _toggle("Untargeted evidence note", [_para("No target metadata.")]),
+    )
+
+    result = publish_report(client=client, database_id="db", payload=_payload([claim, appendix]))
+
+    assert result.warnings == ()
+    linked_body = _appends_with_after(client)[-1][1]
+    linked = next(run for run in _all_request_runs(linked_body) if run["type"] == "mention")
+    assert linked["mention"] == {"type": "page", "page": {"id": "blk-7"}}
+
+
+def test_publish_linked_citations_warn_when_evidence_toggle_result_lacks_id() -> None:
+    class _NoEvidenceToggleId(_FakeNotionClient):
+        def _append_children(
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None,
+        ) -> dict[str, Any]:
+            response = super()._append_children(block_id=block_id, children=children, after=after)
+            for child, result in zip(children, response["results"], strict=True):
+                if child["type"] == "toggle":
+                    result.pop("id", None)
+            return response
+
+    client = _NoEvidenceToggleId(_schema())
+    target = _internal_link_target()
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+
+    result = publish_report(
+        client=client,
+        database_id="db",
+        payload=_payload([claim, _evidence_appendix(target)]),
+    )
+
+    assert any("1 Notion citation target" in warning for warning in result.warnings)
+    linked_body = _appends_with_after(client)[-1][1]
+    citation = next(
+        run for run in _all_request_runs(linked_body) if run["text"]["content"] == "S0001/T0001"
+    )
+    assert "link" not in citation["text"]
 
 
 def test_publish_inlines_leaf_children_in_their_parent_append() -> None:
@@ -514,9 +820,13 @@ def test_publish_raises_when_create_returns_no_page_id() -> None:
 def test_publish_raises_when_append_result_count_mismatches() -> None:
     class _Short(_FakeNotionClient):
         def append_children(
-            self, *, block_id: str, children: list[dict[str, Any]]
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("append", block_id, children))
+            self.calls.append(("append", block_id, children, after))
             return {"results": []}  # fewer results than blocks sent
 
     client = _Short(_schema())
@@ -532,9 +842,13 @@ def test_publish_raises_when_append_result_count_mismatches() -> None:
 def test_publish_raises_when_append_result_lacks_a_block_id() -> None:
     class _NoBlockId(_FakeNotionClient):
         def append_children(
-            self, *, block_id: str, children: list[dict[str, Any]]
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("append", block_id, children))
+            self.calls.append(("append", block_id, children, after))
             return {"results": [{"type": child["type"]} for child in children]}  # ids missing
 
     client = _NoBlockId(_schema())
@@ -559,9 +873,13 @@ def test_publish_wraps_a_retrieve_or_create_failure_with_an_actionable_message()
 def test_publish_wraps_an_append_failure_with_the_created_page_location() -> None:
     class _Boom(_FakeNotionClient):
         def append_children(
-            self, *, block_id: str, children: list[dict[str, Any]]
+            self,
+            *,
+            block_id: str,
+            children: list[dict[str, Any]],
+            after: str | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("append", block_id, children))
+            self.calls.append(("append", block_id, children, after))
             raise RuntimeError(_NETWORK_DOWN)
 
     client = _Boom(_schema())
@@ -573,4 +891,4 @@ def test_publish_wraps_an_append_failure_with_the_created_page_location() -> Non
             payload=_payload([_para(f"x{index}") for index in range(150)]),
         )
     # The created page's URL is surfaced so the partial row can be found and deleted.
-    assert "https://notion.so/page-x" in str(exc_info.value)
+    assert "https://notion.so/page-1" in str(exc_info.value)

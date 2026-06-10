@@ -71,10 +71,19 @@ class NotionSDKClient:
             self._client.pages.create(**kwargs),
         )
 
-    def append_children(self, *, block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:
+    def append_children(
+        self,
+        *,
+        block_id: str,
+        children: list[dict[str, Any]],
+        after: str | None = None,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"block_id": block_id, "children": children}
+        if after is not None:
+            kwargs["after"] = after
         return cast(
             "dict[str, Any]",
-            self._client.blocks.children.append(block_id=block_id, children=children),
+            self._client.blocks.children.append(**kwargs),
         )
 
 

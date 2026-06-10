@@ -57,8 +57,14 @@ class _FakeNotionClient:
         self.calls.append(("create", parent, properties, children or []))
         return {"id": "page-1", "url": "https://notion.so/page-x"}
 
-    def append_children(self, *, block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:
-        self.calls.append(("append", block_id, children))
+    def append_children(
+        self,
+        *,
+        block_id: str,
+        children: list[dict[str, Any]],
+        after: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(("append", block_id, children, after))
         return {"results": [{"id": f"block-{index}"} for index, _ in enumerate(children)]}
 
 

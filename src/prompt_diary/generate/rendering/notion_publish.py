@@ -40,10 +40,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from prompt_diary.errors import PromptDiaryError
-from prompt_diary.generate.rendering.render_notion import NotionPagePayload
+from prompt_diary.generate.rendering.render_notion import (
+    EVIDENCE_APPENDIX_METADATA_KEY,
+    EVIDENCE_TARGET_METADATA_KEY,
+    LINK_TARGET_METADATA_KEY,
+    NotionPagePayload,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -92,7 +97,13 @@ class NotionClientProtocol(Protocol):
         """Create a page under ``parent`` with ``properties``; return it with ``id``/``url``."""
         ...
 
-    def append_children(self, *, block_id: str, children: list[dict[str, Any]]) -> dict[str, Any]:
+    def append_children(
+        self,
+        *,
+        block_id: str,
+        children: list[dict[str, Any]],
+        after: str | None = None,
+    ) -> dict[str, Any]:
         """Append ``children`` under ``block_id``; return ``{"results": [...created blocks]}``."""
         ...
 
@@ -115,6 +126,18 @@ class _AppendCandidate:
     request_block: dict[str, Any]
     pending_children: list[dict[str, Any]]
     request_block_count: int
+
+
+@dataclass(frozen=True)
+class _LinkedBody:
+    main_blocks: list[dict[str, Any]]
+    evidence_appendix: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class _EvidenceBlockLink:
+    block_id: str
+    url: str
 
 
 def publish_workspace_report(
@@ -157,12 +180,14 @@ def publish_report(
         schema = _database_properties(client, database_id)
         properties = _page_properties(schema, payload.title, report_date)
         reporter_warning = _apply_reporter(properties, schema, reporter)
-        body: list[dict[str, Any]] = [
+        rendered_body: list[dict[str, Any]] = [
             _banner_block(payload.properties),
             _table_of_contents_block(),
             *payload.children,
         ]
-        create_body = body if _can_create_with_body(body) else None
+        body = _public_blocks(rendered_body)
+        linked_body = _linked_body(rendered_body) if _has_link_targets(rendered_body) else None
+        create_body = body if linked_body is None and _can_create_with_body(body) else None
         page = client.create_page(
             parent={"database_id": database_id},
             properties=properties,
@@ -185,10 +210,16 @@ def publish_report(
     # Surface the created page's id/url in the error so it can be found and deleted (re-publishing
     # always makes a fresh row), instead of letting a raw SDK error hide which page was left behind.
     try:
-        _append_tree(client, page_id, body)
+        link_warnings = (
+            _append_linked_body(client, page_id, url, linked_body)
+            if linked_body is not None
+            else ()
+        )
+        if linked_body is None:
+            _append_tree(client, page_id, body)
     except Exception as exc:
         raise PromptDiaryError(_partial_page_message(page_id, url, exc)) from exc
-    warnings = (reporter_warning,) if reporter_warning else ()
+    warnings = tuple(warning for warning in (reporter_warning, *link_warnings) if warning)
     return PublishResult(page_id=page_id, url=url, warnings=warnings)
 
 
@@ -282,30 +313,140 @@ def _table_of_contents_block() -> dict[str, Any]:
     }
 
 
+def _append_linked_body(
+    client: NotionClientProtocol,
+    page_id: str,
+    page_url: str,
+    linked_body: _LinkedBody,
+) -> tuple[str, ...]:
+    if linked_body.evidence_appendix is None:
+        _append_tree(client, page_id, _public_blocks(linked_body.main_blocks))
+        return (_missing_evidence_appendix_message(),)
+
+    prefix_blocks, content_blocks = _split_page_prefix(linked_body.main_blocks)
+    after_id = _append_tree(client, page_id, prefix_blocks)
+    evidence_block_ids: dict[tuple[str, str, str], str] = {}
+    _append_tree(
+        client,
+        page_id,
+        [linked_body.evidence_appendix],
+        captured_targets=evidence_block_ids,
+    )
+    target_links = {
+        target: _EvidenceBlockLink(block_id=block_id, url=_block_url(page_url, block_id))
+        for target, block_id in evidence_block_ids.items()
+    }
+    missing: set[tuple[str, str, str]] = set()
+    linked_content = _public_blocks(
+        content_blocks,
+        target_links=target_links,
+        link_mode="mention",
+        missing=missing,
+    )
+    try:
+        _append_tree(client, page_id, linked_content, after=after_id)
+    except Exception:  # noqa: BLE001 - fallback for SDK/API rejection of native block mentions.
+        try:
+            _append_tree(
+                client,
+                page_id,
+                _public_blocks(
+                    content_blocks,
+                    target_links=target_links,
+                    link_mode="url",
+                    missing=missing,
+                ),
+                after=after_id,
+            )
+        except Exception:  # noqa: BLE001 - fallback for SDK/API rejection of after insertion.
+            _append_tree(client, page_id, _public_blocks(content_blocks))
+            return (_after_fallback_message(),)
+        warnings = [_native_block_mention_fallback_message()]
+        if missing:
+            warnings.append(_missing_target_message(len(missing)))
+        return tuple(warnings)
+    if missing:
+        return (_missing_target_message(len(missing)),)
+    return ()
+
+
+def _split_page_prefix(
+    blocks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return (blocks[:2], blocks[2:])
+
+
 def _append_tree(
-    client: NotionClientProtocol, parent_id: str, blocks: list[dict[str, Any]]
-) -> None:
+    client: NotionClientProtocol,
+    parent_id: str,
+    blocks: list[dict[str, Any]],
+    *,
+    after: str | None = None,
+    captured_targets: dict[tuple[str, str, str], str] | None = None,
+) -> str | None:
     # Append the block tree under ``parent_id`` with the deepest safe request shape Notion supports:
     # each request carries ≤100 top-level blocks and ≤1000 block elements overall. A block's
     # children are inlined only when every child is a leaf, because Notion returns ids only for the
     # first level appended; any child that still needs descendants appended later must be created as
     # a first-level result so we can capture its id.
     candidates = [_append_candidate(block) for block in blocks]
-    for batch in _chunked_append_candidates(candidates):
-        request_blocks = [candidate.request_block for candidate in batch]
-        response = client.append_children(block_id=parent_id, children=request_blocks)
+    batches = list(_chunked_append_candidates(candidates))
+    insert_after = after
+    last_created_id: str | None = None
+    for batch in batches:
+        request_blocks = _public_blocks([candidate.request_block for candidate in batch])
+        response = client.append_children(
+            block_id=parent_id,
+            children=request_blocks,
+            after=insert_after,
+        )
         # Notion returns one created block per appended block, in request order; the recursion
-        # below relies on both facts to graft each block's stripped children under the right new
-        # id. A short/long result is a contract violation, so fail loud rather than drop children.
-        created = _as_list(response.get("results"))
-        if len(created) != len(request_blocks):
-            raise PromptDiaryError(_append_result_count_message(len(request_blocks), len(created)))
+        # below relies on both facts to graft each block's stripped children under the right new id.
+        # When appending after an existing sibling, Notion may also return following siblings;
+        # ignore those extras but still fail if fewer created blocks than requested come back.
+        created = _created_append_results(response, request_count=len(request_blocks))
         for candidate, made in zip(batch, created, strict=True):
-            if candidate.pending_children:
-                child_id = _str(_mapping(made).get("id"))
-                if not child_id:
-                    raise PromptDiaryError(_append_missing_id_message())
-                _append_tree(client, child_id, candidate.pending_children)
+            child_id = _str(_mapping(made).get("id"))
+            if child_id:
+                last_created_id = child_id
+                target = _target_key(candidate.request_block.get(EVIDENCE_TARGET_METADATA_KEY))
+                if target is not None and captured_targets is not None:
+                    captured_targets[target] = child_id
+            _append_pending_children(
+                client,
+                candidate,
+                child_id,
+                captured_targets=captured_targets,
+            )
+        if insert_after is not None:
+            insert_after = last_created_id
+    return last_created_id
+
+
+def _created_append_results(response: dict[str, Any], *, request_count: int) -> list[Any]:
+    created = _as_list(response.get("results"))
+    if len(created) < request_count:
+        raise PromptDiaryError(_append_result_count_message(request_count, len(created)))
+    return created[:request_count]
+
+
+def _append_pending_children(
+    client: NotionClientProtocol,
+    candidate: _AppendCandidate,
+    child_id: str,
+    *,
+    captured_targets: dict[tuple[str, str, str], str] | None,
+) -> None:
+    if not candidate.pending_children:
+        return
+    if not child_id:
+        raise PromptDiaryError(_append_missing_id_message())
+    _append_tree(
+        client,
+        child_id,
+        candidate.pending_children,
+        captured_targets=captured_targets,
+    )
 
 
 def _can_create_with_body(blocks: list[dict[str, Any]]) -> bool:
@@ -373,6 +514,147 @@ def _chunked_append_candidates(
         block_count += candidate.request_block_count
     if batch:
         yield batch
+
+
+def _has_link_targets(blocks: list[dict[str, Any]]) -> bool:
+    return any(
+        LINK_TARGET_METADATA_KEY in run
+        for block in _iter_blocks(blocks)
+        for run in _rich_text_runs(block)
+    )
+
+
+def _linked_body(blocks: list[dict[str, Any]]) -> _LinkedBody:
+    appendix_index = next(
+        (
+            index
+            for index, block in enumerate(blocks)
+            if block.get(EVIDENCE_APPENDIX_METADATA_KEY) is True
+        ),
+        None,
+    )
+    if appendix_index is None:
+        return _LinkedBody(main_blocks=blocks, evidence_appendix=None)
+    return _LinkedBody(
+        main_blocks=[*blocks[:appendix_index], *blocks[appendix_index + 1 :]],
+        evidence_appendix=blocks[appendix_index],
+    )
+
+
+def _public_blocks(
+    blocks: list[dict[str, Any]],
+    *,
+    target_links: dict[tuple[str, str, str], _EvidenceBlockLink] | None = None,
+    link_mode: Literal["mention", "url"] = "mention",
+    missing: set[tuple[str, str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        _public_block(
+            block,
+            target_links=target_links,
+            link_mode=link_mode,
+            missing=missing,
+        )
+        for block in blocks
+    ]
+
+
+def _public_block(
+    block: dict[str, Any],
+    *,
+    target_links: dict[tuple[str, str, str], _EvidenceBlockLink] | None,
+    link_mode: Literal["mention", "url"],
+    missing: set[tuple[str, str, str]] | None,
+) -> dict[str, Any]:
+    block_type = _str(block.get("type"))
+    body = _mapping(block.get(block_type))
+    public = {
+        key: value
+        for key, value in block.items()
+        if key not in {EVIDENCE_APPENDIX_METADATA_KEY, EVIDENCE_TARGET_METADATA_KEY, block_type}
+    }
+    public_body: dict[str, Any] = {}
+    for key, value in body.items():
+        if key == "children":
+            public_body[key] = _public_blocks(
+                _as_list(value),
+                target_links=target_links,
+                link_mode=link_mode,
+                missing=missing,
+            )
+        elif key == "rich_text":
+            public_body[key] = [
+                _public_rich_text_run(
+                    cast("dict[str, Any]", run),
+                    target_links=target_links,
+                    link_mode=link_mode,
+                    missing=missing,
+                )
+                for run in _as_list(value)
+                if isinstance(run, dict)
+            ]
+        else:
+            public_body[key] = value
+    public[block_type] = public_body
+    return public
+
+
+def _public_rich_text_run(
+    run: dict[str, Any],
+    *,
+    target_links: dict[tuple[str, str, str], _EvidenceBlockLink] | None,
+    link_mode: Literal["mention", "url"],
+    missing: set[tuple[str, str, str]] | None,
+) -> dict[str, Any]:
+    public = {key: value for key, value in run.items() if key != LINK_TARGET_METADATA_KEY}
+    target = _target_key(run.get(LINK_TARGET_METADATA_KEY))
+    if target is None or target_links is None:
+        return public
+    link = target_links.get(target)
+    if link is None:
+        if missing is not None:
+            missing.add(target)
+        return public
+    if link_mode == "url":
+        return _url_link_run(public, link.url)
+    return _block_mention_run(link.block_id)
+
+
+def _block_mention_run(block_id: str) -> dict[str, Any]:
+    return {"type": "mention", "mention": {"type": "page", "page": {"id": block_id}}}
+
+
+def _url_link_run(run: dict[str, Any], url: str) -> dict[str, Any]:
+    text = {**_mapping(run.get("text")), "link": {"url": url}}
+    return {**run, "text": text}
+
+
+def _block_url(page_url: str, block_id: str) -> str:
+    return f"{page_url}#{block_id}" if page_url else f"#{block_id}"
+
+
+def _iter_blocks(blocks: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    for block in blocks:
+        yield block
+        yield from _iter_blocks(_node_children(block))
+
+
+def _rich_text_runs(block: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        run
+        for run in _as_list(_mapping(block.get(_str(block.get("type")))).get("rich_text"))
+        if isinstance(run, dict)
+    ]
+
+
+def _target_key(value: object) -> tuple[str, str, str] | None:
+    mapping = _mapping(value)
+    project_key = _str(mapping.get("project_key"))
+    session_ref = _str(mapping.get("session_ref"))
+    turn_ref = _str(mapping.get("turn_ref"))
+    if not project_key or not session_ref or not turn_ref:
+        return None
+    return (project_key, session_ref, turn_ref)
 
 
 def _payload_from_json(path: Path) -> NotionPagePayload:
@@ -464,4 +746,32 @@ def _partial_page_message(page_id: str, url: str, cause: object) -> str:
     return (
         f"failed to append the report body to Notion page {location}; a partial row may exist and "
         f"can be deleted (re-publishing creates a fresh row): {cause}"
+    )
+
+
+def _missing_evidence_appendix_message() -> str:
+    return (
+        "Notion citations were rendered with internal evidence links, but the evidence appendix "
+        "block was absent; citations were published without links."
+    )
+
+
+def _missing_target_message(count: int) -> str:
+    return (
+        f"{count} Notion citation target(s) had no matching evidence toggle block id; "
+        "those citations were published without links."
+    )
+
+
+def _native_block_mention_fallback_message() -> str:
+    return (
+        "Notion rejected native Notion evidence block mention links; citations were published as "
+        "normal rich-text links to the matching evidence toggle blocks."
+    )
+
+
+def _after_fallback_message() -> str:
+    return (
+        "Notion rejected inserting linked report content before the evidence appendix; the report "
+        "body was appended without citation links."
     )

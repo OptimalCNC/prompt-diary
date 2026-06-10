@@ -16,8 +16,9 @@ model-derived string is placed only into a rich-text ``text.content`` field (pla
 Markdown/HTML inside it, so a session-derived string carrying ``</details>``, ``# heading``,
 ``[x](url)``, or a code span renders verbatim and cannot forge structure. There is therefore no
 escaping pass: the one invariant is that model text never populates a ``text.link.url`` (or any
-other interpreted field), and this renderer emits no link anywhere — a ``Citation`` becomes
-inline-``code`` text, not a link, because workspace session refs have no Notion URL.
+other interpreted field), and this renderer emits no link anywhere. Citation runs may carry
+renderer-owned target metadata for the publisher to turn into native Notion inline links after the
+target page IDs are known.
 
 Mapping (the "best Notion" choices, not 1:1 with Markdown):
 
@@ -28,7 +29,8 @@ Mapping (the "best Notion" choices, not 1:1 with Markdown):
   its blocks nested inside — a collapsible record, the idiomatic Notion form for a titled cluster in
   a list. Position decides this, like the Markdown renderer's special-casing of a group in a list.
 - ``Prose`` → a ``paragraph`` (standalone) or a ``bulleted_list_item`` / ``numbered_list_item``
-  (in a list); its trailing confidence tags and inline citation ride in the same rich-text array.
+  (in a list); its trailing confidence tags and inline citation metadata ride in the same rich-text
+  array.
 - ``ListBlock`` → a run of list-item blocks (prose items) or toggle blocks (group items).
 - ``Toggle`` → a colored label callout followed by its children. Native toggles are reserved for
   work-item ``Group`` list items so the published page stays shallow and fast to append. Inside a
@@ -53,6 +55,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.generate.rendering.layout import (
+    EVIDENCE_APPENDIX_TITLE,
     WORK_ITEM_CONTEXT_LABEL,
     WORK_ITEM_OUTCOMES_LABEL,
     WORK_ITEM_USER_MESSAGES_LABEL,
@@ -61,18 +64,27 @@ from prompt_diary.generate.rendering.layout import (
     Citation,
     Document,
     Empty,
+    EvidenceChainEntry,
     Group,
     ListBlock,
     Prose,
     Tag,
     Toggle,
     build_layout,
+    load_evidence_appendix,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["NotionPagePayload", "render_notion", "render_notion_artifact"]
+__all__ = [
+    "EVIDENCE_APPENDIX_METADATA_KEY",
+    "EVIDENCE_TARGET_METADATA_KEY",
+    "LINK_TARGET_METADATA_KEY",
+    "NotionPagePayload",
+    "render_notion",
+    "render_notion_artifact",
+]
 
 _REPORT_NAME = "daily-report.json"
 _OUTPUT_NAME = "report.notion.json"
@@ -91,6 +103,10 @@ _MAX_CONTENT = 2000
 # this (>~200K characters) is truncated with the marker below — see ``_cap_runs``.
 _MAX_RUNS_PER_BLOCK = 100
 _TRUNCATION_MARKER = " [truncated]"
+
+LINK_TARGET_METADATA_KEY = "_prompt_diary_link_target"
+EVIDENCE_TARGET_METADATA_KEY = "_prompt_diary_evidence_target"
+EVIDENCE_APPENDIX_METADATA_KEY = "_prompt_diary_evidence_appendix"
 
 # The limit callout's icon — a warning sign, written as escapes so the source carries no literal
 # emoji (U+26A0 warning sign + U+FE0F emoji-presentation selector).
@@ -122,7 +138,8 @@ class NotionPagePayload:
 def render_notion_artifact(*, workspace_path: Path) -> Path:
     """Render ``daily-report.json`` to ``report.notion.json`` and return the written path."""
     report = _load_json(workspace_path / _REPORT_NAME)
-    payload = render_notion(build_layout(report))
+    evidence_chains = load_evidence_appendix(workspace_path=workspace_path, report=report)
+    payload = render_notion(build_layout(report, evidence_chains=evidence_chains))
     return _write_atomic(workspace_path / _OUTPUT_NAME, _payload_json(payload))
 
 
@@ -130,11 +147,16 @@ def render_notion(document: Document) -> NotionPagePayload:
     """Serialize a layout :class:`Document` to a Notion page payload."""
     children: list[dict[str, Any]] = []
     for section in document.children:
-        children.extend(
-            _render_container(
-                section.title, (), section.children, heading_level=_SECTION_HEADING_LEVEL
+        if section.title == EVIDENCE_APPENDIX_TITLE:
+            children.append(
+                _evidence_appendix_toggle(_render_blocks(section.children, heading_level=2))
             )
-        )
+        else:
+            children.extend(
+                _render_container(
+                    section.title, (), section.children, heading_level=_SECTION_HEADING_LEVEL
+                )
+            )
     return NotionPagePayload(
         title=document.title,
         properties=dict(document.properties),
@@ -179,6 +201,8 @@ def _render_one(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
         return [_callout(block)]
     if isinstance(block, Empty):
         return [_list_item_block("bulleted_list_item", _text_runs(block.fallback))]
+    if isinstance(block, EvidenceChainEntry):
+        return [_evidence_chain_entry(block)]
     # Tag / Citation / Section never reach here standalone in a well-formed layout.
     return []  # pragma: no cover
 
@@ -269,6 +293,36 @@ def _toggle(rich_text: list[dict[str, Any]], children: list[dict[str, Any]]) -> 
     return _block("toggle", {"rich_text": rich_text, "children": children})
 
 
+def _evidence_appendix_toggle(children: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        **_block(
+            "heading_1",
+            {
+                "rich_text": _text_runs(EVIDENCE_APPENDIX_TITLE),
+                "is_toggleable": True,
+                "children": children,
+            },
+        ),
+        EVIDENCE_APPENDIX_METADATA_KEY: True,
+    }
+
+
+def _evidence_chain_entry(block: EvidenceChainEntry) -> dict[str, Any]:
+    return {
+        **_toggle(
+            _text_runs(_ref_label(block.session_ref, block.turn_ref)),
+            [
+                *[
+                    _list_item_block("bulleted_list_item", _prose_rich_text(item))
+                    for item in block.items
+                ],
+                *[_callout(message) for message in block.messages],
+            ],
+        ),
+        EVIDENCE_TARGET_METADATA_KEY: dict(block.target),
+    }
+
+
 def _callout(block: Callout) -> dict[str, Any]:
     # A verbatim user message renders as a quote; a limit / caveat as a callout with a warning icon.
     if block.tone == "quote":
@@ -304,16 +358,14 @@ def _cap_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _prose_rich_text(prose: Prose) -> list[dict[str, Any]]:
-    # text runs, then the inline confidence tag(s), then the citation as an inline-code run. The
-    # citation gets a leading space run because Notion does not insert whitespace between runs.
+    # text runs, then the inline confidence tag(s), then the citation placeholder runs. The citation
+    # gets a leading space run because Notion does not insert whitespace between runs.
     runs = _text_runs(prose.text)
     if prose.tags:
         runs.append(_text(" · " + " · ".join(tag.value for tag in prose.tags)))
     if prose.citation is not None:
         runs.append(_text(" "))
-        # The citation content (refs + scoped project labels) is free-length, so chunk it like any
-        # other content; adjacent code runs render as one continuous inline-code span.
-        runs.extend(_code_runs(_citation_text(prose.citation)))
+        runs.extend(_citation_runs(prose.citation))
     return runs
 
 
@@ -325,15 +377,25 @@ def _label_rich_text(label: str, tags: tuple[Tag, ...]) -> list[dict[str, Any]]:
     return runs
 
 
-def _citation_text(citation: Citation) -> str:
-    return "; ".join(_ref_text(ref) for ref in citation.refs)
+def _citation_runs(citation: Citation) -> list[dict[str, Any]]:
+    runs: list[dict[str, Any]] = []
+    for index, ref in enumerate(citation.refs):
+        if index:
+            runs.append(_text("; "))
+        target = _mapping(ref.get("target")) if _ref_str(ref, "anchor") else {}
+        runs.extend(_citation_text_runs(_ref_text(ref), link_target=target or None))
+    return runs
 
 
 def _ref_text(ref: dict[str, Any]) -> str:
-    body = f"{_ref_str(ref, 'session_ref')}:{_ref_str(ref, 'lines')}"
+    body = _ref_label(_ref_str(ref, "session_ref"), _ref_str(ref, "turn_ref"))
     if ref.get("scoped"):
         return f"{_ref_str(ref, 'project_label')} · {body}"
     return body
+
+
+def _ref_label(session_ref: str, turn_ref: str) -> str:
+    return f"{session_ref}/{turn_ref}" if turn_ref else session_ref
 
 
 def _ref_str(ref: dict[str, Any], key: str) -> str:
@@ -346,17 +408,23 @@ def _text(content: str) -> dict[str, Any]:
     return {"type": "text", "text": {"content": content}}
 
 
-def _code(content: str) -> dict[str, Any]:
-    # An inline-code run (used for citations) — still plain content with no link.
-    return {"type": "text", "text": {"content": content}, "annotations": {"code": True}}
+def _citation_text(content: str, *, link_target: dict[str, Any] | None = None) -> dict[str, Any]:
+    # A citation placeholder. It stays plain text in the artifact; the publisher may replace
+    # metadata-targeted runs with native Notion page mentions once target page IDs are known.
+    run = _text(content)
+    if link_target is not None:
+        run[LINK_TARGET_METADATA_KEY] = link_target
+    return run
 
 
 def _text_runs(content: str) -> list[dict[str, Any]]:
     return [_text(chunk) for chunk in _chunks(content)]
 
 
-def _code_runs(content: str) -> list[dict[str, Any]]:
-    return [_code(chunk) for chunk in _chunks(content)]
+def _citation_text_runs(
+    content: str, *, link_target: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    return [_citation_text(chunk, link_target=link_target) for chunk in _chunks(content)]
 
 
 def _chunks(content: str) -> list[str]:
@@ -384,3 +452,7 @@ def _write_atomic(path: Path, text: str) -> Path:
 def _load_json(path: Path) -> dict[str, Any]:
     raw: object = json.loads(path.read_text(encoding="utf-8"))
     return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+
+
+def _mapping(value: object) -> dict[str, Any]:
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}

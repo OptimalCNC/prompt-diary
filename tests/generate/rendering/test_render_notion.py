@@ -4,7 +4,7 @@
 the doc's Block→Notion mapping, and writes the page payload (title, metadata properties, body block
 children) to ``report.notion.json``. These tests pin the title/properties, the heading_2 sections,
 the project heading_3, the work-item ``toggle`` (the idiomatic Notion form for a titled cluster),
-the colored nested work-item subsection labels, the quote vs. callout split, the inline-code
+the colored nested work-item subsection labels, the quote vs. callout split, the structured
 citations, the three Empty fallbacks, and the two invariants that make Notion rendering faithful and
 safe:
 
@@ -82,6 +82,14 @@ def _code_runs(block: dict[str, Any]) -> list[dict[str, Any]]:
     return [run for run in _rich_text(block) if run.get("annotations", {}).get("code")]
 
 
+def _citation_runs(block: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        run
+        for run in _rich_text(block)
+        if run.get("_prompt_diary_link_target") or run["text"]["content"] == "; "
+    ]
+
+
 def _plain_texts(blocks: Iterable[dict[str, Any]], block_type: str) -> list[str]:
     return [_plain(block) for block in _of_type(blocks, block_type)]
 
@@ -147,7 +155,7 @@ def test_render_notion_title_and_properties(tmp_path: Path) -> None:
 def test_render_notion_sections_are_heading_2(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    assert _plain_texts(children, "heading_2") == [
+    assert [_plain(block) for block in children if block["type"] == "heading_2"] == [
         "Work by Project",
         "Engagement Assessment",
         "Team Learning",
@@ -172,8 +180,26 @@ def test_render_notion_project_is_heading_3_with_summary_paragraph(tmp_path: Pat
         for p in _of_type(children, "paragraph")
         if "Simplified the evidence tools and designed the QA approach." in _plain(p)
     )
-    # The project summary's two citations are unscoped (project implied) and joined in one code run.
-    assert [run["text"]["content"] for run in _code_runs(summary)] == ["S0001:2-8; S0002:2-6"]
+    # The project summary's citations are unscoped (project implied), one link-targeted run per
+    # turn reference. The publisher may replace those runs with native Notion inline links, so the
+    # renderer keeps them as normal text instead of inline code.
+    citations = _citation_runs(summary)
+    assert [run["text"]["content"] for run in citations] == [
+        "S0001/T0001",
+        "; ",
+        "S0002/T0001",
+    ]
+    assert _code_runs(summary) == []
+    assert citations[0]["_prompt_diary_link_target"] == {
+        "project_key": "ReportGenerator-e6ff7eeda632",
+        "session_ref": "S0001",
+        "turn_ref": "T0001",
+    }
+    assert citations[2]["_prompt_diary_link_target"] == {
+        "project_key": "ReportGenerator-e6ff7eeda632",
+        "session_ref": "S0002",
+        "turn_ref": "T0001",
+    }
 
 
 def test_render_notion_work_item_is_a_toggle_with_tags_in_label(tmp_path: Path) -> None:
@@ -229,7 +255,8 @@ def test_render_notion_work_item_toggle_nests_distinct_section_labels(
         if "Top-level turn_ref adopted; chain_ref removed from the evidence surface." in _plain(b)
     )
     assert nested.index(outcome) > label_indexes[-1]
-    assert [run["text"]["content"] for run in _code_runs(outcome)] == ["S0001:2-8"]
+    assert [run["text"]["content"] for run in _citation_runs(outcome)] == ["S0001/T0001"]
+    assert _code_runs(outcome) == []
     # The outcome's own confidence renders inline as a ``· high`` run before the citation.
     assert " · high" in _plain(outcome)
 
@@ -302,9 +329,10 @@ def test_render_notion_engagement_reading_dimension_and_limits(tmp_path: Path) -
     )
     # The lead reading carries its own confidence inline and a scoped citation.
     assert " · medium" in _plain(reading)
-    assert [run["text"]["content"] for run in _code_runs(reading)] == [
-        "ReportGenerator · S0001:2-8"
+    assert [run["text"]["content"] for run in _citation_runs(reading)] == [
+        "ReportGenerator · S0001/T0001"
     ]
+    assert _code_runs(reading) == []
     assert "Direction" in _plain_texts(children, "heading_3")
     # The standing engagement limit always renders, as a callout.
     limits = _of_type(children, "callout")
@@ -347,6 +375,64 @@ def test_render_notion_empty_report_renders_three_fallbacks(tmp_path: Path) -> N
     assert "No supported reusable agent-driving pattern found." in fallbacks
     assert "No supported work claims found for this report window." not in fallbacks
     assert payload["properties"]["overall_confidence"] == "n/a"
+    assert "Evidence Chains" not in _plain_texts(payload["children"], "heading_1")
+
+
+def test_render_notion_evidence_appendix_toggles_carry_stable_metadata(
+    tmp_path: Path,
+) -> None:
+    children = _basic_children(tmp_path)
+
+    appendix = next(
+        block
+        for block in children
+        if block["type"] == "heading_1" and block.get("_prompt_diary_evidence_appendix") is True
+    )
+    assert _plain(appendix) == "Evidence Chains"
+    assert appendix["heading_1"]["is_toggleable"] is True
+    assert "ReportGenerator" in _plain_texts([appendix], "heading_2")
+    assert "S0001" not in _plain_texts([appendix], "heading_3")
+    assert "S0002" not in _plain_texts([appendix], "heading_3")
+    targets = [
+        block for block in _iter_blocks([appendix]) if block.get("_prompt_diary_evidence_target")
+    ]
+    rendered_targets = [
+        (target["type"], _plain(target), target["_prompt_diary_evidence_target"])
+        for target in targets
+    ]
+    assert rendered_targets == [
+        (
+            "toggle",
+            "S0001/T0001",
+            {
+                "project_key": "ReportGenerator-e6ff7eeda632",
+                "session_ref": "S0001",
+                "turn_ref": "T0001",
+            },
+        ),
+        (
+            "toggle",
+            "S0001/T0002",
+            {
+                "project_key": "ReportGenerator-e6ff7eeda632",
+                "session_ref": "S0001",
+                "turn_ref": "T0002",
+            },
+        ),
+        (
+            "toggle",
+            "S0002/T0001",
+            {
+                "project_key": "ReportGenerator-e6ff7eeda632",
+                "session_ref": "S0002",
+                "turn_ref": "T0001",
+            },
+        ),
+    ]
+    quotes = _plain_texts([appendix], "quote")
+    assert "Please simplify the MCP evidence tools and drop chain_ref." in quotes
+    assert "Is that placeholder misleading?" in quotes
+    assert "Design the QA approach for evidence extraction." in quotes
 
 
 # --- no new claims ----------------------------------------------------------------------------
@@ -381,11 +467,12 @@ def test_render_notion_every_run_is_plain_text_with_no_interpreted_field(tmp_pat
     children = _basic_children(tmp_path)
 
     # The structural safety invariant, asserted strongly: every run is a plain ``text`` run whose
-    # keys are a subset of {type, text, annotations} and whose ``text`` has no ``link``. No run is a
-    # ``mention`` / ``equation`` / linked run, so nothing model-derived is an interpreted target.
+    # keys are a subset of {type, text, annotations, _prompt_diary_link_target} and whose ``text``
+    # has no ``link`` before publishing. No run is a ``mention`` / ``equation`` / URL-linked run in
+    # the renderer artifact, so model-derived content is never an interpreted target.
     for run in _all_runs(children):
         assert run["type"] == "text"
-        assert set(run).issubset({"type", "text", "annotations"})
+        assert set(run).issubset({"type", "text", "annotations", "_prompt_diary_link_target"})
         assert "link" not in run["text"]
 
 
@@ -479,12 +566,34 @@ def test_render_notion_numbered_list_renders_numbered_items(tmp_path: Path) -> N
 # --- cross-project citation scoping (>1 project) ----------------------------------------------
 
 
-def test_render_notion_citation_runs_are_inline_code_no_link(tmp_path: Path) -> None:
+def test_render_notion_citation_runs_are_plain_text_no_link(tmp_path: Path) -> None:
     del tmp_path
     citation = Citation(
         (
-            {"project_label": "Alpha", "session_ref": "S0001", "lines": "2-8", "scoped": True},
-            {"project_label": "Beta", "session_ref": "S0002", "lines": "3-9", "scoped": True},
+            {
+                "project_label": "Alpha",
+                "session_ref": "S0001",
+                "turn_ref": "T0001",
+                "scoped": True,
+                "anchor": "evidence-alpha-s0001-t0001",
+                "target": {
+                    "project_key": "alpha",
+                    "session_ref": "S0001",
+                    "turn_ref": "T0001",
+                },
+            },
+            {
+                "project_label": "Beta",
+                "session_ref": "S0002",
+                "turn_ref": "T0002",
+                "scoped": True,
+                "anchor": "evidence-beta-s0002-t0002",
+                "target": {
+                    "project_key": "beta",
+                    "session_ref": "S0002",
+                    "turn_ref": "T0002",
+                },
+            },
         )
     )
     section = Section(
@@ -493,20 +602,38 @@ def test_render_notion_citation_runs_are_inline_code_no_link(tmp_path: Path) -> 
 
     payload = render_notion(_doc_with_section(section))
     bullet = _of_type(payload.children, "bulleted_list_item")[0]
-    code = _code_runs(bullet)
+    citations = _citation_runs(bullet)
 
-    # Multiple refs join with "; " in one code run, each scoped with its own project label, no link.
-    assert [run["text"]["content"] for run in code] == ["Alpha · S0001:2-8; Beta · S0002:3-9"]
+    # Multiple refs join with "; ", each scoped with its own project label, no link before publish.
+    assert [run["text"]["content"] for run in citations] == [
+        "Alpha · S0001/T0001",
+        "; ",
+        "Beta · S0002/T0002",
+    ]
+    assert _code_runs(bullet) == []
     assert all("link" not in run["text"] for run in _rich_text(bullet))
 
 
-def test_render_notion_long_citation_content_is_chunked_into_code_runs(tmp_path: Path) -> None:
+def test_render_notion_long_citation_content_is_chunked_into_text_runs(tmp_path: Path) -> None:
     del tmp_path
     # A citation whose text exceeds 2000 chars (e.g. a very long project label) must be chunked so
-    # no single code run violates Notion's per-content limit; adjacent code runs stay code spans.
+    # no single text run violates Notion's per-content limit.
     long_label = "L" * 4500
     citation = Citation(
-        ({"project_label": long_label, "session_ref": "S0001", "lines": "2-8", "scoped": True},)
+        (
+            {
+                "project_label": long_label,
+                "session_ref": "S0001",
+                "turn_ref": "T0001",
+                "scoped": True,
+                "anchor": "evidence-alpha-s0001-t0001",
+                "target": {
+                    "project_key": "alpha",
+                    "session_ref": "S0001",
+                    "turn_ref": "T0001",
+                },
+            },
+        )
     )
     section = Section(
         "Engagement Assessment", (ListBlock("bullet", (Prose("Outcome.", citation),)),)
@@ -514,9 +641,10 @@ def test_render_notion_long_citation_content_is_chunked_into_code_runs(tmp_path:
 
     payload = render_notion(_doc_with_section(section))
     bullet = _of_type(payload.children, "bulleted_list_item")[0]
-    code = _code_runs(bullet)
+    citations = _citation_runs(bullet)
 
-    expected_text = f"{long_label} · S0001:2-8"
-    assert len(code) >= 2  # the long citation spans multiple code runs
-    assert all(len(run["text"]["content"]) <= 2000 for run in code)
-    assert "".join(run["text"]["content"] for run in code) == expected_text
+    expected_text = f"{long_label} · S0001/T0001"
+    assert len(citations) >= 2  # the long citation spans multiple text runs
+    assert all(len(run["text"]["content"]) <= 2000 for run in citations)
+    assert "".join(run["text"]["content"] for run in citations) == expected_text
+    assert _code_runs(bullet) == []
