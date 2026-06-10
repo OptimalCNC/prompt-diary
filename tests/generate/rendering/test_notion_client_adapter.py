@@ -95,10 +95,13 @@ class _FakeChildrenEndpoint:
         block_id: str,
         children: list[dict[str, Any]],
         after: str | None = None,
+        position: dict[str, Any] | None = None,
     ) -> object:
         payload: dict[str, Any] = {"block_id": block_id, "children": children}
         if after is not None:
             payload["after"] = after
+        if position is not None:
+            payload["position"] = position
         self._client.calls.append(("blocks.children.append", payload))
         return _FakeSDKClient.append_response
 
@@ -166,18 +169,22 @@ def test_notion_client_includes_children_only_when_create_page_receives_them(
     ]
 
 
-def test_notion_client_forwards_append_after_when_present(
+def test_notion_client_forwards_append_position_when_after_block_id_is_present(
     fake_client: Callable[[], _FakeSDKClient],
 ) -> None:
     client = adapter.NotionSDKClient(token=_FAKE_TOKEN)
     children: list[dict[str, Any]] = [{"object": "block", "type": "paragraph", "paragraph": {}}]
 
-    client.append_children(block_id="page-1", children=children, after="block-1")
+    client.append_children(block_id="page-1", children=children, after_block_id="block-1")
 
     assert fake_client().calls == [
         (
             "blocks.children.append",
-            {"block_id": "page-1", "children": children, "after": "block-1"},
+            {
+                "block_id": "page-1",
+                "children": children,
+                "position": {"type": "after_block", "after_block": {"id": "block-1"}},
+            },
         )
     ]
 

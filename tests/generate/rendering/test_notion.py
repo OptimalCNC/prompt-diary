@@ -62,9 +62,9 @@ class _FakeNotionClient:
         *,
         block_id: str,
         children: list[dict[str, Any]],
-        after: str | None = None,
+        after_block_id: str | None = None,
     ) -> dict[str, Any]:
-        self.calls.append(("append", block_id, children, after))
+        self.calls.append(("append", block_id, children, after_block_id))
         return {"results": [{"id": f"block-{index}"} for index, _ in enumerate(children)]}
 
 

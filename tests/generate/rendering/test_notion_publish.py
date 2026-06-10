@@ -67,18 +67,20 @@ class _FakeNotionClient:
         *,
         block_id: str,
         children: list[dict[str, Any]],
-        after: str | None = None,
+        after_block_id: str | None = None,
     ) -> dict[str, Any]:
-        return self._append_children(block_id=block_id, children=children, after=after)
+        return self._append_children(
+            block_id=block_id, children=children, after_block_id=after_block_id
+        )
 
     def _append_children(
         self,
         *,
         block_id: str,
         children: list[dict[str, Any]],
-        after: str | None,
+        after_block_id: str | None,
     ) -> dict[str, Any]:
-        self.calls.append(("append", block_id, children, after))
+        self.calls.append(("append", block_id, children, after_block_id))
         results: list[dict[str, Any]] = []
         for child in children:
             self.counter += 1
@@ -490,17 +492,20 @@ def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix()
     creates = _creates(client)
     assert len(creates) == 1
     appends = _appends_with_after(client)
-    assert len(appends) == 4
+    assert len(appends) == 3
     assert appends[0][0] == "page-1"
     assert appends[0][2] is None
-    assert [block["type"] for block in appends[0][1]] == ["callout", "table_of_contents"]
-    assert appends[1][0] == "page-1"
-    assert [block["type"] for block in appends[1][1]] == ["heading_1"]
-    assert appends[2][0] == "blk-4"
-    assert [block["type"] for block in appends[2][1]] == ["heading_2", "toggle"]
-    assert appends[3][0] == "page-1"
-    assert appends[3][2] == "blk-3"
-    start_body = appends[3][1]
+    assert [block["type"] for block in appends[0][1]] == [
+        "callout",
+        "table_of_contents",
+        "heading_1",
+    ]
+    assert "children" not in appends[0][1][2]["heading_1"]
+    assert appends[1][0] == "blk-4"
+    assert [block["type"] for block in appends[1][1]] == ["heading_2", "toggle"]
+    assert appends[2][0] == "page-1"
+    assert appends[2][2] == "blk-3"
+    start_body = appends[2][1]
     assert [block["type"] for block in start_body] == ["paragraph"]
     linked = next(run for run in _all_request_runs(start_body) if run["type"] == "mention")
     assert linked == {
@@ -513,6 +518,37 @@ def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix()
             assert "_prompt_diary_evidence_target" not in block
         for run in _all_request_runs(children):
             assert "_prompt_diary_link_target" not in run
+
+
+def test_publish_linked_citations_capture_chunked_evidence_targets() -> None:
+    client = _FakeNotionClient(_schema())
+    targets = [
+        {"project_key": "k", "session_ref": "S0001", "turn_ref": f"T{index:04d}"}
+        for index in range(105)
+    ]
+    claim = _para("Main claim ")
+    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0104", targets[-1]))
+    appendix = _evidence_appendix(targets[0])
+    appendix["heading_1"]["children"] = [
+        _heading("Project K", level=2),
+        *[
+            _evidence_toggle(target, [_para(f"Evidence {index}")])
+            for index, target in enumerate(targets)
+        ],
+    ]
+
+    result = publish_report(client=client, database_id="db", payload=_payload([claim, appendix]))
+
+    assert result.warnings == ()
+    appends = _appends_with_after(client)
+    assert len(appends) == 4
+    assert [len(children) for parent, children, _ in appends if parent == "blk-4"] == [100, 6]
+    linked_body = appends[-1][1]
+    linked = next(run for run in _all_request_runs(linked_body) if run["type"] == "mention")
+    assert linked == {
+        "type": "mention",
+        "mention": {"type": "page", "page": {"id": "blk-110"}},
+    }
 
 
 def test_publish_linked_citations_without_appendix_warn_and_publish_unlinked() -> None:
@@ -560,12 +596,16 @@ def test_publish_linked_citations_fall_back_when_native_block_mention_is_rejecte
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None = None,
+            after_block_id: str | None = None,
         ) -> dict[str, Any]:
             if any(run["type"] == "mention" for run in _all_request_runs(children)):
-                self.calls.append(("append", block_id, children, after))
+                self.calls.append(("append", block_id, children, after_block_id))
                 raise RuntimeError(_NETWORK_DOWN)
-            return super().append_children(block_id=block_id, children=children, after=after)
+            return super().append_children(
+                block_id=block_id,
+                children=children,
+                after_block_id=after_block_id,
+            )
 
     client = _RejectNativeMention(_schema())
     target = _internal_link_target()
@@ -601,12 +641,16 @@ def test_publish_linked_citations_fall_back_when_after_insert_is_rejected() -> N
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None = None,
+            after_block_id: str | None = None,
         ) -> dict[str, Any]:
-            if after is not None:
-                self.calls.append(("append", block_id, children, after))
+            if after_block_id is not None:
+                self.calls.append(("append", block_id, children, after_block_id))
                 raise RuntimeError(_NETWORK_DOWN)
-            return super().append_children(block_id=block_id, children=children, after=after)
+            return super().append_children(
+                block_id=block_id,
+                children=children,
+                after_block_id=after_block_id,
+            )
 
     client = _RejectAfter(_schema())
     target = _internal_link_target()
@@ -637,10 +681,14 @@ def test_publish_linked_citations_accepts_after_response_with_following_siblings
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None,
+            after_block_id: str | None,
         ) -> dict[str, Any]:
-            response = super()._append_children(block_id=block_id, children=children, after=after)
-            if after is not None:
+            response = super()._append_children(
+                block_id=block_id,
+                children=children,
+                after_block_id=after_block_id,
+            )
+            if after_block_id is not None:
                 response["results"].append({"id": "already-existing-sibling", "type": "paragraph"})
             return response
 
@@ -687,9 +735,13 @@ def test_publish_linked_citations_warn_when_evidence_toggle_result_lacks_id() ->
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None,
+            after_block_id: str | None,
         ) -> dict[str, Any]:
-            response = super()._append_children(block_id=block_id, children=children, after=after)
+            response = super()._append_children(
+                block_id=block_id,
+                children=children,
+                after_block_id=after_block_id,
+            )
             for child, result in zip(children, response["results"], strict=True):
                 if child["type"] == "toggle":
                     result.pop("id", None)
@@ -824,9 +876,9 @@ def test_publish_raises_when_append_result_count_mismatches() -> None:
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None = None,
+            after_block_id: str | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("append", block_id, children, after))
+            self.calls.append(("append", block_id, children, after_block_id))
             return {"results": []}  # fewer results than blocks sent
 
     client = _Short(_schema())
@@ -846,9 +898,9 @@ def test_publish_raises_when_append_result_lacks_a_block_id() -> None:
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None = None,
+            after_block_id: str | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("append", block_id, children, after))
+            self.calls.append(("append", block_id, children, after_block_id))
             return {"results": [{"type": child["type"]} for child in children]}  # ids missing
 
     client = _NoBlockId(_schema())
@@ -877,9 +929,9 @@ def test_publish_wraps_an_append_failure_with_the_created_page_location() -> Non
             *,
             block_id: str,
             children: list[dict[str, Any]],
-            after: str | None = None,
+            after_block_id: str | None = None,
         ) -> dict[str, Any]:
-            self.calls.append(("append", block_id, children, after))
+            self.calls.append(("append", block_id, children, after_block_id))
             raise RuntimeError(_NETWORK_DOWN)
 
     client = _Boom(_schema())

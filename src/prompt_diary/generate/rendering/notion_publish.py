@@ -102,7 +102,7 @@ class NotionClientProtocol(Protocol):
         *,
         block_id: str,
         children: list[dict[str, Any]],
-        after: str | None = None,
+        after_block_id: str | None = None,
     ) -> dict[str, Any]:
         """Append ``children`` under ``block_id``; return ``{"results": [...created blocks]}``."""
         ...
@@ -126,6 +126,11 @@ class _AppendCandidate:
     request_block: dict[str, Any]
     pending_children: list[dict[str, Any]]
     request_block_count: int
+
+
+@dataclass(frozen=True)
+class _AppendTreeResult:
+    first_level_block_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -324,12 +329,26 @@ def _append_linked_body(
         return (_missing_evidence_appendix_message(),)
 
     prefix_blocks, content_blocks = _split_page_prefix(linked_body.main_blocks)
-    after_id = _append_tree(client, page_id, prefix_blocks)
     evidence_block_ids: dict[tuple[str, str, str], str] = {}
-    _append_tree(
+    shell_result = _append_tree(
         client,
         page_id,
-        [linked_body.evidence_appendix],
+        [*prefix_blocks, _without_children(linked_body.evidence_appendix)],
+    )
+    after_id = _required_first_level_block_id(
+        shell_result,
+        index=len(prefix_blocks) - 1,
+        role="table of contents block",
+    )
+    evidence_heading_id = _required_first_level_block_id(
+        shell_result,
+        index=len(prefix_blocks),
+        role="Evidence Chains heading",
+    )
+    _append_tree(
+        client,
+        evidence_heading_id,
+        _node_children(linked_body.evidence_appendix),
         captured_targets=evidence_block_ids,
     )
     target_links = {
@@ -344,7 +363,7 @@ def _append_linked_body(
         missing=missing,
     )
     try:
-        _append_tree(client, page_id, linked_content, after=after_id)
+        _append_tree(client, page_id, linked_content, after_block_id=after_id)
     except Exception:  # noqa: BLE001 - fallback for SDK/API rejection of native block mentions.
         try:
             _append_tree(
@@ -356,7 +375,7 @@ def _append_linked_body(
                     link_mode="url",
                     missing=missing,
                 ),
-                after=after_id,
+                after_block_id=after_id,
             )
         except Exception:  # noqa: BLE001 - fallback for SDK/API rejection of after insertion.
             _append_tree(client, page_id, _public_blocks(content_blocks))
@@ -381,9 +400,9 @@ def _append_tree(
     parent_id: str,
     blocks: list[dict[str, Any]],
     *,
-    after: str | None = None,
+    after_block_id: str | None = None,
     captured_targets: dict[tuple[str, str, str], str] | None = None,
-) -> str | None:
+) -> _AppendTreeResult:
     # Append the block tree under ``parent_id`` with the deepest safe request shape Notion supports:
     # each request carries ≤100 top-level blocks and ≤1000 block elements overall. A block's
     # children are inlined only when every child is a leaf, because Notion returns ids only for the
@@ -391,14 +410,15 @@ def _append_tree(
     # a first-level result so we can capture its id.
     candidates = [_append_candidate(block) for block in blocks]
     batches = list(_chunked_append_candidates(candidates))
-    insert_after = after
+    insert_after_block_id = after_block_id
+    first_level_block_ids: list[str] = []
     last_created_id: str | None = None
     for batch in batches:
         request_blocks = _public_blocks([candidate.request_block for candidate in batch])
         response = client.append_children(
             block_id=parent_id,
             children=request_blocks,
-            after=insert_after,
+            after_block_id=insert_after_block_id,
         )
         # Notion returns one created block per appended block, in request order; the recursion
         # below relies on both facts to graft each block's stripped children under the right new id.
@@ -407,6 +427,7 @@ def _append_tree(
         created = _created_append_results(response, request_count=len(request_blocks))
         for candidate, made in zip(batch, created, strict=True):
             child_id = _str(_mapping(made).get("id"))
+            first_level_block_ids.append(child_id)
             if child_id:
                 last_created_id = child_id
                 target = _target_key(candidate.request_block.get(EVIDENCE_TARGET_METADATA_KEY))
@@ -418,9 +439,18 @@ def _append_tree(
                 child_id,
                 captured_targets=captured_targets,
             )
-        if insert_after is not None:
-            insert_after = last_created_id
-    return last_created_id
+        if insert_after_block_id is not None:
+            insert_after_block_id = last_created_id
+    return _AppendTreeResult(first_level_block_ids=tuple(first_level_block_ids))
+
+
+def _required_first_level_block_id(result: _AppendTreeResult, *, index: int, role: str) -> str:
+    if index < 0 or index >= len(result.first_level_block_ids):
+        raise PromptDiaryError(_append_missing_role_id_message(role))
+    block_id = result.first_level_block_ids[index]
+    if not block_id:
+        raise PromptDiaryError(_append_missing_role_id_message(role))
+    return block_id
 
 
 def _created_append_results(response: dict[str, Any], *, request_count: int) -> list[Any]:
@@ -739,6 +769,10 @@ def _append_result_count_message(sent: int, received: int) -> str:
 
 def _append_missing_id_message() -> str:
     return "Notion append result carried no block id; cannot graft this block's nested children"
+
+
+def _append_missing_role_id_message(role: str) -> str:
+    return f"Notion append result carried no block id for the {role}; cannot position linked blocks"
 
 
 def _partial_page_message(page_id: str, url: str, cause: object) -> str:
