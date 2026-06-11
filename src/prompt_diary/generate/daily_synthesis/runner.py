@@ -8,10 +8,9 @@ views. Build, Finalize, and the write tools own all validation and resolution; t
 sequences the passes and checks that each pass actually wrote its slot.
 
 Each pass is its own agent conversation — a fresh ``agent_factory.runner(...)`` per pass — and runs
-a single turn. The runner does not retry a pass: a pass's prompt instructs the agent to self-correct
-within the turn on a ``status: invalid`` tool result, so after the turn the runner only re-reads the
-report and fails if the slot is still ``null``. A report with no reportable work item — every
-project gap-only or excluded-only, or no project at all — short-circuits: no summary, engagement, or
+one or more turns on that same conversation until the pass's target slot is written or the shared
+no-progress retry budget is exhausted. A report with no reportable work item — every project
+gap-only or excluded-only, or no project at all — short-circuits: no summary, engagement, or
 team-learning pass runs, and Finalize leaves the judgment slots ``null`` (the Rendering phase then
 emits the Empty fallbacks in the rendered views).
 """
@@ -19,10 +18,16 @@ emits the Empty fallbacks in the rendered views).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.agent import AgentConfig
+from prompt_diary.generate.agent_retry import (
+    AgentArtifactStatus,
+    AgentRetryPolicy,
+    AgentRetryResult,
+    run_agent_turn_with_resume,
+)
 from prompt_diary.generate.daily_synthesis.build import build_daily_report
 from prompt_diary.generate.daily_synthesis.finalize import (
     FinalizeInvalidResult,
@@ -44,6 +49,7 @@ from prompt_diary.generate.prompts import (
 from prompt_diary.progress.reporter import NULL_REPORTER
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from prompt_diary.agent import AgentRunner, AgentSessionFactory
@@ -69,6 +75,7 @@ class DailySynthesisRunner:
 
     agent_factory: AgentSessionFactory
     reasoning_effort: str | None = DEFAULT_DAILY_SYNTHESIS_REASONING_EFFORT
+    retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
         self,
@@ -116,48 +123,102 @@ class DailySynthesisRunner:
             workspace_path=workspace_path, project_key=project_key
         )
         runner = await self._new_runner(workspace_path)
-        await runner.turn(
-            project_summary_prompt(
-                project_key=inputs.project_key,
-                project_json=inputs.project_json,
-                work_items=inputs.work_items,
-            )
+        prompt = project_summary_prompt(
+            project_key=inputs.project_key,
+            project_json=inputs.project_json,
+            work_items=inputs.work_items,
         )
-        if _project_summary(workspace_path, project_key) is None:
-            return _failed(task, _summary_not_written_message(project_key))
+        retry = await self._run_pass(
+            runner=runner,
+            initial_prompt=prompt,
+            inspect_artifacts=lambda: _project_summary_status(workspace_path, project_key),
+            action=f"while writing project summary for {project_key}",
+            resume_instruction=(
+                f"Continue the same project summary pass for {project_key}. "
+                "The summary slot is still unwritten; make the requested "
+                "`write_project_summary` call now."
+            ),
+        )
+        if not retry.ok:
+            return _failed(task, retry.errors)
         return None
 
     async def _run_report_title(self, workspace_path: Path, task: TaskSpec) -> TaskResult | None:
         inputs = build_report_title_inputs(workspace_path=workspace_path)
         runner = await self._new_runner(workspace_path)
-        await runner.turn(report_title_prompt(context=inputs.context))
-        if _slot(workspace_path, "report_title") is None:
-            return _failed(task, _section_not_written_message("report_title"))
+        prompt = report_title_prompt(context=inputs.context)
+        retry = await self._run_pass(
+            runner=runner,
+            initial_prompt=prompt,
+            inspect_artifacts=lambda: _slot_status(workspace_path, "report_title"),
+            action="while writing report_title",
+            resume_instruction=(
+                "Continue the same report title pass. The report_title slot is still unwritten; "
+                "make the requested `write_report_title` call now."
+            ),
+        )
+        if not retry.ok:
+            return _failed(task, retry.errors)
         return None
 
     async def _run_report_passes(self, workspace_path: Path, task: TaskSpec) -> TaskResult | None:
         inputs = build_report_inputs(workspace_path=workspace_path)
 
         engagement_runner = await self._new_runner(workspace_path)
-        await engagement_runner.turn(
-            engagement_prompt(
-                work_items=inputs.work_items,
-                source_user_messages=inputs.source_user_messages,
-            )
+        engagement = engagement_prompt(
+            work_items=inputs.work_items,
+            source_user_messages=inputs.source_user_messages,
         )
-        if _slot(workspace_path, "engagement_assessment") is None:
-            return _failed(task, _section_not_written_message("engagement_assessment"))
+        retry = await self._run_pass(
+            runner=engagement_runner,
+            initial_prompt=engagement,
+            inspect_artifacts=lambda: _slot_status(workspace_path, "engagement_assessment"),
+            action="while writing engagement_assessment",
+            resume_instruction=(
+                "Continue the same engagement pass. The engagement_assessment slot is still "
+                "unwritten; make the requested `write_engagement` call now."
+            ),
+        )
+        if not retry.ok:
+            return _failed(task, retry.errors)
 
         learning_runner = await self._new_runner(workspace_path)
-        await learning_runner.turn(
-            team_learning_prompt(
-                work_items=inputs.work_items,
-                source_user_messages=inputs.source_user_messages,
-            )
+        learning = team_learning_prompt(
+            work_items=inputs.work_items,
+            source_user_messages=inputs.source_user_messages,
         )
-        if _slot(workspace_path, "team_learning") is None:
-            return _failed(task, _section_not_written_message("team_learning"))
+        retry = await self._run_pass(
+            runner=learning_runner,
+            initial_prompt=learning,
+            inspect_artifacts=lambda: _slot_status(workspace_path, "team_learning"),
+            action="while writing team_learning",
+            resume_instruction=(
+                "Continue the same team-learning pass. The team_learning slot is still "
+                "unwritten; make the requested `write_team_learning` call now."
+            ),
+        )
+        if not retry.ok:
+            return _failed(task, retry.errors)
         return None
+
+    async def _run_pass(
+        self,
+        *,
+        runner: AgentRunner,
+        initial_prompt: str,
+        inspect_artifacts: Callable[[], AgentArtifactStatus[bool]],
+        action: str,
+        resume_instruction: str,
+    ) -> AgentRetryResult:
+        return await run_agent_turn_with_resume(
+            runner=runner,
+            initial_prompt=initial_prompt,
+            resume_prompt=lambda: _resume_pass_prompt(resume_instruction, initial_prompt),
+            inspect_artifacts=inspect_artifacts,
+            progress_made=lambda before, after: after and not before,
+            action=action,
+            retry_policy=self.retry_policy,
+        )
 
     async def _new_runner(self, workspace_path: Path) -> AgentRunner:
         return await self.agent_factory.runner(
@@ -210,13 +271,30 @@ def _slot(workspace_path: Path, slot: str) -> object:
     return _read_report(workspace_path).get(slot)
 
 
+def _project_summary_status(workspace_path: Path, project_key: str) -> AgentArtifactStatus[bool]:
+    written = _project_summary(workspace_path, project_key) is not None
+    return AgentArtifactStatus(complete=written, progress_marker=written)
+
+
+def _slot_status(workspace_path: Path, slot: str) -> AgentArtifactStatus[bool]:
+    written = _slot(workspace_path, slot) is not None
+    return AgentArtifactStatus(complete=written, progress_marker=written)
+
+
+def _resume_pass_prompt(resume_instruction: str, initial_prompt: str) -> str:
+    return (
+        f"{resume_instruction}\n\n"
+        f"Reuse the same source context and rules below.\n\n{initial_prompt}"
+    )
+
+
 def _read_report(workspace_path: Path) -> dict[str, Any]:
     raw: object = json.loads((workspace_path / _REPORT_NAME).read_text(encoding="utf-8"))
     return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
 
 
-def _failed(task: TaskSpec, message: str) -> TaskResult:
-    return TaskResult(task_id=task.task_id, status="failed", errors=(message,))
+def _failed(task: TaskSpec, errors: tuple[str, ...]) -> TaskResult:
+    return TaskResult(task_id=task.task_id, status="failed", errors=errors)
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -229,11 +307,3 @@ def _as_list(value: object) -> list[Any]:
 
 def _as_str(value: object) -> str:
     return value if isinstance(value, str) else ""
-
-
-def _summary_not_written_message(project_key: str) -> str:
-    return f"project summary pass did not write projects[{project_key}].summary"
-
-
-def _section_not_written_message(slot: str) -> str:
-    return f"{slot} pass did not write {slot}"

@@ -11,6 +11,8 @@ specific backend. The Codex adapter implements those contracts using the OpenAI 
 
 The runner should not know Prompt Diary generation phases as domain concepts. Callers provide the
 prompt, input context, working directory, tool configuration, and any artifact checks they need.
+Artifact-aware retry lives above this port in generation phase code; the runner only preserves the
+same conversation across sequential `turn(...)` calls.
 
 ## Neutral Port: `prompt_diary/agent.py`
 
@@ -67,6 +69,7 @@ The wrapper should support:
   when available;
 - enforcing turn-level timeouts and surfacing actionable errors;
 - leaving artifact validation to callers.
+- allowing callers to retry or repair by sending another prompt on the same runner instance.
 
 Multi-turn support matters for tool rejection repair, deterministic validation feedback, and
 artifact repair. The runner instance should preserve the SDK conversation state internally, so
@@ -164,6 +167,9 @@ class AgentTurnResult:
 ```
 
 Artifact paths should usually be checked by the caller rather than trusted from assistant text.
+The shared generation retry helper (`generate/agent_retry.py`) follows that rule: after every
+successful or failed `turn(...)`, it re-reads durable artifacts and sends a phase-specific resume
+prompt on the same runner only when the artifact still needs work.
 
 `CodexBackend.__aenter__` lazily imports `openai_codex`, starts the SDK app-server.
 `CodexAgentRunner.turn(...)` starts one SDK thread on first use and reuses it for later turns.
@@ -262,6 +268,11 @@ async with CodexBackend(backend_config) as backend:
             timeout_seconds=600.0,
         )
 ```
+
+Generation phases normally use `run_agent_turn_with_resume(...)` instead of open-coding this
+repair loop. The helper is same-process only: it does not resume a failed command after process
+exit, replace a runner with a new conversation, or reconstruct higher-level phase state beyond the
+durable artifact checks supplied by the phase.
 
 To execute independent sessions concurrently, create independent instances:
 

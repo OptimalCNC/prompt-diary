@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_retry import AgentRetryPolicy
 from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import TaskSpec, evidence_card_artifact, evidence_task_id
 from prompt_diary.progress.events import TurnAdvanced
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
 
     from prompt_diary.generate.pipeline import TaskResult
 
+_FAST_RETRY_POLICY = AgentRetryPolicy(initial_backoff_seconds=0.0, max_backoff_seconds=0.0)
+
 
 def _evidence_task() -> TaskSpec:
     return TaskSpec(
@@ -36,7 +39,7 @@ def _evidence_task() -> TaskSpec:
 
 
 def _run(factory: EvidenceWritingAgentSessionFactory, workspace: Path) -> TaskResult:
-    runner = EvidenceExtractionRunner(agent_factory=factory)
+    runner = EvidenceExtractionRunner(agent_factory=factory, retry_policy=_FAST_RETRY_POLICY)
 
     async def run() -> TaskResult:
         async with factory:
@@ -109,6 +112,21 @@ def test_runner_fails_when_a_turn_is_not_committed(tmp_path: Path) -> None:
     assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001"]
 
 
+def test_runner_resumes_failed_turns_on_same_runner(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    factory = EvidenceWritingAgentSessionFactory(raise_once_turns=frozenset({"T0001", "T0002"}))
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 1
+    assert factory.processed == [(SESSION_REF, "T0001"), (SESSION_REF, "T0002")]
+    prompts = factory.runners[0].prompts
+    assert len(prompts) == 4
+    assert "Continue this assigned evidence extraction turn" in prompts[1]
+    assert "Continue this assigned evidence extraction turn" in prompts[3]
+
+
 def test_runner_writes_empty_card_for_zero_turn_session(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     _strip_turns_from_index(workspace)
@@ -149,7 +167,7 @@ def test_runner_emits_turn_advanced_per_committed_turn(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     factory = EvidenceWritingAgentSessionFactory()
     reporter = RecordingReporter()
-    runner = EvidenceExtractionRunner(agent_factory=factory)
+    runner = EvidenceExtractionRunner(agent_factory=factory, retry_policy=_FAST_RETRY_POLICY)
 
     async def run() -> TaskResult:
         async with factory:

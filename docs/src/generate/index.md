@@ -31,6 +31,9 @@ shape, and phase-local checks.
   of causing a phase to silently re-run the whole pipeline.
 - Evidence extraction failures may be carried into project synthesis as evidence gaps only when
   represented by durable evidence-card artifacts.
+- Codex-backed phases retry ordinary agent-turn failures inside the active task by re-reading their
+  durable artifacts and continuing on the same agent conversation. The pipeline scheduler does not
+  recover these failures by starting a new task attempt.
 - Each phase owns the correctness of its output. If an output misses required evidence, drops an
   input, overstates a claim, or violates structural rules, that is a bug in the producing phase.
 - Phase-local quality checks are implementation details. The overview states what each phase must

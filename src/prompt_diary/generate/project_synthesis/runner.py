@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.agent import AgentConfig
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_retry import (
+    AgentArtifactStatus,
+    AgentRetryPolicy,
+    run_agent_turn_with_resume,
+)
 from prompt_diary.generate.pipeline import TaskResult, project_synthesis_artifact
 from prompt_diary.generate.project_synthesis.cards import (
     committed_turn_keys,
@@ -50,6 +55,7 @@ class ProjectSynthesisRunner:
 
     agent_factory: AgentSessionFactory
     reasoning_effort: str | None = DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT
+    retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
         self,
@@ -83,30 +89,30 @@ class ProjectSynthesisRunner:
                 reasoning_effort=self.reasoning_effort,
             )
         )
-        await runner.turn(
-            project_synthesizer_prompt(
-                project_key=inputs.project_key,
-                project_json=inputs.project_json,
-                evidence_chains=inputs.evidence_chains,
-            )
+        initial_prompt = project_synthesizer_prompt(
+            project_key=inputs.project_key,
+            project_json=inputs.project_json,
+            evidence_chains=inputs.evidence_chains,
         )
-        uncovered = _uncovered_turns(output_path, universe)
-        if uncovered:
-            # One bounded continuation: name the still-uncovered turns so the agent can cover them.
-            # These instructions live only in the continuation prompt. This also recovers the
-            # all-gap case (empty paste): the agent learns the turn refs here and buckets them.
-            await runner.turn(
-                project_synthesizer_next_prompt(
-                    project_key=project_key,
-                    uncovered_turns=_render_uncovered(uncovered, committed),
-                )
-            )
-            uncovered = _uncovered_turns(output_path, universe)
-        if uncovered:
+        retry = await run_agent_turn_with_resume(
+            runner=runner,
+            initial_prompt=initial_prompt,
+            resume_prompt=lambda: project_synthesizer_next_prompt(
+                project_key=project_key,
+                uncovered_turns=_render_uncovered(
+                    _uncovered_turns(output_path, universe), committed
+                ),
+            ),
+            inspect_artifacts=lambda: _project_artifact_status(output_path, universe),
+            progress_made=lambda before, after: after < before,
+            action=f"while synthesizing project {project_key}",
+            retry_policy=self.retry_policy,
+        )
+        if not retry.ok:
             return TaskResult(
                 task_id=task.task_id,
                 status="failed",
-                errors=(_uncovered_message(project_key, uncovered),),
+                errors=retry.errors,
             )
         return TaskResult(task_id=task.task_id, status="success")
 
@@ -138,6 +144,13 @@ def _uncovered_turns(
 ) -> tuple[TurnReference, ...]:
     covered = _covered_keys(output_path)
     return tuple(ref for ref in universe if (ref.session_ref, ref.turn_ref) not in covered)
+
+
+def _project_artifact_status(
+    output_path: Path, universe: tuple[TurnReference, ...]
+) -> AgentArtifactStatus[int]:
+    uncovered_count = len(_uncovered_turns(output_path, universe))
+    return AgentArtifactStatus(complete=uncovered_count == 0, progress_marker=uncovered_count)
 
 
 def _render_uncovered(
@@ -192,11 +205,3 @@ def _missing_scope_message(task_id: str) -> str:
 
 def _unknown_project_message(project_key: str) -> str:
     return f"unknown project_key {project_key!r} in prepared workspace"
-
-
-def _uncovered_message(project_key: str, uncovered: tuple[TurnReference, ...]) -> str:
-    listed = ", ".join(f"{ref.session_ref}/{ref.turn_ref}" for ref in uncovered)
-    return (
-        f"project synthesis for {project_key} left {len(uncovered)} "
-        f"indexed turn(s) uncovered: {listed}"
-    )

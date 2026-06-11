@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.agent import AgentConfig
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_retry import (
+    AgentArtifactStatus,
+    AgentRetryPolicy,
+    run_agent_turn_with_resume,
+)
 from prompt_diary.generate.evidence_extraction.inputs import build_session_extraction_inputs
 from prompt_diary.generate.evidence_extraction.model import new_session_card
 from prompt_diary.generate.pipeline import TaskResult, evidence_card_artifact
@@ -47,6 +52,7 @@ class EvidenceExtractionRunner:
 
     agent_factory: AgentSessionFactory
     reasoning_effort: str | None = DEFAULT_EVIDENCE_REASONING_EFFORT
+    retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
         self,
@@ -81,12 +87,25 @@ class EvidenceExtractionRunner:
         total_turns = len(inputs.turns)
         previous_result_json: str | None = None
         for index, turn in enumerate(inputs.turns):
-            await runner.turn(_prompt_for_turn(inputs, turn, index, previous_result_json))
-            if turn.turn_ref not in _committed_turn_refs(card_path):
+            prompt = _prompt_for_turn(inputs, turn, index, previous_result_json)
+            retry = await run_agent_turn_with_resume(
+                runner=runner,
+                initial_prompt=prompt,
+                resume_prompt=lambda prompt=prompt, turn=turn: _resume_prompt_for_turn(
+                    prompt=prompt,
+                    session_ref=session_ref,
+                    turn_ref=turn.turn_ref,
+                ),
+                inspect_artifacts=lambda turn=turn: _turn_artifact_status(card_path, turn.turn_ref),
+                progress_made=lambda before, after: after and not before,
+                action=f"while extracting session {session_ref} turn {turn.turn_ref}",
+                retry_policy=self.retry_policy,
+            )
+            if not retry.ok:
                 return TaskResult(
                     task_id=task.task_id,
                     status="failed",
-                    errors=(_uncommitted_turn_message(session_ref, turn.turn_ref),),
+                    errors=retry.errors,
                 )
             reporter.emit(
                 TurnAdvanced(
@@ -127,6 +146,21 @@ def _prompt_for_turn(
     )
 
 
+def _resume_prompt_for_turn(*, prompt: str, session_ref: str, turn_ref: str) -> str:
+    return (
+        "Continue this assigned evidence extraction turn. "
+        f"The evidence card still does not show a committed chain for session {session_ref} "
+        f"turn {turn_ref}. Reuse the same context below, extract only this assigned turn, "
+        "and make one successful `write_evidence` commit for it.\n\n"
+        f"{prompt}"
+    )
+
+
+def _turn_artifact_status(card_path: Path, turn_ref: str) -> AgentArtifactStatus[bool]:
+    committed = turn_ref in _committed_turn_refs(card_path)
+    return AgentArtifactStatus(complete=committed, progress_marker=committed)
+
+
 def _committed_turn_refs(card_path: Path) -> frozenset[str]:
     if not card_path.exists():
         return frozenset()
@@ -163,10 +197,3 @@ def _write_empty_card(card_path: Path, project_key: str, session_ref: str) -> No
 
 def _missing_scope_message(task_id: str) -> str:
     return f"evidence extraction task {task_id} requires project_key and session_ref"
-
-
-def _uncommitted_turn_message(session_ref: str, turn_ref: str) -> str:
-    return (
-        f"no evidence chain was committed for session {session_ref} turn {turn_ref}; "
-        "the agent did not write a valid chain for the assigned turn"
-    )

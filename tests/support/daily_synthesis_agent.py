@@ -54,6 +54,8 @@ class DailySynthesisAgentRunner:
 
     config: AgentConfig
     skip_pass: frozenset[str]
+    fail_once_passes: frozenset[str]
+    failed_passes: set[str]
     prompts: list[str]
     tamper_citation: bool = False
 
@@ -67,6 +69,9 @@ class DailySynthesisAgentRunner:
         del timeout_seconds, output_schema
         self.prompts.append(prompt)
         pass_name = _pass_of(prompt)
+        if pass_name in self.fail_once_passes and pass_name not in self.failed_passes:
+            self.failed_passes.add(pass_name)
+            raise RuntimeError(_transient_pass_message(pass_name))
         if pass_name not in self.skip_pass:
             self._write(pass_name, prompt)
         return AgentTurnResult(assistant_text=f"{pass_name} done", events=())
@@ -165,9 +170,11 @@ class DailySynthesisAgentSessionFactory:
     """Mints daily-synthesis fake runners off a shared record; never starts Codex."""
 
     skip_pass: frozenset[str] = frozenset()
+    fail_once_passes: frozenset[str] = frozenset()
     tamper_citation: bool = False
     entered: int = 0
     exited: int = 0
+    failed_passes: set[str] = field(default_factory=set)
     runners: list[DailySynthesisAgentRunner] = field(default_factory=list)
 
     async def __aenter__(self) -> DailySynthesisAgentSessionFactory:
@@ -187,6 +194,8 @@ class DailySynthesisAgentSessionFactory:
         new_runner = DailySynthesisAgentRunner(
             config=config,
             skip_pass=self.skip_pass,
+            fail_once_passes=self.fail_once_passes,
+            failed_passes=self.failed_passes,
             prompts=[],
             tamper_citation=self.tamper_citation,
         )
@@ -277,6 +286,10 @@ def _rejected_message(result: object) -> str:
 
 def _unknown_pass_message() -> str:
     return "fake agent could not detect the pass from the prompt"
+
+
+def _transient_pass_message(pass_name: str) -> str:
+    return f"transient daily synthesis failure before writing {pass_name}"
 
 
 def _missing_project_key_message() -> str:

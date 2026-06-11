@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_retry import AgentRetryPolicy
 from prompt_diary.generate.pipeline import (
     TaskSpec,
     project_synthesis_artifact,
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
 
     from prompt_diary.generate.pipeline import TaskResult
 
+_FAST_RETRY_POLICY = AgentRetryPolicy(initial_backoff_seconds=0.0, max_backoff_seconds=0.0)
+
 
 def _task() -> TaskSpec:
     return TaskSpec(
@@ -40,7 +43,7 @@ def _task() -> TaskSpec:
 
 
 def _run(factory: GroupingAgentSessionFactory, workspace: Path) -> TaskResult:
-    runner = ProjectSynthesisRunner(agent_factory=factory)
+    runner = ProjectSynthesisRunner(agent_factory=factory, retry_policy=_FAST_RETRY_POLICY)
 
     async def run() -> TaskResult:
         async with factory:
@@ -156,8 +159,8 @@ def test_runner_fails_when_a_turn_is_left_uncovered(tmp_path: Path) -> None:
     result = _run(factory, workspace)
 
     assert result.status == "failed"
-    assert any("S0001/T0003" in error for error in result.errors)
-    assert len(factory.runners[0].prompts) == 2  # main turn + one continuation
+    assert any("agent made no progress" in error for error in result.errors)
+    assert len(factory.runners[0].prompts) == 4  # main turn + three no-progress continuations
 
 
 def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) -> None:
@@ -184,6 +187,26 @@ def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) 
         for ref in item["covered_turns"]
     }
     assert ("S0001", "T0003") in gap_covered
+
+
+def test_runner_resumes_failed_continuation_on_same_runner(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    factory = GroupingAgentSessionFactory(cover_gaps=False, fail_first_continuation=True)
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 1
+    assert len(factory.runners[0].prompts) == 3
+    assert "Continue: cover the remaining turns" in factory.runners[0].prompts[1]
+    assert "Continue: cover the remaining turns" in factory.runners[0].prompts[2]
+    envelope = load_project_synthesis(workspace)
+    covered = {
+        (ref["session_ref"], ref["turn_ref"])
+        for item in envelope["work_items"]
+        for ref in item["covered_turns"]
+    }
+    assert covered == set(ALL_TURNS)
 
 
 def test_runner_skips_continuation_when_first_turn_covers_everything(tmp_path: Path) -> None:

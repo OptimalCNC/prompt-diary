@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.generate.agent_retry import AgentRetryPolicy
 from prompt_diary.generate.daily_synthesis.runner import DailySynthesisRunner
 from prompt_diary.generate.pipeline import (
     TaskSpec,
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 
     from prompt_diary.generate.pipeline import TaskResult
 
+_FAST_RETRY_POLICY = AgentRetryPolicy(initial_backoff_seconds=0.0, max_backoff_seconds=0.0)
+
 
 def _task() -> TaskSpec:
     return TaskSpec(
@@ -51,7 +54,7 @@ def _task() -> TaskSpec:
 
 
 def _run(factory: DailySynthesisAgentSessionFactory, workspace: Path) -> TaskResult:
-    runner = DailySynthesisRunner(agent_factory=factory)
+    runner = DailySynthesisRunner(agent_factory=factory, retry_policy=_FAST_RETRY_POLICY)
 
     async def run() -> TaskResult:
         async with factory:
@@ -165,6 +168,20 @@ def test_runner_uses_a_fresh_conversation_per_pass(tmp_path: Path) -> None:
 
     # Each pass is its own agent conversation, each running exactly one turn.
     assert [len(runner.prompts) for runner in factory.runners] == [1, 1, 1, 1]
+
+
+def test_runner_resumes_failed_pass_on_same_runner(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    factory = DailySynthesisAgentSessionFactory(fail_once_passes=frozenset({"engagement"}))
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 4
+    assert [len(runner.prompts) for runner in factory.runners] == [1, 1, 2, 1]
+    assert "Continue the same engagement pass" in factory.runners[2].prompts[1]
+    report = load_daily_report(workspace)
+    assert report["engagement_assessment"] is not None
 
 
 def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:

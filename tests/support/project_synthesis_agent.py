@@ -40,10 +40,12 @@ class GroupingAgentRunner:
     config: AgentConfig
     cover_gaps: bool
     fail_continuation: bool
+    fail_first_continuation: bool
     processed: list[str]
     prompts: list[str] = field(default_factory=list)
     counter: _RefCounter = field(default_factory=_RefCounter)
     first_turn_session_limit: int | None = None
+    first_continuation_failed: bool = False
 
     async def turn(
         self,
@@ -55,6 +57,9 @@ class GroupingAgentRunner:
         del timeout_seconds, output_schema
         self.prompts.append(prompt)
         if _CONTINUATION_MARKER in prompt:
+            if self.fail_first_continuation and not self.first_continuation_failed:
+                self.first_continuation_failed = True
+                raise RuntimeError(_transient_continuation_message())
             if not self.fail_continuation:
                 self._cover_continuation(prompt)
             return AgentTurnResult(assistant_text="continued", events=())
@@ -122,6 +127,7 @@ class GroupingAgentSessionFactory:
 
     cover_gaps: bool = True
     fail_continuation: bool = False
+    fail_first_continuation: bool = False
     first_turn_session_limit: int | None = None
     entered: int = 0
     exited: int = 0
@@ -145,6 +151,7 @@ class GroupingAgentSessionFactory:
             config=config,
             cover_gaps=self.cover_gaps,
             fail_continuation=self.fail_continuation,
+            fail_first_continuation=self.fail_first_continuation,
             processed=self.processed,
             first_turn_session_limit=self.first_turn_session_limit,
         )
@@ -259,3 +266,7 @@ def _missing_project_key_message() -> str:
 
 def _unknown_annotation_message(line: str) -> str:
     return f"unknown uncovered-turn annotation (render drift): {line!r}"
+
+
+def _transient_continuation_message() -> str:
+    return "transient project continuation failure"

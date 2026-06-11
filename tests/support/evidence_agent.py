@@ -32,6 +32,8 @@ class EvidenceWritingAgentRunner:
     config: AgentConfig
     processed: list[tuple[str, str]]
     fail_turns: frozenset[str]
+    raise_once_turns: frozenset[str]
+    raised_turns: set[str]
     prompts: list[str] = field(default_factory=list)
     project_key: str | None = None
     session_ref: str | None = None
@@ -51,6 +53,9 @@ class EvidenceWritingAgentRunner:
         self.session_ref = _parse_first(_SESSION_REF_RE, prompt) or self.session_ref
         project_key = _require(self.project_key, "project_key")
         session_ref = _require(self.session_ref, "session_ref")
+        if turn_ref in self.raise_once_turns and turn_ref not in self.raised_turns:
+            self.raised_turns.add(turn_ref)
+            raise RuntimeError(_transient_turn_message(turn_ref))
         if turn_ref not in self.fail_turns:
             span = (int(target_turn["turn_start_line"]), int(target_turn["turn_end_line"]))
             write_evidence(
@@ -68,9 +73,11 @@ class EvidenceWritingAgentSessionFactory:
     """Mints per-session evidence-writing fake runners off a shared record."""
 
     fail_turns: frozenset[str] = frozenset()
+    raise_once_turns: frozenset[str] = frozenset()
     entered: int = 0
     exited: int = 0
     processed: list[tuple[str, str]] = field(default_factory=list)
+    raised_turns: set[str] = field(default_factory=set)
     runners: list[EvidenceWritingAgentRunner] = field(default_factory=list)
 
     async def __aenter__(self) -> EvidenceWritingAgentSessionFactory:
@@ -88,7 +95,11 @@ class EvidenceWritingAgentSessionFactory:
 
     async def runner(self, config: AgentConfig) -> EvidenceWritingAgentRunner:
         new_runner = EvidenceWritingAgentRunner(
-            config=config, processed=self.processed, fail_turns=self.fail_turns
+            config=config,
+            processed=self.processed,
+            fail_turns=self.fail_turns,
+            raise_once_turns=self.raise_once_turns,
+            raised_turns=self.raised_turns,
         )
         self.runners.append(new_runner)
         return new_runner
@@ -239,3 +250,7 @@ def _read_not_ok_message(session_ref: str, result: object) -> str:
 
 def _empty_read_message() -> str:
     return "compact read returned no records to derive a citation span from"
+
+
+def _transient_turn_message(turn_ref: str) -> str:
+    return f"transient failure before writing {turn_ref}"

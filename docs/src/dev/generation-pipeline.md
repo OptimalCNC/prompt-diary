@@ -78,6 +78,14 @@ prerequisites exist, which keeps phase development and debugging independent fro
 concurrency limits, marks dependents blocked after failed prerequisites, and validates that a
 successful task produced its declared outputs.
 
+The scheduler does not retry failed tasks. Codex-backed phase runners own same-process agent retry
+inside a task through `generate/agent_retry.py`: they keep the current `AgentRunner`, re-read durable
+artifacts after each successful or failed turn, and send a phase-specific resume prompt when the
+artifact shows more work is needed. The default policy permits three consecutive no-progress
+attempts with exponential backoff from 1s up to 60s. If that budget is exhausted, the phase returns
+a failed task with an `agent made no progress ...` error. Deterministic rendering and non-agent
+failures remain outside this helper.
+
 A full pipeline run succeeds when terminal deliverables succeed. Non-terminal tolerated failures,
 such as failed extraction attempts that still wrote durable evidence cards for project synthesis,
 remain visible on the run result without making the final report command fail.
@@ -110,12 +118,15 @@ next-turn prompt. Turns are driven in indexed order until the session is complet
 
 After each turn the runner verifies the result by reading the evidence card from the workspace
 directly. It never trusts the assistant's text response. An uncommitted turn — one where the card
-on disk does not reflect the expected turn — fails the task immediately.
+on disk does not reflect the expected turn — is retried on the same agent conversation until that
+turn is committed or the no-progress budget is exhausted. The retry counter is scoped to the
+current assigned turn and resets when the runner advances to the next committed turn.
 
-At the start of every run the runner deletes any existing evidence card and re-extracts all turns
+At the start of every task run the runner deletes any existing evidence card and re-extracts all turns
 from scratch. This reset means a re-run is always clean and never encounters `write_evidence`'s
-duplicate-turn rejection. A failed mid-run may leave a partial card on disk; project synthesis
-treats an incomplete card as an evidence gap, which is outside the scope of this phase.
+duplicate-turn rejection. Within that task run, retries never delete the active partial card. A
+failed mid-run may leave a partial card on disk; project synthesis treats an incomplete card as an
+evidence gap, which is outside the scope of this phase.
 
 The runner builds a workspace-aware agent factory once per run. For the Codex backend the factory
 registers the package MCP server (`report mcp serve`) with the prepared workspace path in the
@@ -124,6 +135,19 @@ the calling thread's working directory, so the MCP `write_evidence` tool resolve
 from that variable, falling back to cwd. The agent runs non-interactively
 (`approval_mode="auto_review"`, `sandbox="workspace-write"`) using the system `codex` binary on
 PATH.
+
+## Project And Daily Agent Retry
+
+Project synthesis uses the same helper with the current uncovered-turn count as its progress
+marker. A retry continues on the same runner with the current uncovered-turn list; progress means
+that list strictly shrinks, and completion means every indexed turn is covered. The runner deletes a
+pre-existing `project-synthesis.json` only once at task start, never between retry turns.
+
+Daily synthesis still uses one fresh agent conversation per pass: each project summary, report
+title, engagement assessment, and team-learning pass gets its own runner. A pass retries on that
+same runner until its target slot is written in `daily-report.json` or the no-progress budget is
+exhausted. If a turn fails after writing the slot, the artifact inspection treats the pass as
+complete.
 
 ## Progress
 
