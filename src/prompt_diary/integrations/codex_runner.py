@@ -390,8 +390,10 @@ def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
 
 def _codex_sdk_missing_message() -> str:
     return (
-        "The Codex SDK is not importable. Run `uv sync` inside this project or install the "
-        "`openai-codex` package before using CodexAgentRunner."
+        "The Codex SDK is not importable. Run `uv sync --extra codex` inside this project, "
+        "or install the tool with Codex support: `uv tool install prompt-diary "
+        "--with openai-codex==0.1.0b3 --with openai-codex-cli-bin==0.137.0a4 "
+        "--prerelease=allow`."
     )
 
 

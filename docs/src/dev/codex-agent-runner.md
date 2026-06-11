@@ -169,8 +169,9 @@ Artifact paths should usually be checked by the caller rather than trusted from 
 `CodexAgentRunner.turn(...)` starts one SDK thread on first use and reuses it for later turns.
 `CodexAgentSessionFactory` wraps a `CodexBackend` in an `AsyncExitStack` and mints a fresh
 `CodexAgentRunner` per `runner()` call — each runner is lifecycle-free; only the factory is a
-managed context. The package depends on the published `openai-codex` SDK, and the adapter module is
-not exported from `prompt_diary.__init__`.
+managed context. The base package loads the published `openai-codex` SDK lazily; install the
+`codex` extra for live generation work. The adapter module is not exported from
+`prompt_diary.__init__`.
 
 ## Codex SDK Usage
 

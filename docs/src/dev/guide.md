@@ -15,9 +15,14 @@ Set up the development environment:
 uv sync
 ```
 
-`uv sync` installs the published `openai-codex` Python SDK used by live generation tests. Prompt
-Diary starts that SDK against the local `codex` CLI found on `PATH`, so live tests reuse the same
-Codex authentication as the CLI.
+Use the `codex` extra when running live generation tests:
+
+```bash
+uv sync --extra codex
+```
+
+Prompt Diary starts the published `openai-codex` Python SDK against the local `codex` CLI found on
+`PATH`, so live tests reuse the same Codex authentication as the CLI.
 
 The repository also includes an optional Ubuntu 24.04 devcontainer. It builds from
 `.devcontainer/Dockerfile`, installs the project with `uv sync --locked --python 3.10`, and includes
