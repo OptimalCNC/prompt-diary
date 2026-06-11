@@ -119,6 +119,8 @@ class DailySynthesisRunner:
     async def _run_project_summary(
         self, workspace_path: Path, task: TaskSpec, project_key: str
     ) -> TaskResult | None:
+        if _project_summary_status(workspace_path, project_key).complete:
+            return None
         inputs = build_project_summary_inputs(
             workspace_path=workspace_path, project_key=project_key
         )
@@ -144,6 +146,8 @@ class DailySynthesisRunner:
         return None
 
     async def _run_report_title(self, workspace_path: Path, task: TaskSpec) -> TaskResult | None:
+        if _slot_status(workspace_path, "report_title").complete:
+            return None
         inputs = build_report_title_inputs(workspace_path=workspace_path)
         runner = await self._new_runner(workspace_path)
         prompt = report_title_prompt(context=inputs.context)
@@ -162,43 +166,47 @@ class DailySynthesisRunner:
         return None
 
     async def _run_report_passes(self, workspace_path: Path, task: TaskSpec) -> TaskResult | None:
-        inputs = build_report_inputs(workspace_path=workspace_path)
+        inputs: Any | None = None
+        if not _slot_status(workspace_path, "engagement_assessment").complete:
+            inputs = build_report_inputs(workspace_path=workspace_path)
+            engagement_runner = await self._new_runner(workspace_path)
+            engagement = engagement_prompt(
+                work_items=inputs.work_items,
+                source_user_messages=inputs.source_user_messages,
+            )
+            retry = await self._run_pass(
+                runner=engagement_runner,
+                initial_prompt=engagement,
+                inspect_artifacts=lambda: _slot_status(workspace_path, "engagement_assessment"),
+                action="while writing engagement_assessment",
+                resume_instruction=(
+                    "Continue the same engagement pass. The engagement_assessment slot is still "
+                    "unwritten; make the requested `write_engagement` call now."
+                ),
+            )
+            if not retry.ok:
+                return _failed(task, retry.errors)
 
-        engagement_runner = await self._new_runner(workspace_path)
-        engagement = engagement_prompt(
-            work_items=inputs.work_items,
-            source_user_messages=inputs.source_user_messages,
-        )
-        retry = await self._run_pass(
-            runner=engagement_runner,
-            initial_prompt=engagement,
-            inspect_artifacts=lambda: _slot_status(workspace_path, "engagement_assessment"),
-            action="while writing engagement_assessment",
-            resume_instruction=(
-                "Continue the same engagement pass. The engagement_assessment slot is still "
-                "unwritten; make the requested `write_engagement` call now."
-            ),
-        )
-        if not retry.ok:
-            return _failed(task, retry.errors)
-
-        learning_runner = await self._new_runner(workspace_path)
-        learning = team_learning_prompt(
-            work_items=inputs.work_items,
-            source_user_messages=inputs.source_user_messages,
-        )
-        retry = await self._run_pass(
-            runner=learning_runner,
-            initial_prompt=learning,
-            inspect_artifacts=lambda: _slot_status(workspace_path, "team_learning"),
-            action="while writing team_learning",
-            resume_instruction=(
-                "Continue the same team-learning pass. The team_learning slot is still "
-                "unwritten; make the requested `write_team_learning` call now."
-            ),
-        )
-        if not retry.ok:
-            return _failed(task, retry.errors)
+        if not _slot_status(workspace_path, "team_learning").complete:
+            if inputs is None:
+                inputs = build_report_inputs(workspace_path=workspace_path)
+            learning_runner = await self._new_runner(workspace_path)
+            learning = team_learning_prompt(
+                work_items=inputs.work_items,
+                source_user_messages=inputs.source_user_messages,
+            )
+            retry = await self._run_pass(
+                runner=learning_runner,
+                initial_prompt=learning,
+                inspect_artifacts=lambda: _slot_status(workspace_path, "team_learning"),
+                action="while writing team_learning",
+                resume_instruction=(
+                    "Continue the same team-learning pass. The team_learning slot is still "
+                    "unwritten; make the requested `write_team_learning` call now."
+                ),
+            )
+            if not retry.ok:
+                return _failed(task, retry.errors)
         return None
 
     async def _run_pass(

@@ -545,7 +545,6 @@ def _project_synthesis_task(project: PreparedProject) -> TaskSpec:
             evidence_task_id(project.project_key, session.session_ref)
             for session in project.sessions
         ),
-        dependency_failure_blocks=False,
         prerequisite_artifacts=(
             ArtifactSpec(PurePosixPath("metadata.json"), "workspace metadata"),
             ArtifactSpec(

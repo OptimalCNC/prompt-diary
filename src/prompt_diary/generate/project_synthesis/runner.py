@@ -13,11 +13,15 @@ from prompt_diary.generate.agent_retry import (
     AgentRetryPolicy,
     run_agent_turn_with_resume,
 )
+from prompt_diary.generate.evidence_extraction.completeness import (
+    inspect_evidence_card_for_session,
+)
 from prompt_diary.generate.pipeline import TaskResult, project_synthesis_artifact
 from prompt_diary.generate.project_synthesis.cards import (
     committed_turn_keys,
     load_committed_chains,
 )
+from prompt_diary.generate.project_synthesis.completeness import inspect_project_synthesis
 from prompt_diary.generate.project_synthesis.inputs import build_project_synthesis_inputs
 from prompt_diary.generate.project_synthesis.model import (
     TurnReference,
@@ -68,12 +72,22 @@ class ProjectSynthesisRunner:
         del reporter
         project_key = _require_scope(task)
         project = _require_project(workspace_path, project_key)
+        output_path = workspace_path / project_synthesis_artifact(project_key).path
+        evidence_errors = _incomplete_evidence_errors(workspace_path, project)
+        if evidence_errors:
+            return TaskResult(task_id=task.task_id, status="failed", errors=evidence_errors)
+
+        if output_path.exists():
+            inspection = inspect_project_synthesis(
+                workspace_path=workspace_path, project_key=project_key
+            )
+            if inspection.complete:
+                return TaskResult(task_id=task.task_id, status="success")
+            output_path.unlink()
+
         inputs = build_project_synthesis_inputs(
             workspace_path=workspace_path, project_key=project_key
         )
-        output_path = workspace_path / project_synthesis_artifact(project_key).path
-        if output_path.exists():
-            output_path.unlink()
 
         universe = _indexed_turn_universe(project)
         if not universe:
@@ -103,12 +117,18 @@ class ProjectSynthesisRunner:
                     _uncovered_turns(output_path, universe), committed
                 ),
             ),
-            inspect_artifacts=lambda: _project_artifact_status(output_path, universe),
+            inspect_artifacts=lambda: _project_artifact_status(
+                workspace_path=workspace_path,
+                output_path=output_path,
+                project_key=project_key,
+                universe=universe,
+            ),
             progress_made=lambda before, after: after < before,
             action=f"while synthesizing project {project_key}",
             retry_policy=self.retry_policy,
         )
         if not retry.ok:
+            _discard_envelope(output_path)
             return TaskResult(
                 task_id=task.task_id,
                 status="failed",
@@ -139,6 +159,20 @@ def _indexed_turn_universe(project: PreparedProject) -> tuple[TurnReference, ...
     )
 
 
+def _incomplete_evidence_errors(workspace_path: Path, project: PreparedProject) -> tuple[str, ...]:
+    errors: list[str] = []
+    for session in project.sessions:
+        inspection = inspect_evidence_card_for_session(
+            workspace_path=workspace_path,
+            project_key=project.project_key,
+            session=session,
+        )
+        if not inspection.complete:
+            details = "; ".join(inspection.errors)
+            errors.append(_incomplete_evidence_message(session.session_ref, details))
+    return tuple(errors)
+
+
 def _uncovered_turns(
     output_path: Path, universe: tuple[TurnReference, ...]
 ) -> tuple[TurnReference, ...]:
@@ -147,10 +181,18 @@ def _uncovered_turns(
 
 
 def _project_artifact_status(
-    output_path: Path, universe: tuple[TurnReference, ...]
+    *,
+    workspace_path: Path,
+    output_path: Path,
+    project_key: str,
+    universe: tuple[TurnReference, ...],
 ) -> AgentArtifactStatus[int]:
     uncovered_count = len(_uncovered_turns(output_path, universe))
-    return AgentArtifactStatus(complete=uncovered_count == 0, progress_marker=uncovered_count)
+    inspection = inspect_project_synthesis(workspace_path=workspace_path, project_key=project_key)
+    return AgentArtifactStatus(
+        complete=inspection.complete,
+        progress_marker=uncovered_count,
+    )
 
 
 def _render_uncovered(
@@ -195,6 +237,11 @@ def _write_empty_envelope(output_path: Path, project_key: str, project_label: st
     )
 
 
+def _discard_envelope(output_path: Path) -> None:
+    if output_path.exists():
+        output_path.unlink()
+
+
 def _as_str(value: object) -> str:
     return value if isinstance(value, str) else ""
 
@@ -205,3 +252,7 @@ def _missing_scope_message(task_id: str) -> str:
 
 def _unknown_project_message(project_key: str) -> str:
     return f"unknown project_key {project_key!r} in prepared workspace"
+
+
+def _incomplete_evidence_message(session_ref: str, details: str) -> str:
+    return f"incomplete prerequisite evidence card for {session_ref}: {details}"

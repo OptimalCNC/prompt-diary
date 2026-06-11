@@ -82,7 +82,7 @@ def test_generate_workflow_rejects_phase_runner_missing_declared_outputs(tmp_pat
     assert "missing output artifact after success: daily-report.json" in str(exc_info.value)
 
 
-def test_generate_workflow_treats_evidence_failure_as_gap_when_report_completes(
+def test_generate_workflow_reports_evidence_failure_instead_of_gap_accounting(
     tmp_path: Path,
 ) -> None:
     reports_root = tmp_path / ".reports"
@@ -90,12 +90,11 @@ def test_generate_workflow_treats_evidence_failure_as_gap_when_report_completes(
     _write_workspace_metadata(workspace, timezone_name="Asia/Shanghai")
     _write_project(workspace=workspace, project_key="Project-123", session_ref="S0001")
 
-    result = _workflow(EvidenceGapPhaseRunner()).run_pipeline(workspace_path=workspace)
+    with pytest.raises(PromptDiaryError) as exc_info:
+        _workflow(EvidenceGapPhaseRunner()).run_pipeline(workspace_path=workspace)
 
-    assert result.pipeline_result.ok
-    assert not result.pipeline_result.all_tasks_ok
-    assert result.report_path.exists()
-    assert result.daily_report_path.exists()
+    assert "Generation pipeline failed:" in str(exc_info.value)
+    assert "evidence:Project-123:S0001" in str(exc_info.value)
 
 
 def test_run_generate_phase_runs_one_task(tmp_path: Path) -> None:

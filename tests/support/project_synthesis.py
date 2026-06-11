@@ -122,6 +122,7 @@ COMMITTED_TURNS: tuple[tuple[str, str], ...] = (
     ("S0001", "T0002"),
     ("S0002", "T0001"),
 )
+COMPLETE_COMMITTED_TURNS: tuple[tuple[str, str], ...] = ALL_TURNS
 
 
 def copy_basic_project_workspace(tmp_path: Path) -> Path:
@@ -130,6 +131,48 @@ def copy_basic_project_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     shutil.copytree(FIXTURE_ROOT / "workspace", workspace)
     return workspace
+
+
+def copy_complete_project_workspace(tmp_path: Path) -> Path:
+    """Copy the fixture and complete its evidence cards for project-runner tests."""
+    workspace = copy_basic_project_workspace(tmp_path)
+    card_path = workspace / "projects" / PROJECT_KEY / "evidence" / "S0001.json"
+    card = cast("dict[str, Any]", json.loads(card_path.read_text(encoding="utf-8")))
+    chains = cast("list[dict[str, Any]]", card["evidence_chains"])
+    chains.append(_no_material_chain("T0003", start=13, end=15))
+    card_path.write_text(json.dumps(card, indent=2) + "\n", encoding="utf-8")
+    return workspace
+
+
+def _no_material_chain(turn_ref: str, *, start: int, end: int) -> dict[str, Any]:
+    return {
+        "turn_ref": turn_ref,
+        "trigger": {
+            "type": "explicit_user_message",
+            "summary": f"User turn {turn_ref} had no material extractable outcome.",
+            "quoted_messages": [
+                {
+                    "text": "No material follow-up.",
+                    "citations": [{"lines": f"{start}-{start}"}],
+                }
+            ],
+            "citations": [{"lines": f"{start}-{start}"}],
+        },
+        "agent_reactions": [
+            {
+                "summary": f"Agent produced no material result for {turn_ref}.",
+                "citations": [{"lines": f"{end}-{end}"}],
+            }
+        ],
+        "outcomes": [],
+        "observed_checks": [],
+        "terminal_state": {
+            "type": "no_material",
+            "summary": f"No material result was produced for {turn_ref}.",
+            "citations": [{"lines": f"{end}-{end}"}],
+        },
+        "materiality": "none",
+    }
 
 
 def synthesis_path(workspace_path: Path) -> Path:

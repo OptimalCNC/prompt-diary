@@ -17,7 +17,7 @@ and citations are the work item's ``evidence_refs`` resolved to their indexed-tu
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from prompt_diary.errors import PromptDiaryError
@@ -25,7 +25,16 @@ from prompt_diary.generate.daily_synthesis.citations import CitationResolver
 from prompt_diary.generate.daily_synthesis.model import (
     CONFIDENCE_RANK,
     REPORTABLE_WORK_ITEM_KINDS,
+    InvalidDailyReportInput,
     derive_disposition,
+    parse_engagement,
+    parse_project_summary,
+    parse_report_title,
+    parse_team_learning,
+)
+from prompt_diary.generate.project_synthesis.cards import (
+    committed_turn_keys,
+    load_committed_chains,
 )
 from prompt_diary.generate.project_synthesis.model import (
     InvalidWorkItem,
@@ -75,6 +84,11 @@ def build_daily_report(*, workspace_path: Path) -> dict[str, Any]:
         "engagement_assessment": None,
         "team_learning": None,
     }
+    _preserve_completed_slots(
+        report,
+        previous=_read_existing_report(workspace_path),
+        citation_scope=_CommittedCitationScope(resolver, workspace_path),
+    )
     _write_report(workspace_path, report)
     return report
 
@@ -229,6 +243,198 @@ def _read_envelope(workspace_path: Path, project_key: str) -> dict[str, Any]:
     if not path.exists():  # pragma: no cover - a synthesized project always has an envelope
         return {}
     return _load_json(path)
+
+
+def _read_existing_report(workspace_path: Path) -> dict[str, Any] | None:
+    path = workspace_path / _REPORT_NAME
+    if not path.exists():
+        return None
+    try:
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else None
+
+
+@dataclass
+class _CommittedCitationScope:
+    """Resolve stored daily citations only when they still name committed evidence."""
+
+    resolver: CitationResolver
+    workspace_path: Path
+    committed_by_project: dict[str, frozenset[tuple[str, str]]] = field(default_factory=dict)
+
+    def citation_is_sound(self, citation: object, *, project_key: str | None = None) -> bool:
+        mapping = _as_mapping(citation)
+        citation_project = _as_str(mapping.get("project_key"))
+        session_ref = _as_str(mapping.get("session_ref"))
+        turn_ref = _as_str(mapping.get("turn_ref"))
+        lines = _as_str(mapping.get("lines"))
+        if not citation_project or not session_ref or not turn_ref or not lines:
+            return False
+        if project_key is not None and citation_project != project_key:
+            return False
+        if (session_ref, turn_ref) not in self._committed_for(citation_project):
+            return False
+        resolved = self.resolver.resolve(
+            project_key=citation_project,
+            session_ref=session_ref,
+            turn_ref=turn_ref,
+        )
+        return resolved is not None and resolved.lines == lines
+
+    def _committed_for(self, project_key: str) -> frozenset[tuple[str, str]]:
+        cached = self.committed_by_project.get(project_key)
+        if cached is None:
+            cached = committed_turn_keys(load_committed_chains(self.workspace_path, project_key))
+            self.committed_by_project[project_key] = cached
+        return cached
+
+
+def _preserve_completed_slots(
+    report: dict[str, Any],
+    *,
+    previous: dict[str, Any] | None,
+    citation_scope: _CommittedCitationScope,
+) -> None:
+    if previous is None:
+        return
+    _preserve_project_summaries(report, previous, citation_scope)
+    if _title_substrate(previous) == _title_substrate(report) and _complete_report_title(
+        previous.get("report_title"), citation_scope
+    ):
+        report["report_title"] = previous.get("report_title")
+    if _report_pass_substrate(previous) == _report_pass_substrate(report) and _complete_engagement(
+        previous.get("engagement_assessment"), citation_scope
+    ):
+        report["engagement_assessment"] = previous.get("engagement_assessment")
+    if _report_pass_substrate(previous) == _report_pass_substrate(
+        report
+    ) and _complete_team_learning(previous.get("team_learning"), citation_scope):
+        report["team_learning"] = previous.get("team_learning")
+
+
+def _preserve_project_summaries(
+    report: dict[str, Any],
+    previous: dict[str, Any],
+    citation_scope: _CommittedCitationScope,
+) -> None:
+    old_projects = {
+        _as_str(_as_mapping(project).get("project_key")): _as_mapping(project)
+        for project in _as_list(previous.get("projects"))
+    }
+    for project in _as_list(report.get("projects")):
+        new_project = _as_mapping(project)
+        project_key = _as_str(new_project.get("project_key"))
+        old_project = old_projects.get(project_key)
+        if old_project is None:
+            continue
+        if _project_summary_substrate(old_project) != _project_summary_substrate(new_project):
+            continue
+        summary = old_project.get("summary")
+        if _complete_project_summary(summary, citation_scope, project_key=project_key):
+            new_project["summary"] = summary
+
+
+def _complete_project_summary(
+    value: object,
+    citation_scope: _CommittedCitationScope,
+    *,
+    project_key: str,
+) -> bool:
+    parsed = parse_project_summary(_as_mapping(value))
+    return not isinstance(parsed, InvalidDailyReportInput) and _all_citations_sound(
+        _as_mapping(value).get("citations"), citation_scope, project_key=project_key
+    )
+
+
+def _complete_report_title(value: object, citation_scope: _CommittedCitationScope) -> bool:
+    parsed = parse_report_title(_as_mapping(value))
+    return not isinstance(parsed, InvalidDailyReportInput) and _all_citations_sound(
+        _as_mapping(value).get("citations"), citation_scope
+    )
+
+
+def _complete_engagement(value: object, citation_scope: _CommittedCitationScope) -> bool:
+    mapping = _as_mapping(value)
+    parsed = parse_engagement(
+        overall_reading=mapping.get("overall_reading"),
+        observations=mapping.get("observations"),
+        limits=mapping.get("limits"),
+    )
+    return not isinstance(parsed, InvalidDailyReportInput) and all(
+        _all_citations_sound(citations, citation_scope)
+        for citations in _engagement_citation_lists(mapping)
+    )
+
+
+def _complete_team_learning(value: object, citation_scope: _CommittedCitationScope) -> bool:
+    mapping = _as_mapping(value)
+    parsed = parse_team_learning(
+        takeaways=mapping.get("takeaways"),
+        patterns=mapping.get("patterns"),
+        limits=mapping.get("limits"),
+    )
+    return not isinstance(parsed, InvalidDailyReportInput) and all(
+        _all_citations_sound(citations, citation_scope)
+        for citations in _team_learning_citation_lists(mapping)
+    )
+
+
+def _all_citations_sound(
+    value: object,
+    citation_scope: _CommittedCitationScope,
+    *,
+    project_key: str | None = None,
+) -> bool:
+    citations = _as_list(value)
+    return bool(citations) and all(
+        citation_scope.citation_is_sound(citation, project_key=project_key)
+        for citation in citations
+    )
+
+
+def _engagement_citation_lists(section: dict[str, Any]) -> list[object]:
+    return [
+        _as_mapping(section.get("overall_reading")).get("citations"),
+        *[
+            _as_mapping(observation).get("citations")
+            for observation in _as_list(section.get("observations"))
+        ],
+    ]
+
+
+def _team_learning_citation_lists(section: dict[str, Any]) -> list[object]:
+    return [
+        _as_mapping(section.get("takeaways")).get("citations"),
+        *[_as_mapping(pattern).get("citations") for pattern in _as_list(section.get("patterns"))],
+    ]
+
+
+def _project_summary_substrate(project: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in project.items() if key != "summary"}
+
+
+def _title_substrate(report: dict[str, Any]) -> dict[str, Any]:
+    return _without_top_synthesized_slots(report)
+
+
+def _report_pass_substrate(report: dict[str, Any]) -> dict[str, Any]:
+    substrate = _without_top_synthesized_slots(report)
+    projects = [
+        {**_as_mapping(project), "summary": None} for project in _as_list(substrate.get("projects"))
+    ]
+    return {**substrate, "projects": projects}
+
+
+def _without_top_synthesized_slots(report: dict[str, Any]) -> dict[str, Any]:
+    synthesized = {
+        "report_title",
+        "overall_confidence",
+        "engagement_assessment",
+        "team_learning",
+    }
+    return {key: value for key, value in report.items() if key not in synthesized}
 
 
 def _write_report(workspace_path: Path, report: dict[str, Any]) -> None:

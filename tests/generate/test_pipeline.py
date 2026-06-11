@@ -67,7 +67,7 @@ def test_generation_plan_builds_project_local_fan_in(tmp_path: Path) -> None:
         evidence_task_id("Alpha-111111111111", "S0001"),
         evidence_task_id("Alpha-111111111111", "S0002"),
     )
-    assert not alpha_project.dependency_failure_blocks
+    assert alpha_project.dependency_failure_blocks
     assert [artifact.path.as_posix() for artifact in alpha_project.prerequisite_artifacts] == [
         "metadata.json",
         "projects/Alpha-111111111111/project.json",
@@ -182,7 +182,7 @@ def test_project_synthesis_can_start_before_unrelated_project_evidence_finishes(
     assert alpha_project_start < beta_evidence_finish
 
 
-def test_failed_evidence_with_durable_card_does_not_block_project_gap_accounting(
+def test_failed_evidence_blocks_project_even_when_card_exists(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace_fixture(
@@ -204,15 +204,14 @@ def test_failed_evidence_with_durable_card_does_not_block_project_gap_accounting
         )
     )
 
-    assert result.ok
-    assert not result.all_tasks_ok
+    assert not result.ok
     assert result.result_for(evidence_task_id("Alpha-111111111111", "S0001")).status == "failed"
-    assert result.result_for(project_synthesis_task_id("Alpha-111111111111")).status == "success"
+    assert result.result_for(project_synthesis_task_id("Alpha-111111111111")).status == "blocked"
     assert result.result_for(project_synthesis_task_id("Beta-222222222222")).status == "success"
-    assert result.result_for(daily_synthesis_task_id()).status == "success"
+    assert result.result_for(daily_synthesis_task_id()).status == "blocked"
 
 
-def test_missing_evidence_card_fails_project_and_blocks_daily(tmp_path: Path) -> None:
+def test_failed_evidence_without_card_blocks_project_and_daily(tmp_path: Path) -> None:
     workspace = _workspace_fixture(
         tmp_path,
         {
@@ -234,10 +233,7 @@ def test_missing_evidence_card_fails_project_and_blocks_daily(tmp_path: Path) ->
 
     assert not result.ok
     assert result.result_for(evidence_task_id("Alpha-111111111111", "S0001")).status == "failed"
-    assert result.result_for(project_synthesis_task_id("Alpha-111111111111")).status == "failed"
-    assert result.result_for(project_synthesis_task_id("Alpha-111111111111")).errors == (
-        "missing prerequisite artifact: projects/Alpha-111111111111/evidence/S0001.json",
-    )
+    assert result.result_for(project_synthesis_task_id("Alpha-111111111111")).status == "blocked"
     assert result.result_for(project_synthesis_task_id("Beta-222222222222")).status == "success"
     assert result.result_for(daily_synthesis_task_id()).status == "blocked"
 

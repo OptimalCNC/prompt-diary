@@ -29,6 +29,7 @@ __all__ = [
     "WriteEvidenceAppendedResult",
     "WriteEvidenceInvalidResult",
     "WriteEvidenceResult",
+    "validate_evidence_chain_against_turn",
     "write_evidence",
 ]
 
@@ -90,7 +91,7 @@ def write_evidence(
     if isinstance(resolved, WriteEvidenceInvalidResult):
         return resolved
 
-    chain_errors = _check_chain_against_turn(chain, resolved.turn_span)
+    chain_errors = validate_evidence_chain_against_turn(chain, resolved.turn_span)
     if chain_errors:
         return WriteEvidenceInvalidResult("invalid", tuple(chain_errors))
 
@@ -149,14 +150,15 @@ def _find_turn(
     return turn
 
 
-def _check_chain_against_turn(
+def validate_evidence_chain_against_turn(
     chain: EvidenceChain,
     turn_span: LineSpan,
-) -> list[EvidenceWriteError]:
+) -> tuple[EvidenceWriteError, ...]:
+    """Return workspace-dependent validation errors for a parsed evidence chain."""
     errors: list[EvidenceWriteError] = []
     _check_citation_containment(chain, turn_span, errors)
     _check_material_outcomes_cite_reaction(chain, errors)
-    return errors
+    return tuple(errors)
 
 
 def _check_citation_containment(

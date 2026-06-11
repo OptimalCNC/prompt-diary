@@ -33,6 +33,7 @@ __all__ = [
     "WriteWorkItemAppendedResult",
     "WriteWorkItemInvalidResult",
     "WriteWorkItemResult",
+    "validate_work_item_against_workspace",
     "write_work_item",
 ]
 
@@ -89,7 +90,7 @@ def write_work_item(
     envelope = _read_envelope(envelope_path)
     existing_items = _existing_work_items(envelope)
 
-    errors = _validate_against_workspace(
+    errors = validate_work_item_against_workspace(
         item,
         universe=frozenset((ref.session_ref, ref.turn_ref) for ref in universe),
         committed=committed,
@@ -110,7 +111,7 @@ def write_work_item(
     return WriteWorkItemAppendedResult("appended", project_key, item.work_item_ref, uncovered)
 
 
-def _validate_against_workspace(
+def validate_work_item_against_workspace(
     item: WorkItem,
     *,
     universe: frozenset[tuple[str, str]],
@@ -118,6 +119,7 @@ def _validate_against_workspace(
     already_covered: frozenset[tuple[str, str]],
     existing_refs: frozenset[str],
 ) -> list[WorkItemWriteError]:
+    """Return workspace-dependent validation errors for one parsed work item."""
     errors: list[WorkItemWriteError] = []
     if item.work_item_ref in existing_refs:
         errors.append(

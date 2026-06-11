@@ -14,6 +14,7 @@ from prompt_diary.generate.agent_retry import (
     AgentRetryPolicy,
     run_agent_turn_with_resume,
 )
+from prompt_diary.generate.evidence_extraction.completeness import inspect_evidence_card
 from prompt_diary.generate.evidence_extraction.inputs import build_session_extraction_inputs
 from prompt_diary.generate.evidence_extraction.model import new_session_card
 from prompt_diary.generate.pipeline import TaskResult, evidence_card_artifact
@@ -70,6 +71,13 @@ class EvidenceExtractionRunner:
         )
         card_path = workspace_path / evidence_card_artifact(project_key, session_ref).path
         if card_path.exists():
+            inspection = inspect_evidence_card(
+                workspace_path=workspace_path,
+                project_key=project_key,
+                session_ref=session_ref,
+            )
+            if inspection.complete:
+                return TaskResult(task_id=task.task_id, status="success")
             card_path.unlink()
 
         if not inputs.turns:
@@ -102,6 +110,7 @@ class EvidenceExtractionRunner:
                 retry_policy=self.retry_policy,
             )
             if not retry.ok:
+                _discard_card(card_path)
                 return TaskResult(
                     task_id=task.task_id,
                     status="failed",
@@ -193,6 +202,11 @@ def _write_empty_card(card_path: Path, project_key: str, session_ref: str) -> No
         json.dumps(new_session_card(project_key, session_ref), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+def _discard_card(card_path: Path) -> None:
+    if card_path.exists():
+        card_path.unlink()
 
 
 def _missing_scope_message(task_id: str) -> str:

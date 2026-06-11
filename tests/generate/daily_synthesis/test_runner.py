@@ -11,6 +11,7 @@ separate Rendering phase projects it into the reader-facing views (see
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,7 @@ from tests.support.daily_synthesis import (
     copy_basic_daily_workspace,
     copy_corrupt_daily_workspace,
     copy_two_projects_daily_workspace,
+    daily_report_path,
     empty_daily_workspace,
     load_daily_report,
     rewrite_envelope_gap_only,
@@ -100,6 +102,126 @@ def test_runner_runs_one_pass_per_project_plus_two(tmp_path: Path) -> None:
 
     assert len(factory.runners) == 4
     assert len(factory.prompts) == 4
+
+
+def test_runner_reuses_completed_daily_slots(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    first_factory = DailySynthesisAgentSessionFactory()
+    assert _run(first_factory, workspace).status == "success"
+    report_before = load_daily_report(workspace)
+    second_factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(second_factory, workspace)
+
+    assert result.status == "success"
+    assert second_factory.runners == []
+    assert load_daily_report(workspace) == report_before
+
+
+def test_runner_ignores_malformed_existing_daily_report(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    daily_report_path(workspace).write_text("{", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 4
+
+
+def test_runner_handles_existing_report_missing_project_entry(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    daily_report_path(workspace).write_text(
+        json.dumps({"schema_version": 1, "projects": []}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 4
+
+
+@pytest.mark.parametrize(
+    ("case_name", "citation_update"),
+    [
+        ("missing-project", {"project_key": None}),
+        ("wrong-project", {"project_key": "Other-000000000000"}),
+        ("uncommitted-turn", {"turn_ref": "T0003", "lines": "13-15"}),
+    ],
+)
+def test_runner_discards_unsound_existing_project_summary_citations(
+    tmp_path: Path,
+    case_name: str,
+    citation_update: dict[str, str | None],
+) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path / case_name)
+    assert _run(DailySynthesisAgentSessionFactory(), workspace).status == "success"
+    report = load_daily_report(workspace)
+    citation = report["projects"][0]["summary"]["citations"][0]
+    for key, value in citation_update.items():
+        if value is None:
+            del citation[key]
+        else:
+            citation[key] = value
+    daily_report_path(workspace).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert any("write_project_summary" in prompt for prompt in factory.prompts)
+
+
+def test_runner_skips_engagement_but_runs_missing_team_learning(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    assert _run(DailySynthesisAgentSessionFactory(), workspace).status == "success"
+    report = load_daily_report(workspace)
+    report["team_learning"] = None
+    daily_report_path(workspace).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 1
+    assert "write_team_learning" in factory.prompts[0]
+
+
+def test_runner_regenerates_invalid_existing_slot(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    assert _run(DailySynthesisAgentSessionFactory(), workspace).status == "success"
+    report = load_daily_report(workspace)
+    report["engagement_assessment"]["overall_reading"]["citations"] = []
+    daily_report_path(workspace).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 1
+    assert "write_engagement" in factory.prompts[0]
+    assert load_daily_report(workspace)["engagement_assessment"] is not None
+
+
+def test_runner_discards_daily_slots_when_project_work_items_change(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    assert _run(DailySynthesisAgentSessionFactory(), workspace).status == "success"
+    envelope_path = workspace / "projects" / PROJECT_KEY / "project-synthesis.json"
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    envelope["work_items"][0]["title"] = "Simplify the MCP evidence tools after resume"
+    envelope_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 4
+    assert any("write_project_summary" in prompt for prompt in factory.prompts)
+    assert any("write_report_title" in prompt for prompt in factory.prompts)
+    assert any("write_engagement" in prompt for prompt in factory.prompts)
+    assert any("write_team_learning" in prompt for prompt in factory.prompts)
 
 
 def _summary_pass_project_keys(factory: DailySynthesisAgentSessionFactory) -> list[str]:

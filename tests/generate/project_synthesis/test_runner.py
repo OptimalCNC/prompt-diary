@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,9 +16,10 @@ from prompt_diary.generate.pipeline import (
 from prompt_diary.generate.project_synthesis.runner import ProjectSynthesisRunner
 from tests.support.project_synthesis import (
     ALL_TURNS,
-    COMMITTED_TURNS,
+    COMPLETE_COMMITTED_TURNS,
     PROJECT_KEY,
     copy_basic_project_workspace,
+    copy_complete_project_workspace,
     load_project_synthesis,
     synthesis_path,
 )
@@ -53,7 +53,7 @@ def _run(factory: GroupingAgentSessionFactory, workspace: Path) -> TaskResult:
 
 
 def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
 
     _run(factory, workspace)
@@ -62,7 +62,7 @@ def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
 
 
 def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
     runner = ProjectSynthesisRunner(agent_factory=factory, reasoning_effort="high")
 
@@ -76,7 +76,7 @@ def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
 
 
 def test_runner_covers_every_turn_and_writes_envelope(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
 
     result = _run(factory, workspace)
@@ -92,34 +92,40 @@ def test_runner_covers_every_turn_and_writes_envelope(tmp_path: Path) -> None:
     assert covered == set(ALL_TURNS)
 
 
+def test_runner_reuses_complete_existing_envelope(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
+    first_factory = GroupingAgentSessionFactory()
+    assert _run(first_factory, workspace).status == "success"
+    second_factory = GroupingAgentSessionFactory()
+
+    result = _run(second_factory, workspace)
+
+    assert result.status == "success"
+    assert second_factory.runners == []
+
+
 def test_runner_populates_source_user_messages(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
 
     _run(GroupingAgentSessionFactory(), workspace)
 
     messages = load_project_synthesis(workspace)["source_user_messages"]
     assert [(entry["session_ref"], entry["turn_ref"]) for entry in messages] == list(
-        COMMITTED_TURNS
+        COMPLETE_COMMITTED_TURNS
     )
 
 
-def test_runner_buckets_gap_turn_as_evidence_gap_item(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+def test_runner_groups_completed_evidence_instead_of_creating_gap_items(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
 
     _run(GroupingAgentSessionFactory(), workspace)
 
     envelope = load_project_synthesis(workspace)
-    gap_covered = {
-        (ref["session_ref"], ref["turn_ref"])
-        for item in envelope["work_items"]
-        if item["kind"] == "evidence_gap_item"
-        for ref in item["covered_turns"]
-    }
-    assert ("S0001", "T0003") in gap_covered
+    assert all(item["kind"] != "evidence_gap_item" for item in envelope["work_items"])
 
 
 def test_runner_resets_a_preexisting_envelope(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     path = synthesis_path(workspace)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -151,24 +157,27 @@ def test_runner_resets_a_preexisting_envelope(tmp_path: Path) -> None:
 
 
 def test_runner_fails_when_a_turn_is_left_uncovered(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
 
-    # The agent skips the gap turn on the first turn AND ignores the continuation, so the turn
-    # is still uncovered after the single bounded continuation.
-    factory = GroupingAgentSessionFactory(cover_gaps=False, fail_continuation=True)
+    # The agent drops the second committed session on the first turn AND ignores the continuation,
+    # so the turn is still uncovered after the bounded continuation retries.
+    factory = GroupingAgentSessionFactory(
+        cover_gaps=False, fail_continuation=True, first_turn_session_limit=1
+    )
     result = _run(factory, workspace)
 
     assert result.status == "failed"
     assert any("agent made no progress" in error for error in result.errors)
     assert len(factory.runners[0].prompts) == 4  # main turn + three no-progress continuations
+    assert not synthesis_path(workspace).exists()
 
 
 def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
 
-    # cover_gaps=False: the first turn covers only the committed turns; the continuation prompt
-    # names the leftover gap turn and the agent buckets it.
-    factory = GroupingAgentSessionFactory(cover_gaps=False)
+    # The first turn covers only the first committed session; the continuation prompt names the
+    # leftover committed turn and the agent recovers it as a non-gap item.
+    factory = GroupingAgentSessionFactory(cover_gaps=False, first_turn_session_limit=1)
     result = _run(factory, workspace)
 
     assert result.status == "success"
@@ -180,18 +189,14 @@ def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) 
         for ref in item["covered_turns"]
     }
     assert covered == set(ALL_TURNS)
-    gap_covered = {
-        (ref["session_ref"], ref["turn_ref"])
-        for item in envelope["work_items"]
-        if item["kind"] == "evidence_gap_item"
-        for ref in item["covered_turns"]
-    }
-    assert ("S0001", "T0003") in gap_covered
+    assert all(item["kind"] != "evidence_gap_item" for item in envelope["work_items"])
 
 
 def test_runner_resumes_failed_continuation_on_same_runner(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
-    factory = GroupingAgentSessionFactory(cover_gaps=False, fail_first_continuation=True)
+    workspace = copy_complete_project_workspace(tmp_path)
+    factory = GroupingAgentSessionFactory(
+        cover_gaps=False, fail_first_continuation=True, first_turn_session_limit=1
+    )
 
     result = _run(factory, workspace)
 
@@ -210,7 +215,7 @@ def test_runner_resumes_failed_continuation_on_same_runner(tmp_path: Path) -> No
 
 
 def test_runner_skips_continuation_when_first_turn_covers_everything(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
 
     result = _run(factory, workspace)
@@ -219,28 +224,19 @@ def test_runner_skips_continuation_when_first_turn_covers_everything(tmp_path: P
     assert len(factory.runners[0].prompts) == 1  # no continuation needed
 
 
-def test_runner_recovers_all_gap_project_via_continuation(tmp_path: Path) -> None:
+def test_runner_blocks_incomplete_evidence_card(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
-    # No committed chains at all: the paste is empty, so the first turn covers nothing. The
-    # continuation names every indexed turn so the agent can bucket them as evidence gaps.
-    shutil.rmtree(workspace / "projects" / PROJECT_KEY / "evidence")
     factory = GroupingAgentSessionFactory()
 
     result = _run(factory, workspace)
 
-    assert result.status == "success"
-    assert len(factory.runners[0].prompts) == 2
-    envelope = load_project_synthesis(workspace)
-    covered = {
-        (ref["session_ref"], ref["turn_ref"])
-        for item in envelope["work_items"]
-        for ref in item["covered_turns"]
-    }
-    assert covered == set(ALL_TURNS)
+    assert result.status == "failed"
+    assert factory.runners == []
+    assert any("incomplete prerequisite evidence card" in error for error in result.errors)
 
 
 def test_runner_recovers_dropped_committed_turn_via_continuation(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     # Turn 1 covers only the first committed session (S0001) and drops S0002, so the continuation
     # must recover a turn that HAS an evidence chain (S0002/T0001), not only the gap turn.
     factory = GroupingAgentSessionFactory(cover_gaps=False, first_turn_session_limit=1)
@@ -269,9 +265,9 @@ def test_runner_recovers_dropped_committed_turn_via_continuation(tmp_path: Path)
 
 
 def test_runner_writes_empty_envelope_for_zero_turn_project(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     _strip_turns_from_index(workspace)
-    shutil.rmtree(workspace / "projects" / PROJECT_KEY / "evidence")
+    _write_empty_evidence_cards(workspace)
     factory = GroupingAgentSessionFactory()
 
     result = _run(factory, workspace)
@@ -295,7 +291,7 @@ def test_runner_requires_project_scope(tmp_path: Path) -> None:
 
 
 def test_runner_rejects_unknown_project(tmp_path: Path) -> None:
-    workspace = copy_basic_project_workspace(tmp_path)
+    workspace = copy_complete_project_workspace(tmp_path)
     runner = ProjectSynthesisRunner(agent_factory=GroupingAgentSessionFactory())
     task = TaskSpec(
         task_id="project:x", kind="project_synthesis", project_key="Missing-000000000000"
@@ -318,3 +314,21 @@ def _strip_turns_from_index(workspace: Path) -> None:
     for row in rows:
         row["turns"] = []
     index_path.write_text("".join(f"{json.dumps(row)}\n" for row in rows), encoding="utf-8")
+
+
+def _write_empty_evidence_cards(workspace: Path) -> None:
+    evidence_dir = workspace / "projects" / PROJECT_KEY / "evidence"
+    for session_ref in ("S0001", "S0002"):
+        (evidence_dir / f"{session_ref}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "project_key": PROJECT_KEY,
+                    "session_ref": session_ref,
+                    "evidence_chains": [],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )

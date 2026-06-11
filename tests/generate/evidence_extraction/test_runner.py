@@ -15,6 +15,7 @@ from tests.support.evidence_agent import EvidenceWritingAgentSessionFactory
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
     SESSION_REF,
+    build_evidence_chain,
     copy_basic_evidence_workspace,
     load_evidence_card,
 )
@@ -61,6 +62,18 @@ def test_runner_extracts_all_turns_in_index_order(tmp_path: Path) -> None:
     assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001", "T0002"]
 
 
+def test_runner_reuses_complete_existing_card(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    first_factory = EvidenceWritingAgentSessionFactory()
+    assert _run(first_factory, workspace).status == "success"
+    second_factory = EvidenceWritingAgentSessionFactory()
+
+    result = _run(second_factory, workspace)
+
+    assert result.status == "success"
+    assert second_factory.runners == []
+
+
 def test_runner_second_turn_uses_next_turn_prompt_with_prior_result(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     factory = EvidenceWritingAgentSessionFactory()
@@ -100,6 +113,35 @@ def test_runner_resets_a_preexisting_partial_card(tmp_path: Path) -> None:
     assert all("stale" not in chain for chain in card["evidence_chains"])
 
 
+def test_runner_resets_mismatched_or_extra_turn_card(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_key": "Other-000000000000",
+                "session_ref": SESSION_REF,
+                "evidence_chains": [
+                    build_evidence_chain(turn_ref="T0001", span=(2, 8)),
+                    build_evidence_chain(turn_ref="T0002", span=(9, 12), kind="no_material"),
+                    build_evidence_chain(turn_ref="T9999", span=(2, 2), kind="no_material"),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    factory = EvidenceWritingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    card = load_evidence_card(workspace)
+    assert card["project_key"] == PROJECT_KEY
+    assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001", "T0002"]
+
+
 def test_runner_fails_when_a_turn_is_not_committed(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     factory = EvidenceWritingAgentSessionFactory(fail_turns=frozenset({"T0002"}))
@@ -108,8 +150,8 @@ def test_runner_fails_when_a_turn_is_not_committed(tmp_path: Path) -> None:
 
     assert result.status == "failed"
     assert any("T0002" in error for error in result.errors)
-    card = load_evidence_card(workspace)
-    assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001"]
+    card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
+    assert not card_path.exists()
 
 
 def test_runner_resumes_failed_turns_on_same_runner(tmp_path: Path) -> None:
