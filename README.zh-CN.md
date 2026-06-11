@@ -2,6 +2,8 @@
 
 语言：[English](README.md) | 简体中文
 
+文档：[GitHub Pages](https://optimalcnc.github.io/prompt-diary/)
+
 [![CI](https://github.com/OptimalCNC/prompt-diary/actions/workflows/ci.yml/badge.svg)](https://github.com/OptimalCNC/prompt-diary/actions/workflows/ci.yml)
 [![Publish](https://github.com/OptimalCNC/prompt-diary/actions/workflows/publish.yml/badge.svg)](https://github.com/OptimalCNC/prompt-diary/actions/workflows/publish.yml)
 [![PyPI](https://img.shields.io/pypi/v/prompt-diary.svg)](https://pypi.org/project/prompt-diary/)
@@ -15,6 +17,8 @@ Prompt Diary 会从本地助手会话历史准备有边界的工作区，并生�
 
 ## 用法
 
+### 快速开始
+
 通过 PyPI 把 Prompt Diary 安装为隔离的 `uv` 工具：
 
 ```bash
@@ -23,6 +27,21 @@ uv tool install --prerelease=allow prompt-diary
 
 Prompt Diary 依赖 Codex Python SDK 来生成由代理支持的报告。当前 Codex SDK
 打包使用预发布包，因此 `uv` 解析工具环境时需要显式允许预发布版本。
+
+如果希望把报告发布到 Notion，先配置发布信息：
+
+```bash
+prompt-diary config init
+```
+
+生成最近一个已完成日期的报告：
+
+```bash
+prompt-diary generate
+```
+
+如果只需要本地报告，可以跳过配置并运行 `prompt-diary generate --no-notion`。该命令会在需要时准备工作区，
+并把报告写入默认报告根目录。
 
 ### 配置
 

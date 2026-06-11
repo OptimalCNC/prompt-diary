@@ -2,6 +2,8 @@
 
 Language: English | [简体中文](README.zh-CN.md)
 
+Documentation: [GitHub Pages](https://optimalcnc.github.io/prompt-diary/)
+
 [![CI](https://github.com/OptimalCNC/prompt-diary/actions/workflows/ci.yml/badge.svg)](https://github.com/OptimalCNC/prompt-diary/actions/workflows/ci.yml)
 [![Publish](https://github.com/OptimalCNC/prompt-diary/actions/workflows/publish.yml/badge.svg)](https://github.com/OptimalCNC/prompt-diary/actions/workflows/publish.yml)
 [![PyPI](https://img.shields.io/pypi/v/prompt-diary.svg)](https://pypi.org/project/prompt-diary/)
@@ -14,6 +16,8 @@ console command after installation; `report` is installed as a compatibility ali
 
 ## Usage
 
+### Quick Start
+
 Install Prompt Diary from PyPI as an isolated `uv` tool:
 
 ```bash
@@ -23,6 +27,21 @@ uv tool install --prerelease=allow prompt-diary
 Prompt Diary depends on the Codex Python SDK for agent-backed report generation. The current
 Codex SDK packaging uses prerelease packages, so `uv` needs explicit prerelease consent while
 resolving the tool environment.
+
+Configure publishing if you want reports sent to Notion:
+
+```bash
+prompt-diary config init
+```
+
+Generate the report for the most recent completed day:
+
+```bash
+prompt-diary generate
+```
+
+If you only want a local report, skip configuration and run `prompt-diary generate --no-notion`.
+The command prepares the workspace if needed and writes the report under the default reports root.
 
 ### Configuration
 
