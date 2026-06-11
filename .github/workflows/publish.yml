@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_PRERELEASE: allow
+
 jobs:
   verify:
     name: Verify release
