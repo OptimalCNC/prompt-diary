@@ -2,6 +2,9 @@ version = 1
 revision = 3
 requires-python = ">=3.10"
 
+[options]
+prerelease-mode = "allow"
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -732,7 +735,7 @@ wheels = [
 
 [[package]]
 name = "prompt-diary"
-version = "0.2.5"
+version = "0.2.6"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
