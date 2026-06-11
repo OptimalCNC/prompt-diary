@@ -9,8 +9,8 @@ Language: English | [简体中文](README.zh-CN.md)
 
 Prompt Diary prepares bounded workspaces from local assistant session history and generates evidenced prompt diary reports that help users review and improve how they collaborate with AI coding agents.
 
-The tool targets Python 3.10 and newer. The package exposes `report` and `prompt-diary`
-console commands after installation.
+The tool targets Python 3.10 and newer. The package exposes `prompt-diary` as the primary
+console command after installation; `report` is installed as a compatibility alias.
 
 ## Usage
 
@@ -48,7 +48,7 @@ Set the language for Codex-generated natural-language report content with:
 
 ```bash
 prompt-diary config language zh-Hans
-PROMPT_DIARY_CONTENT_LANGUAGE=zh-Hans report generate
+PROMPT_DIARY_CONTENT_LANGUAGE=zh-Hans prompt-diary generate
 ```
 
 The config file lives under the per-user config directory (`~/.config/prompt-diary/config.json` on
@@ -64,11 +64,11 @@ headings, fallbacks, and Notion metadata banners remain English in this release.
 Run the full report workflow directly:
 
 ```bash
-report generate
+prompt-diary generate
 ```
 
-By default, `report generate` first resolves the timezone, then targets the previous calendar day
-in that timezone: the most recent completed day. It prepares the workspace if it is missing,
+By default, `prompt-diary generate` first resolves the timezone, then targets the previous calendar
+day in that timezone: the most recent completed day. It prepares the workspace if it is missing,
 generates the report, and renders `report.md` and `report.notion.json`. The timezone is resolved
 from `--timezone`, then `PROMPT_DIARY_TIMEZONE`, then `TZ`, then the system timezone, then UTC.
 Notion publishing is enabled by default when both the Notion token and database id resolve from the
@@ -78,9 +78,9 @@ publishing and fail if Notion is not configured.
 Use explicit targeting when needed:
 
 ```bash
-report generate --date 2026-05-12 --timezone Asia/Shanghai
-report generate --today
-report generate --date 2026-05-12 --timezone Asia/Shanghai --notion
+prompt-diary generate --date 2026-05-12 --timezone Asia/Shanghai
+prompt-diary generate --today
+prompt-diary generate --date 2026-05-12 --timezone Asia/Shanghai --notion
 ```
 
 The reports root is the base folder for prepared workspaces and generated report files. By default
@@ -91,9 +91,9 @@ location with `--reports-root <path>`, `PROMPT_DIARY_HOME`, or the saved data fo
 data directory. Earlier versions wrote to `./.reports` in the current directory; pass
 `--reports-root .reports` to keep using an existing local directory.
 
-In an interactive terminal, `report generate` shows live progress. When output is redirected or
-running in CI, it prints plain log lines. Pass `--quiet` to suppress the live output and print only
-the final summary.
+In an interactive terminal, `prompt-diary generate` shows live progress. When output is redirected
+or running in CI, it prints plain log lines. Pass `--quiet` to suppress the live output and print
+only the final summary.
 
 ## Development
 
