@@ -732,22 +732,17 @@ wheels = [
 
 [[package]]
 name = "prompt-diary"
-version = "0.2.4"
+version = "0.2.5"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
     { name = "mcp" },
     { name = "msgspec" },
     { name = "notion-client" },
+    { name = "openai-codex" },
     { name = "platformdirs" },
     { name = "rich" },
     { name = "typer" },
-]
-
-[package.optional-dependencies]
-codex = [
-    { name = "openai-codex" },
-    { name = "openai-codex-cli-bin" },
 ]
 
 [package.dev-dependencies]
@@ -764,13 +759,11 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.2" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "notion-client", specifier = ">=2.0" },
-    { name = "openai-codex", marker = "extra == 'codex'", specifier = "==0.1.0b3" },
-    { name = "openai-codex-cli-bin", marker = "extra == 'codex'", specifier = "==0.137.0a4" },
+    { name = "openai-codex", specifier = "==0.1.0b3" },
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "rich", specifier = ">=13" },
     { name = "typer", specifier = ">=0.25.1" },
 ]
-provides-extras = ["codex"]
 
 [package.metadata.requires-dev]
 dev = [

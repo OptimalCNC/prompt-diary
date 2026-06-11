@@ -1,6 +1,6 @@
 [project]
 name = "prompt-diary"
-version = "0.2.4"
+version = "0.2.5"
 description = "Review user prompts for evidence-backed improvement in AI coding collaboration."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -9,15 +9,10 @@ dependencies = [
     "mcp>=1.2",
     "msgspec>=0.21.1",
     "notion-client>=2.0",
+    "openai-codex==0.1.0b3",
     "platformdirs>=4.0",
     "rich>=13",
     "typer>=0.25.1",
-]
-
-[project.optional-dependencies]
-codex = [
-    "openai-codex==0.1.0b3",
-    "openai-codex-cli-bin==0.137.0a4",
 ]
 
 [project.scripts]

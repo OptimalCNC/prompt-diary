@@ -17,16 +17,12 @@ console commands after installation.
 Install Prompt Diary from PyPI as an isolated `uv` tool:
 
 ```bash
-uv tool install prompt-diary
+uv tool install --prerelease=allow prompt-diary
 ```
 
-Agent-backed report generation also needs the Codex Python SDK. Because the current SDK/runtime
-packages are prereleases, include them explicitly when installing a tool environment for full
-generation:
-
-```bash
-uv tool install prompt-diary --with openai-codex==0.1.0b3 --with openai-codex-cli-bin==0.137.0a4 --prerelease=allow
-```
+Prompt Diary depends on the Codex Python SDK for agent-backed report generation. The current
+Codex SDK packaging uses prerelease packages, so `uv` needs explicit prerelease consent while
+resolving the tool environment.
 
 ### Configuration
 

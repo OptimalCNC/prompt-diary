@@ -307,8 +307,12 @@ def test_backend_reports_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         async with CodexBackend(CodexBackendConfig()):
             pass
 
-    with pytest.raises(CodexRunnerError, match="Codex SDK is not importable"):
+    with pytest.raises(CodexRunnerError, match="Codex SDK is not importable") as exc_info:
         asyncio.run(exercise())
+
+    message = str(exc_info.value)
+    assert "uv sync --prerelease=allow" in message
+    assert "uv tool install --force --prerelease=allow prompt-diary" in message
 
 
 def test_runner_requires_started_backend(tmp_path: Path) -> None:
