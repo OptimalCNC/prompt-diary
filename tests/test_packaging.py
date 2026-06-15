@@ -5,6 +5,8 @@ from importlib.metadata import metadata
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from prompt_diary import __version__
+
 
 def _requirements_named(package_name: str) -> list[Requirement]:
     requires_dist = metadata("prompt-diary").get_all("Requires-Dist") or []
@@ -34,6 +36,10 @@ def test_distribution_does_not_provide_codex_extra() -> None:
     package_metadata = metadata("prompt-diary")
 
     assert "codex" not in (package_metadata.get_all("Provides-Extra") or [])
+
+
+def test_distribution_version_matches_imported_version() -> None:
+    assert metadata("prompt-diary")["Version"] == __version__
 
 
 def test_distribution_excludes_mcp_next_major_prereleases() -> None:
