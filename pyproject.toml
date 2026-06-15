@@ -1,12 +1,12 @@
 [project]
 name = "prompt-diary"
-version = "0.2.8"
+version = "0.2.9"
 description = "Review user prompts for evidence-backed improvement in AI coding collaboration."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "jinja2>=3.1",
-    "mcp>=1.2",
+    "mcp>=1.2,<2",
     "msgspec>=0.21.1",
     "notion-client>=2.0",
     "openai-codex==0.1.0b3",
