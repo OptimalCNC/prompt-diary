@@ -7,43 +7,40 @@ from typing import Annotated
 import typer
 
 from prompt_diary.cmds.common import (
-    DateOption,
+    CliWorkspaceTargetOptions,
     QuietOption,
-    ReportsRootOption,
-    TimezoneOption,
-    TodayOption,
     build_cli_reporter,
     echo_messages,
     exit_with_error,
+    workspace_target_command,
 )
-from prompt_diary.config import resolve_reports_root
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.prepare.workspace import prepare_workspace
-from prompt_diary.targeting.resolve import resolve_report_target
 
 ForceOption = Annotated[bool, typer.Option(help="Recreate an existing workspace.")]
 
 
 def register(app: typer.Typer) -> None:
     """Register prepare commands."""
-    app.command()(prepare)
+    workspace_target_command(app, prepare)
 
 
 def prepare(
     *,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
+    target_options: CliWorkspaceTargetOptions,
     force: ForceOption = False,
     quiet: QuietOption = False,
-    reports_root: ReportsRootOption = None,
 ) -> None:
     """Prepare a prompt diary workspace."""
     try:
-        target = resolve_report_target(date=date, today=today, timezone_name=timezone)
-        root = resolve_reports_root(reports_root)
+        resolved = target_options.resolve()
         with build_cli_reporter(quiet=quiet) as reporter:
-            result = prepare_workspace(target, reports_root=root, force=force, reporter=reporter)
+            result = prepare_workspace(
+                resolved.target,
+                reports_root=resolved.reports_root,
+                force=force,
+                reporter=reporter,
+            )
             timing = reporter.timing_summary_message()
     except PromptDiaryError as exc:
         exit_with_error(exc)

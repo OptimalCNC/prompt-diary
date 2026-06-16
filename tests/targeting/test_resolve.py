@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import prompt_diary.targeting.resolve as targets_module
+from prompt_diary.cmds.common import CliReportTargetOptions, CliWorkspaceTargetOptions
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.models import serialize_datetime
 from prompt_diary.targeting.resolve import resolve_report_target
@@ -100,6 +101,38 @@ def test_resolve_report_target_rejects_invalid_timezone_and_date() -> None:
             timezone_name="UTC",
             now=datetime(2026, 5, 20, tzinfo=ZoneInfo("UTC")),
         )
+
+
+def test_cli_workspace_target_options_resolve_target_root_and_workspace(tmp_path: Path) -> None:
+    options = CliWorkspaceTargetOptions(
+        report_target=CliReportTargetOptions(
+            date="2026-05-19",
+            today=False,
+            timezone="Asia/Shanghai",
+        ),
+        reports_root=tmp_path / "reports",
+    )
+
+    resolved = options.resolve(now=datetime(2026, 5, 20, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+    assert resolved.target.report_date.isoformat() == "2026-05-19"
+    assert resolved.target.timezone == "Asia/Shanghai"
+    assert resolved.reports_root == tmp_path / "reports"
+    assert resolved.workspace_path == tmp_path / "reports" / "work" / "2026-05-19"
+
+
+def test_cli_workspace_target_options_reject_conflicting_date_flags(tmp_path: Path) -> None:
+    options = CliWorkspaceTargetOptions(
+        report_target=CliReportTargetOptions(
+            date="2026-05-19",
+            today=True,
+            timezone="UTC",
+        ),
+        reports_root=tmp_path / "reports",
+    )
+
+    with pytest.raises(PromptDiaryError, match="mutually exclusive"):
+        options.resolve(now=datetime(2026, 5, 20, tzinfo=ZoneInfo("UTC")))
 
 
 def test_resolve_report_target_converts_aware_now_to_target_timezone() -> None:

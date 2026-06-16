@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from typer.testing import CliRunner
 
+import prompt_diary.cmds.common as common_cmd
 import prompt_diary.cmds.prepare as prepare_cmd
 from prompt_diary.cli import app
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec, TimeWindow
@@ -403,20 +404,25 @@ def test_cli_prepare_forwards_today_timezone_and_force(
         ),
     )
 
-    def fake_resolve_report_target(
+    def fake_resolve(
+        self: common_cmd.CliWorkspaceTargetOptions,
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
-    ) -> ReportTarget:
+        now: datetime | None = None,
+    ) -> common_cmd.ResolvedCliWorkspaceTarget:
+        del now
         captured.append(
             {
-                "date": date,
-                "today": today,
-                "timezone_name": timezone_name,
+                "date": self.report_target.date,
+                "today": self.report_target.today,
+                "timezone_name": self.report_target.timezone,
             }
         )
-        return target
+        workspace_path = tmp_path / ".reports" / "work" / "2026-05-23"
+        return common_cmd.ResolvedCliWorkspaceTarget(
+            target=target,
+            reports_root=tmp_path / ".reports",
+            workspace_path=workspace_path,
+        )
 
     def fake_prepare_workspace(
         target: ReportTarget, *, force: bool, **_kwargs: object
@@ -432,7 +438,7 @@ def test_cli_prepare_forwards_today_timezone_and_force(
             messages=("prepared today",),
         )
 
-    monkeypatch.setattr(prepare_cmd, "resolve_report_target", fake_resolve_report_target)
+    monkeypatch.setattr(common_cmd.CliWorkspaceTargetOptions, "resolve", fake_resolve)
     monkeypatch.setattr(prepare_cmd, "prepare_workspace", fake_prepare_workspace)
     runner = CliRunner()
 
