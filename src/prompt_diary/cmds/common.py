@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
+from functools import wraps
+from inspect import Parameter, Signature, signature
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn, TypeAlias, cast, get_type_hints
 
 import click
 import typer
@@ -20,22 +22,36 @@ from prompt_diary.config import (
     resolve_reports_root,
 )
 from prompt_diary.paths import REPORTS_HOME_ENV
+from prompt_diary.prepare.workspace import workspace_path_for_target
 from prompt_diary.progress.console import build_reporter
 from prompt_diary.progress.reporter import RecordingProgressReporter, select_reporter_mode
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
+    from datetime import datetime
+    from typing import Protocol
 
     from prompt_diary.errors import PromptDiaryError
+    from prompt_diary.models import ReportTarget
 
-DateOption = Annotated[str | None, typer.Option(help="Target local date in YYYY-MM-DD format.")]
-TodayOption = Annotated[bool, typer.Option(help="Target the current local day.")]
-TimezoneOption = Annotated[
+    class _SignatureAwareCallable(Protocol):
+        __signature__: Signature
+
+        def __call__(self, *args: object, **kwargs: object) -> object: ...
+
+
+DateOption: TypeAlias = Annotated[
+    str | None, typer.Option(help="Target local date in YYYY-MM-DD format.")
+]
+TodayOption: TypeAlias = Annotated[bool, typer.Option(help="Target the current local day.")]
+TimezoneOption: TypeAlias = Annotated[
     str | None,
     typer.Option(help="IANA timezone name, e.g. Asia/Shanghai."),
 ]
-QuietOption = Annotated[bool, typer.Option(help="Suppress progress; print only the final summary.")]
-ReportsRootOption = Annotated[
+QuietOption: TypeAlias = Annotated[
+    bool, typer.Option(help="Suppress progress; print only the final summary.")
+]
+ReportsRootOption: TypeAlias = Annotated[
     Path | None,
     typer.Option(help="Reports root containing work/<YYYY-MM-DD> workspaces."),
 ]
@@ -59,6 +75,58 @@ class _NotionSettingState:
     blank_env: bool
 
 
+@dataclass(frozen=True)
+class CliReportTargetOptions:
+    """Raw CLI date targeting options."""
+
+    date: str | None
+    today: bool
+    timezone: str | None
+
+    def resolve(self, *, now: datetime | None = None) -> ReportTarget:
+        """Resolve raw CLI date options into an authoritative report target."""
+        return target_resolution.resolve_report_target(
+            date=self.date,
+            today=self.today,
+            timezone_name=self.timezone,
+            now=now,
+        )
+
+
+@dataclass(frozen=True)
+class CliWorkspaceTargetOptions:
+    """Raw CLI options that identify one report workspace."""
+
+    report_target: CliReportTargetOptions
+    reports_root: Path | None
+
+    def resolve(self, *, now: datetime | None = None) -> ResolvedCliWorkspaceTarget:
+        """Resolve CLI workspace target options into typed target and path values."""
+        target = self.report_target.resolve(now=now)
+        reports_root = resolve_reports_root(self.reports_root)
+        return ResolvedCliWorkspaceTarget(
+            target=target,
+            reports_root=reports_root,
+            workspace_path=workspace_path_for_target(target, reports_root=reports_root),
+        )
+
+    def with_reports_root(self, reports_root: Path | None) -> CliWorkspaceTargetOptions:
+        """Return the same date target with a different raw reports-root option."""
+        return CliWorkspaceTargetOptions(
+            report_target=self.report_target,
+            reports_root=reports_root,
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedCliWorkspaceTarget:
+    """Resolved report workspace target values for command handlers."""
+
+    target: ReportTarget
+    reports_root: Path
+    workspace_path: Path
+
+
 class DynamicDefaultsTyperGroup(TyperGroup):
     """Typer group that refreshes selected option help at render time."""
 
@@ -73,6 +141,118 @@ class DynamicDefaultsTyperCommand(TyperCommand):
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         refresh_dynamic_default_help(self.params)
         super().format_help(ctx, formatter)
+
+
+def workspace_target_command(
+    app: typer.Typer,
+    callback: Callable[..., object],
+    *,
+    name: str | None = None,
+    cls: type[TyperCommand] | None = None,
+) -> Callable[..., object]:
+    """Register a command that receives one typed workspace target option object."""
+    wrapper = _workspace_target_wrapper(callback)
+    app.command(name=name, cls=cls)(wrapper)
+    return wrapper
+
+
+def workspace_target_callback(
+    app: typer.Typer,
+    callback: Callable[..., object],
+) -> Callable[..., object]:
+    """Register a group callback that receives one typed workspace target option object."""
+    wrapper = _workspace_target_wrapper(callback)
+    app.callback()(wrapper)
+    return wrapper
+
+
+def _workspace_target_wrapper(callback: Callable[..., object]) -> Callable[..., object]:
+    callback_signature = signature(callback)
+    callback_type_hints = get_type_hints(callback, include_extras=True)
+    wrapper_signature = _workspace_target_wrapper_signature(
+        callback_signature,
+        callback_type_hints=callback_type_hints,
+    )
+
+    @wraps(callback)
+    def wrapper(*args: object, **kwargs: object) -> object:
+        bound = wrapper_signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        date = cast("str | None", bound.arguments.pop("date"))
+        today = cast("bool", bound.arguments.pop("today"))
+        timezone = cast("str | None", bound.arguments.pop("timezone"))
+        reports_root = cast("Path | None", bound.arguments.pop("reports_root"))
+        target_options = CliWorkspaceTargetOptions(
+            report_target=CliReportTargetOptions(
+                date=date,
+                today=today,
+                timezone=timezone,
+            ),
+            reports_root=reports_root,
+        )
+        callback_kwargs = dict(bound.arguments)
+        callback_kwargs["target_options"] = target_options
+        return callback(**callback_kwargs)
+
+    signature_wrapper = cast("_SignatureAwareCallable", wrapper)
+    signature_wrapper.__signature__ = wrapper_signature
+    return wrapper
+
+
+def _workspace_target_wrapper_signature(
+    callback_signature: Signature,
+    *,
+    callback_type_hints: dict[str, object],
+) -> Signature:
+    parameters: list[Parameter] = []
+    for parameter in callback_signature.parameters.values():
+        if parameter.name == "target_options":
+            parameters.extend(_workspace_target_option_parameters())
+        else:
+            parameters.append(
+                parameter.replace(
+                    annotation=callback_type_hints.get(parameter.name, parameter.annotation)
+                )
+            )
+    if len(parameters) == len(callback_signature.parameters):
+        raise ValueError(_missing_target_options_parameter_message())
+    return Signature(
+        parameters=parameters,
+        return_annotation=callback_type_hints.get("return", callback_signature.return_annotation),
+    )
+
+
+def _missing_target_options_parameter_message() -> str:
+    return "workspace target callbacks must accept a target_options parameter"
+
+
+def _workspace_target_option_parameters() -> tuple[Parameter, ...]:
+    return (
+        Parameter(
+            "date",
+            kind=Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=DateOption,
+        ),
+        Parameter(
+            "today",
+            kind=Parameter.KEYWORD_ONLY,
+            default=False,
+            annotation=TodayOption,
+        ),
+        Parameter(
+            "timezone",
+            kind=Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=TimezoneOption,
+        ),
+        Parameter(
+            "reports_root",
+            kind=Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=ReportsRootOption,
+        ),
+    )
 
 
 def refresh_dynamic_default_help(params: list[click.Parameter]) -> None:

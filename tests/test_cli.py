@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,13 +9,13 @@ from zoneinfo import ZoneInfo
 
 import click
 import pytest
+import typer
 from typer.testing import CliRunner
 
 import prompt_diary.cli as cli_module
 import prompt_diary.cmds.common as common_cmd
 import prompt_diary.cmds.generate as generate_cmd
 import prompt_diary.cmds.mcp as mcp_cmd
-import prompt_diary.cmds.prepare as prepare_cmd
 import prompt_diary.paths as paths_module
 import prompt_diary.targeting.resolve as targets_module
 from prompt_diary import __version__
@@ -427,6 +428,104 @@ def test_refresh_dynamic_default_help_ignores_click_arguments() -> None:
     assert argument.name == "name"
 
 
+def test_workspace_target_command_help_lists_shared_flags() -> None:
+    local_app = typer.Typer(add_completion=False)
+
+    def callback() -> None:
+        pass
+
+    local_app.callback()(callback)
+
+    def handler(*, target_options: common_cmd.CliWorkspaceTargetOptions) -> None:
+        del target_options
+
+    common_cmd.workspace_target_command(local_app, handler, name="demo")
+
+    result = CliRunner().invoke(local_app, ["demo", "--help"], terminal_width=180)
+
+    assert result.exit_code == 0
+    assert "--date" in result.stdout
+    assert "--today" in result.stdout
+    assert "--timezone" in result.stdout
+    assert "--reports-root" in result.stdout
+
+
+def test_workspace_target_command_passes_single_options_object(tmp_path: Path) -> None:
+    local_app = typer.Typer(add_completion=False)
+    captured: list[common_cmd.CliWorkspaceTargetOptions] = []
+
+    def callback() -> None:
+        pass
+
+    local_app.callback()(callback)
+
+    def handler(*, target_options: common_cmd.CliWorkspaceTargetOptions) -> None:
+        captured.append(target_options)
+
+    common_cmd.workspace_target_command(local_app, handler, name="demo")
+
+    result = CliRunner().invoke(
+        local_app,
+        [
+            "demo",
+            "--date",
+            "2026-05-12",
+            "--timezone",
+            "UTC",
+            "--reports-root",
+            str(tmp_path / "reports"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == [
+        common_cmd.CliWorkspaceTargetOptions(
+            report_target=common_cmd.CliReportTargetOptions(
+                date="2026-05-12",
+                today=False,
+                timezone="UTC",
+            ),
+            reports_root=tmp_path / "reports",
+        )
+    ]
+
+
+def test_workspace_target_command_requires_target_options_parameter() -> None:
+    local_app = typer.Typer(add_completion=False)
+
+    def handler() -> None:
+        pass
+
+    with pytest.raises(ValueError, match="target_options"):
+        common_cmd.workspace_target_command(local_app, handler, name="demo")
+
+
+def test_workspace_target_callback_signature_lists_shared_flags() -> None:
+    local_app = typer.Typer(add_completion=False, invoke_without_command=True)
+    captured: list[common_cmd.CliWorkspaceTargetOptions] = []
+
+    def callback(*, target_options: common_cmd.CliWorkspaceTargetOptions) -> None:
+        captured.append(target_options)
+
+    wrapper = common_cmd.workspace_target_callback(local_app, callback)
+    parameter_names = tuple(inspect.signature(wrapper).parameters)
+
+    result = CliRunner().invoke(local_app, ["--today", "--timezone", "UTC"])
+
+    assert result.exit_code == 0, result.output
+    assert parameter_names == ("date", "today", "timezone", "reports_root")
+    assert captured == [
+        common_cmd.CliWorkspaceTargetOptions(
+            report_target=common_cmd.CliReportTargetOptions(
+                date=None,
+                today=True,
+                timezone="UTC",
+            ),
+            reports_root=None,
+        )
+    ]
+
+
 def test_generate_render_accepts_notion_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NOTION_API_KEY", raising=False)
     monkeypatch.delenv("NOTION_PAGE_ID", raising=False)
@@ -449,15 +548,14 @@ def test_report_version() -> None:
 
 def test_prepare_error_exits_with_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_error(
+        self: common_cmd.CliWorkspaceTargetOptions,
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
-    ) -> None:
-        del date, today, timezone_name
+        now: datetime | None = None,
+    ) -> common_cmd.ResolvedCliWorkspaceTarget:
+        del self, now
         raise PromptDiaryError(PREPARE_FAILED)
 
-    monkeypatch.setattr(prepare_cmd, "resolve_report_target", raise_error)
+    monkeypatch.setattr(common_cmd.CliWorkspaceTargetOptions, "resolve", raise_error)
     runner = CliRunner()
 
     result = runner.invoke(app, ["prepare", "--date", "2026-05-12"])
@@ -472,12 +570,10 @@ def test_generate_error_exits_with_stderr(
 ) -> None:
     def workspace_for_generate_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> tuple[Path, tuple[str, ...]]:
-        del date, today, timezone_name
+        del target_options
         return tmp_path, ()
 
     monkeypatch.setattr(
@@ -504,12 +600,10 @@ def test_generate_prints_pipeline_messages(
 ) -> None:
     def workspace_for_generate_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> tuple[Path, tuple[str, ...]]:
-        del date, today, timezone_name
+        del target_options
         return tmp_path, ("prepared",)
 
     monkeypatch.setattr(
@@ -536,12 +630,10 @@ def test_generate_prints_timing_summary(
 ) -> None:
     def workspace_for_generate_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> tuple[Path, tuple[str, ...]]:
-        del date, today, timezone_name
+        del target_options
         return tmp_path, ("prepared",)
 
     class TimingWorkflow(_FakeWorkflow):
@@ -579,9 +671,9 @@ def test_generate_notion_flag_appends_publish_message(
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
 
     def workspace_for_generate_target(
-        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
     ) -> tuple[Path, tuple[str, ...]]:
-        del date, today, timezone_name
+        del target_options
         return tmp_path, ("prepared",)
 
     published: list[tuple[Path, object]] = []
@@ -645,9 +737,9 @@ def test_generate_publishes_to_notion_by_default_when_configured(
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
 
     def workspace_for_generate_target(
-        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
     ) -> tuple[Path, tuple[str, ...]]:
-        del date, today, timezone_name
+        del target_options
         return tmp_path, ("prepared",)
 
     published: list[tuple[Path, object]] = []
@@ -690,9 +782,9 @@ def test_generate_no_notion_skips_publish_even_when_configured(
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
 
     def workspace_for_generate_target(
-        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
     ) -> tuple[Path, tuple[str, ...]]:
-        del date, today, timezone_name
+        del target_options
         return tmp_path, ("prepared",)
 
     def render_must_not_run(workspace_path: Path, **_kwargs: object) -> NotionRenderResult:
@@ -724,9 +816,9 @@ def test_generate_render_notion_publishes(
     rendered_for: list[Path] = []
 
     def workspace_for_existing_target(
-        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     def render_workspace_report_to_notion(
@@ -773,9 +865,9 @@ def test_generate_render_publishes_to_notion_by_default_when_configured(
     rendered_for: list[tuple[Path, object]] = []
 
     def workspace_for_existing_target(
-        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     def render_workspace_report_to_notion(
@@ -819,9 +911,9 @@ def test_generate_render_no_notion_skips_publish_even_when_configured(
     monkeypatch.setenv("NOTION_PAGE_ID", "db")
 
     def workspace_for_existing_target(
-        *, date: str | None, today: bool, timezone_name: str | None, **_kwargs: object
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     def render_must_not_run(workspace_path: Path, **_kwargs: object) -> NotionRenderResult:
@@ -880,12 +972,10 @@ def test_generate_phase_error_exits_with_stderr(
 ) -> None:
     def workspace_for_existing_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     monkeypatch.setattr(
@@ -924,12 +1014,10 @@ def test_generate_project_error_exits_with_stderr(
 ) -> None:
     def workspace_for_existing_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     monkeypatch.setattr(
@@ -959,12 +1047,10 @@ def test_generate_daily_error_exits_with_stderr(
 ) -> None:
     def workspace_for_existing_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     monkeypatch.setattr(
@@ -1014,12 +1100,10 @@ def test_generate_phase_commands_delegate(
 
     def workspace_for_existing_target(
         *,
-        date: str | None,
-        today: bool,
-        timezone_name: str | None,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
         **_kwargs: object,
     ) -> Path:
-        del date, today, timezone_name
+        del target_options
         return tmp_path
 
     monkeypatch.setattr(
@@ -1111,8 +1195,11 @@ def test_generate_phase_reports_root_flag_positions(
 ) -> None:
     captured: list[Path] = []
 
-    def workspace_for_existing_target(*, reports_root: Path, **_kwargs: object) -> Path:
-        captured.append(reports_root)
+    def workspace_for_existing_target(
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
+    ) -> Path:
+        assert target_options.reports_root is not None
+        captured.append(target_options.reports_root)
         return tmp_path
 
     monkeypatch.setattr(
@@ -1153,10 +1240,14 @@ def test_generate_existing_workspace_resolution(tmp_path: Path) -> None:
     prepared = prepare_workspace(target, reports_root=reports_root, source_specs=())
 
     workspace_path = generate_cmd.workspace_for_existing_target(
-        date="2026-05-12",
-        today=False,
-        timezone_name="Asia/Shanghai",
-        reports_root=reports_root,
+        target_options=common_cmd.CliWorkspaceTargetOptions(
+            report_target=common_cmd.CliReportTargetOptions(
+                date="2026-05-12",
+                today=False,
+                timezone="Asia/Shanghai",
+            ),
+            reports_root=reports_root,
+        ),
     )
 
     assert workspace_path == prepared.workspace_path
@@ -1165,10 +1256,14 @@ def test_generate_existing_workspace_resolution(tmp_path: Path) -> None:
 def test_generate_existing_workspace_resolution_requires_workspace(tmp_path: Path) -> None:
     with pytest.raises(PromptDiaryError, match="run prepare first"):
         generate_cmd.workspace_for_existing_target(
-            date="2026-05-12",
-            today=False,
-            timezone_name="Asia/Shanghai",
-            reports_root=tmp_path / ".reports",
+            target_options=common_cmd.CliWorkspaceTargetOptions(
+                report_target=common_cmd.CliReportTargetOptions(
+                    date="2026-05-12",
+                    today=False,
+                    timezone="Asia/Shanghai",
+                ),
+                reports_root=tmp_path / ".reports",
+            ),
         )
 
 

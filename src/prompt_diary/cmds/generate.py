@@ -9,16 +9,15 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from prompt_diary.cmds.common import (
-    DateOption,
+    CliWorkspaceTargetOptions,
     DynamicDefaultsTyperCommand,
     DynamicDefaultsTyperGroup,
     QuietOption,
-    ReportsRootOption,
-    TimezoneOption,
-    TodayOption,
     build_cli_reporter,
     echo_messages,
     exit_with_error,
+    workspace_target_callback,
+    workspace_target_command,
 )
 from prompt_diary.config import (
     NOTION_DATABASE_ENV,
@@ -26,7 +25,6 @@ from prompt_diary.config import (
     notion_is_configured,
     resolve_content_language,
     resolve_notion_credentials,
-    resolve_reports_root,
 )
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_language import LanguageNormAgentSessionFactory
@@ -48,10 +46,8 @@ from prompt_diary.mcp.codex_config import (
 from prompt_diary.prepare.workspace import (
     prepare_workspace,
     validate_workspace_matches_target,
-    workspace_path_for_target,
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
-from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -140,28 +136,33 @@ def register(app: typer.Typer) -> None:
         invoke_without_command=True,
         subcommand_metavar="[COMMAND] [ARGS]...",
     )
-    generate_app.callback()(generate)
-    generate_app.command(name="evidence", cls=DynamicDefaultsTyperCommand)(generate_evidence)
-    generate_app.command(name="project", cls=DynamicDefaultsTyperCommand)(generate_project)
-    generate_app.command(name="daily", cls=DynamicDefaultsTyperCommand)(generate_daily)
-    generate_app.command(name="render", cls=DynamicDefaultsTyperCommand)(generate_render)
+    workspace_target_callback(generate_app, generate)
+    workspace_target_command(
+        generate_app, generate_evidence, name="evidence", cls=DynamicDefaultsTyperCommand
+    )
+    workspace_target_command(
+        generate_app, generate_project, name="project", cls=DynamicDefaultsTyperCommand
+    )
+    workspace_target_command(
+        generate_app, generate_daily, name="daily", cls=DynamicDefaultsTyperCommand
+    )
+    workspace_target_command(
+        generate_app, generate_render, name="render", cls=DynamicDefaultsTyperCommand
+    )
     app.add_typer(generate_app, name="generate")
 
 
 def generate(
     ctx: typer.Context,
     *,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
+    target_options: CliWorkspaceTargetOptions,
     quiet: QuietOption = False,
     notion: NotionOption = None,
-    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run the full generation pipeline."""
     # Phase subcommands inherit this group-level --reports-root via the context (see
     # _group_reports_root), so it is honored whether it precedes or follows the subcommand.
-    ctx.obj = reports_root
+    ctx.obj = target_options.reports_root
     if ctx.invoked_subcommand is not None:
         return
     try:
@@ -170,13 +171,9 @@ def generate(
         # --no-notion is an explicit skip. Resolving the credentials here means the target cannot
         # drift mid-run.
         notion_target = resolve_notion_publish(notion=notion)
-        root = resolve_reports_root(reports_root)
         with build_cli_reporter(quiet=quiet) as reporter:
             workspace_path, messages = workspace_for_generate_target(
-                date=date,
-                today=today,
-                timezone_name=timezone,
-                reports_root=root,
+                target_options=target_options,
                 reporter=reporter,
             )
             workflow = build_generation_workflow()
@@ -241,22 +238,16 @@ def generate_evidence(
     *,
     project_key: GenerateProjectKeyOption,
     session_ref: GenerateSessionRefOption,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
+    target_options: CliWorkspaceTargetOptions,
     quiet: QuietOption = False,
-    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run one evidence extraction task."""
     _run_phase_command(
         phase="evidence",
-        date=date,
-        today=today,
-        timezone_name=timezone,
+        target_options=_phase_target_options(ctx, target_options),
         project_key=project_key,
         session_ref=session_ref,
         quiet=quiet,
-        reports_root=_group_reports_root(ctx, reports_root),
     )
 
 
@@ -264,65 +255,46 @@ def generate_project(
     ctx: typer.Context,
     *,
     project_key: GenerateProjectKeyOption,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
+    target_options: CliWorkspaceTargetOptions,
     quiet: QuietOption = False,
-    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run one project synthesis task."""
     _run_phase_command(
         phase="project",
-        date=date,
-        today=today,
-        timezone_name=timezone,
+        target_options=_phase_target_options(ctx, target_options),
         project_key=project_key,
         quiet=quiet,
-        reports_root=_group_reports_root(ctx, reports_root),
     )
 
 
 def generate_daily(
     ctx: typer.Context,
     *,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
+    target_options: CliWorkspaceTargetOptions,
     quiet: QuietOption = False,
-    reports_root: ReportsRootOption = None,
 ) -> None:
     """Run daily report synthesis."""
     _run_phase_command(
         phase="daily",
-        date=date,
-        today=today,
-        timezone_name=timezone,
+        target_options=_phase_target_options(ctx, target_options),
         quiet=quiet,
-        reports_root=_group_reports_root(ctx, reports_root),
     )
 
 
 def generate_render(
     ctx: typer.Context,
     *,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
+    target_options: CliWorkspaceTargetOptions,
     quiet: QuietOption = False,
     notion: RenderNotionOption = None,
-    reports_root: ReportsRootOption = None,
 ) -> None:
     """Render the report views from daily-report.json, optionally publishing to Notion."""
     try:
         # Resolve the publish target before rendering so --notion fails fast on an unconfigured
         # machine and the default publishes only when configuration is complete.
         notion_target = resolve_notion_publish(notion=notion)
-        root = resolve_reports_root(_group_reports_root(ctx, reports_root))
         workspace_path = workspace_for_existing_target(
-            date=date,
-            today=today,
-            timezone_name=timezone,
-            reports_root=root,
+            target_options=_phase_target_options(ctx, target_options),
         )
         workflow = build_generation_workflow()
         with build_cli_reporter(quiet=quiet) as reporter:
@@ -350,30 +322,26 @@ def generate_render(
 
 def workspace_for_generate_target(
     *,
-    date: str | None,
-    today: bool,
-    timezone_name: str | None,
-    reports_root: Path,
+    target_options: CliWorkspaceTargetOptions,
     source_specs: tuple[SourceSpec, ...] | None = None,
     now: datetime | None = None,
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> tuple[Path, tuple[str, ...]]:
     """Resolve a CLI target and ensure its prepared workspace exists."""
-    target = resolve_report_target(date=date, today=today, timezone_name=timezone_name, now=now)
-    workspace_path = workspace_path_for_target(target, reports_root=reports_root)
-    if workspace_path.exists():
-        validate_workspace_matches_target(workspace_path, target)
+    resolved = target_options.resolve(now=now)
+    if resolved.workspace_path.exists():
+        validate_workspace_matches_target(resolved.workspace_path, resolved.target)
         return (
-            workspace_path,
+            resolved.workspace_path,
             (
-                f"Reusing existing workspace {workspace_path}; "
+                f"Reusing existing workspace {resolved.workspace_path}; "
                 "run prepare --force to refresh it after session updates.",
             ),
         )
 
     prepare_result = prepare_workspace(
-        target,
-        reports_root=reports_root,
+        resolved.target,
+        reports_root=resolved.reports_root,
         source_specs=source_specs,
         force=False,
         prepared_at=now,
@@ -384,19 +352,15 @@ def workspace_for_generate_target(
 
 def workspace_for_existing_target(
     *,
-    date: str | None,
-    today: bool,
-    timezone_name: str | None,
-    reports_root: Path,
+    target_options: CliWorkspaceTargetOptions,
     now: datetime | None = None,
 ) -> Path:
     """Resolve a CLI target and return its existing prepared workspace."""
-    target = resolve_report_target(date=date, today=today, timezone_name=timezone_name, now=now)
-    workspace_path = workspace_path_for_target(target, reports_root=reports_root)
-    if not workspace_path.exists():
-        raise PromptDiaryError(_missing_workspace_message(workspace_path))
-    validate_workspace_matches_target(workspace_path, target)
-    return workspace_path
+    resolved = target_options.resolve(now=now)
+    if not resolved.workspace_path.exists():
+        raise PromptDiaryError(_missing_workspace_message(resolved.workspace_path))
+    validate_workspace_matches_target(resolved.workspace_path, resolved.target)
+    return resolved.workspace_path
 
 
 def _group_reports_root(ctx: typer.Context, reports_root: Path | None) -> Path | None:
@@ -412,24 +376,23 @@ def _group_reports_root(ctx: typer.Context, reports_root: Path | None) -> Path |
     return group_value if isinstance(group_value, Path) else None
 
 
+def _phase_target_options(
+    ctx: typer.Context, target_options: CliWorkspaceTargetOptions
+) -> CliWorkspaceTargetOptions:
+    return target_options.with_reports_root(_group_reports_root(ctx, target_options.reports_root))
+
+
 def _run_phase_command(
     *,
     phase: PhaseName,
-    date: str | None,
-    today: bool,
-    timezone_name: str | None,
+    target_options: CliWorkspaceTargetOptions,
     project_key: str | None = None,
     session_ref: str | None = None,
     quiet: bool = False,
-    reports_root: Path | None = None,
 ) -> None:
     try:
-        root = resolve_reports_root(reports_root)
         workspace_path = workspace_for_existing_target(
-            date=date,
-            today=today,
-            timezone_name=timezone_name,
-            reports_root=root,
+            target_options=target_options,
         )
         workflow = build_generation_workflow()
         with build_cli_reporter(quiet=quiet) as reporter:

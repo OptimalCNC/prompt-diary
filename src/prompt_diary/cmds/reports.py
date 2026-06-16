@@ -10,12 +10,11 @@ from typing import TYPE_CHECKING, Annotated, cast
 import typer
 
 from prompt_diary.cmds.common import (
-    DateOption,
+    CliWorkspaceTargetOptions,
     ReportsRootOption,
-    TimezoneOption,
-    TodayOption,
     echo_messages,
     exit_with_error,
+    workspace_target_command,
 )
 from prompt_diary.config import resolve_reports_root
 from prompt_diary.errors import PromptDiaryError
@@ -23,9 +22,7 @@ from prompt_diary.generate.workspace import load_prepared_workspace
 from prompt_diary.prepare.workspace import (
     audit_path_for_target,
     validate_workspace_matches_target,
-    workspace_path_for_target,
 )
-from prompt_diary.targeting.resolve import resolve_report_target
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -96,7 +93,7 @@ class ReportInspection:
 def register(app: typer.Typer) -> None:
     """Register local report navigation commands."""
     app.command(name="list")(list_reports)
-    app.command(name="inspect")(inspect_report)
+    workspace_target_command(app, inspect_report, name="inspect")
 
 
 def list_reports(
@@ -125,20 +122,11 @@ def list_reports(
 
 def inspect_report(
     *,
-    date: DateOption = None,
-    today: TodayOption = False,
-    timezone: TimezoneOption = None,
-    reports_root: ReportsRootOption = None,
+    target_options: CliWorkspaceTargetOptions,
 ) -> None:
     """Inspect one local report workspace."""
     try:
-        root = resolve_reports_root(reports_root)
-        workspace_path, audit_path = _resolve_existing_workspace(
-            date=date,
-            today=today,
-            timezone_name=timezone,
-            reports_root=root,
-        )
+        workspace_path, audit_path = _resolve_existing_workspace(target_options)
         inspection = inspect_workspace(
             workspace_path,
             audit_path=audit_path,
@@ -188,18 +176,16 @@ def _default_list_limit(*, verbose: bool) -> int:
 
 
 def _resolve_existing_workspace(
-    *,
-    date: str | None,
-    today: bool,
-    timezone_name: str | None,
-    reports_root: Path,
+    target_options: CliWorkspaceTargetOptions,
 ) -> tuple[Path, Path]:
-    target = resolve_report_target(date=date, today=today, timezone_name=timezone_name)
-    workspace_path = workspace_path_for_target(target, reports_root=reports_root)
-    if not workspace_path.exists():
-        raise PromptDiaryError(_missing_workspace_message(workspace_path))
-    validate_workspace_matches_target(workspace_path, target)
-    return workspace_path, audit_path_for_target(target, reports_root=reports_root)
+    resolved = target_options.resolve()
+    if not resolved.workspace_path.exists():
+        raise PromptDiaryError(_missing_workspace_message(resolved.workspace_path))
+    validate_workspace_matches_target(resolved.workspace_path, resolved.target)
+    return resolved.workspace_path, audit_path_for_target(
+        resolved.target,
+        reports_root=resolved.reports_root,
+    )
 
 
 def _format_list_entry(workspace_path: Path, *, verbose: bool, root: Path) -> tuple[str, ...]:
