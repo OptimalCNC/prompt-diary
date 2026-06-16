@@ -428,7 +428,8 @@ def test_refresh_dynamic_default_help_ignores_click_arguments() -> None:
     assert argument.name == "name"
 
 
-def test_workspace_target_command_help_lists_shared_flags() -> None:
+def test_workspace_target_command_help_lists_shared_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     local_app = typer.Typer(add_completion=False)
 
     def callback() -> None:
@@ -443,11 +444,12 @@ def test_workspace_target_command_help_lists_shared_flags() -> None:
 
     result = CliRunner().invoke(local_app, ["demo", "--help"], terminal_width=180)
 
+    help_text = _one_line(result.stdout)
     assert result.exit_code == 0
-    assert "--date" in result.stdout
-    assert "--today" in result.stdout
-    assert "--timezone" in result.stdout
-    assert "--reports-root" in result.stdout
+    assert "--date" in help_text
+    assert "--today" in help_text
+    assert "--timezone" in help_text
+    assert "--reports-root" in help_text
 
 
 def test_workspace_target_command_passes_single_options_object(tmp_path: Path) -> None:
