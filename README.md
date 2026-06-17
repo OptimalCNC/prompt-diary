@@ -114,6 +114,20 @@ In an interactive terminal, `prompt-diary generate` shows live progress. When ou
 or running in CI, it prints plain log lines. Pass `--quiet` to suppress the live output and print
 only the final summary.
 
+### Collect a support bundle
+
+Package an existing prepared workspace for support/debug upload:
+
+```bash
+prompt-diary collect --date 2026-05-12 --timezone Asia/Shanghai
+prompt-diary collect --workspace /path/to/prepared-workspace --output support-bundle.zip
+```
+
+`collect` requires the prepared workspace to already exist. By default it writes a zip under
+`<reports-root>/collections/` and excludes copied raw session transcripts under
+`projects/*/sessions/**`. Pass `--include-raw-sessions` only when the bundle should contain raw
+assistant transcript content.
+
 ## Development
 
 This project uses [`uv`](https://docs.astral.sh/uv/) for Python version, environment,

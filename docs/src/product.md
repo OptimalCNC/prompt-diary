@@ -98,6 +98,7 @@ The user-facing CLI surface should stay thin and map directly to the workflow:
 prompt-diary prepare [--date YYYY-MM-DD | --today] [--timezone Area/City] [--force] [--quiet]
 prompt-diary generate [--date YYYY-MM-DD | --today] [--timezone Area/City] [--notion | --no-notion] [--quiet]
 prompt-diary generate render [--date YYYY-MM-DD | --today] [--timezone Area/City] [--notion | --no-notion] [--quiet]
+prompt-diary collect [--date YYYY-MM-DD | --today] [--timezone Area/City] [--workspace PATH] [--output PATH] [--include-raw-sessions] [--quiet]
 prompt-diary mcp serve
 ```
 
@@ -129,3 +130,8 @@ publishing and errors when Notion is not configured.
 
 `mcp serve` starts the package MCP server over stdio for integration work. The server exposes
 `prompt_diary_ping`, `read_session_lines`, `write_evidence`, and `write_work_item`.
+
+`collect` packages an existing prepared workspace for support/debug upload. It never prepares,
+refreshes, generates, renders, or publishes report content. By default it excludes copied raw
+session transcripts under `projects/*/sessions/**`; `--include-raw-sessions` includes them and
+surfaces a warning because the bundle then contains raw assistant transcript content.
