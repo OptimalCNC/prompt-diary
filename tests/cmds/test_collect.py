@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import zipfile
 from typing import TYPE_CHECKING, TypedDict, cast
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 REPORT_DATE = "2026-05-12"
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
 COLLECT_PREPARE_FAILED = "collect must not prepare workspaces"
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class _ManifestTarget(TypedDict):
@@ -333,4 +335,4 @@ def _write_jsonl(path: Path, rows: list[object]) -> None:
 
 
 def _one_line(text: str) -> str:
-    return " ".join(text.split())
+    return " ".join(ANSI_ESCAPE_PATTERN.sub("", text).split())
