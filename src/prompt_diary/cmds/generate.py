@@ -13,6 +13,7 @@ from prompt_diary.cmds.common import (
     DynamicDefaultsTyperCommand,
     DynamicDefaultsTyperGroup,
     QuietOption,
+    ResolvedCliDirectWorkspaceTarget,
     build_cli_reporter,
     echo_messages,
     exit_with_error,
@@ -37,6 +38,7 @@ from prompt_diary.generate.rendering import (
     render_workspace_report_to_notion,
 )
 from prompt_diary.generate.workflow import GenerateWorkspaceWorkflow, PhaseName
+from prompt_diary.generate.workspace import load_prepared_workspace
 from prompt_diary.integrations.codex_runner import CodexAgentSessionFactory, CodexBackendConfig
 from prompt_diary.mcp.codex_config import (
     codex_clean_startup_overrides,
@@ -136,18 +138,34 @@ def register(app: typer.Typer) -> None:
         invoke_without_command=True,
         subcommand_metavar="[COMMAND] [ARGS]...",
     )
-    workspace_target_callback(generate_app, generate)
+    workspace_target_callback(generate_app, generate, include_workspace=True)
     workspace_target_command(
-        generate_app, generate_evidence, name="evidence", cls=DynamicDefaultsTyperCommand
+        generate_app,
+        generate_evidence,
+        name="evidence",
+        cls=DynamicDefaultsTyperCommand,
+        include_workspace=True,
     )
     workspace_target_command(
-        generate_app, generate_project, name="project", cls=DynamicDefaultsTyperCommand
+        generate_app,
+        generate_project,
+        name="project",
+        cls=DynamicDefaultsTyperCommand,
+        include_workspace=True,
     )
     workspace_target_command(
-        generate_app, generate_daily, name="daily", cls=DynamicDefaultsTyperCommand
+        generate_app,
+        generate_daily,
+        name="daily",
+        cls=DynamicDefaultsTyperCommand,
+        include_workspace=True,
     )
     workspace_target_command(
-        generate_app, generate_render, name="render", cls=DynamicDefaultsTyperCommand
+        generate_app,
+        generate_render,
+        name="render",
+        cls=DynamicDefaultsTyperCommand,
+        include_workspace=True,
     )
     app.add_typer(generate_app, name="generate")
 
@@ -160,9 +178,10 @@ def generate(
     notion: NotionOption = None,
 ) -> None:
     """Run the full generation pipeline."""
-    # Phase subcommands inherit this group-level --reports-root via the context (see
-    # _group_reports_root), so it is honored whether it precedes or follows the subcommand.
-    ctx.obj = target_options.reports_root
+    # Phase subcommands inherit selected group-level target flags via the context (see
+    # _phase_target_options), so --reports-root and --workspace are honored whether they precede or
+    # follow the subcommand.
+    ctx.obj = target_options
     if ctx.invoked_subcommand is not None:
         return
     try:
@@ -328,7 +347,11 @@ def workspace_for_generate_target(
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> tuple[Path, tuple[str, ...]]:
     """Resolve a CLI target and ensure its prepared workspace exists."""
-    resolved = target_options.resolve(now=now)
+    resolved = target_options.resolve_generation_target(now=now)
+    if isinstance(resolved, ResolvedCliDirectWorkspaceTarget):
+        _validate_direct_workspace(resolved.workspace_path)
+        return resolved.workspace_path, (f"Using prepared workspace {resolved.workspace_path}.",)
+
     if resolved.workspace_path.exists():
         validate_workspace_matches_target(resolved.workspace_path, resolved.target)
         return (
@@ -356,30 +379,47 @@ def workspace_for_existing_target(
     now: datetime | None = None,
 ) -> Path:
     """Resolve a CLI target and return its existing prepared workspace."""
-    resolved = target_options.resolve(now=now)
+    resolved = target_options.resolve_generation_target(now=now)
+    if isinstance(resolved, ResolvedCliDirectWorkspaceTarget):
+        _validate_direct_workspace(resolved.workspace_path)
+        return resolved.workspace_path
+
     if not resolved.workspace_path.exists():
         raise PromptDiaryError(_missing_workspace_message(resolved.workspace_path))
     validate_workspace_matches_target(resolved.workspace_path, resolved.target)
     return resolved.workspace_path
 
 
-def _group_reports_root(ctx: typer.Context, reports_root: Path | None) -> Path | None:
-    """Return the phase command's own --reports-root, else the generate group's value.
+def _validate_direct_workspace(workspace_path: Path) -> None:
+    """Verify a direct generation workspace exists and has prepared-workspace structure."""
+    if not workspace_path.exists():
+        raise PromptDiaryError(_missing_workspace_message(workspace_path))
+    load_prepared_workspace(workspace_path)
 
-    The ``generate`` group callback stores its --reports-root in ``ctx.obj``, so the flag is
-    honored whether it precedes or follows the phase subcommand; a value passed on the subcommand
-    itself takes precedence over the group's.
-    """
-    if reports_root is not None:
-        return reports_root
+
+def _group_target_options(ctx: typer.Context) -> CliWorkspaceTargetOptions | None:
     group_value = ctx.obj
-    return group_value if isinstance(group_value, Path) else None
+    return group_value if isinstance(group_value, CliWorkspaceTargetOptions) else None
 
 
 def _phase_target_options(
     ctx: typer.Context, target_options: CliWorkspaceTargetOptions
 ) -> CliWorkspaceTargetOptions:
-    return target_options.with_reports_root(_group_reports_root(ctx, target_options.reports_root))
+    group_options = _group_target_options(ctx)
+    if group_options is None:
+        return target_options
+
+    reports_root = (
+        target_options.reports_root
+        if target_options.reports_root is not None
+        else group_options.reports_root
+    )
+    workspace = (
+        target_options.workspace
+        if target_options.workspace is not None
+        else group_options.workspace
+    )
+    return target_options.with_reports_root(reports_root).with_workspace(workspace)
 
 
 def _run_phase_command(

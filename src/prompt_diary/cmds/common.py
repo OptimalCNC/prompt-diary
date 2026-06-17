@@ -21,6 +21,7 @@ from prompt_diary.config import (
     load_config,
     resolve_reports_root,
 )
+from prompt_diary.errors import PromptDiaryError
 from prompt_diary.paths import REPORTS_HOME_ENV
 from prompt_diary.prepare.workspace import workspace_path_for_target
 from prompt_diary.progress.console import build_reporter
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import Protocol
 
-    from prompt_diary.errors import PromptDiaryError
     from prompt_diary.models import ReportTarget
 
     class _SignatureAwareCallable(Protocol):
@@ -54,6 +54,10 @@ QuietOption: TypeAlias = Annotated[
 ReportsRootOption: TypeAlias = Annotated[
     Path | None,
     typer.Option(help="Reports root containing work/<YYYY-MM-DD> workspaces."),
+]
+WorkspaceOption: TypeAlias = Annotated[
+    Path | None,
+    typer.Option("--workspace", help="Existing prepared workspace path to generate from."),
 ]
 
 _BASE_HELP_ATTRIBUTE = "_prompt_diary_base_help"
@@ -99,9 +103,12 @@ class CliWorkspaceTargetOptions:
 
     report_target: CliReportTargetOptions
     reports_root: Path | None
+    workspace: Path | None = None
 
     def resolve(self, *, now: datetime | None = None) -> ResolvedCliWorkspaceTarget:
         """Resolve CLI workspace target options into typed target and path values."""
+        if self.workspace is not None:
+            raise PromptDiaryError(_workspace_unsupported_resolution_message())
         target = self.report_target.resolve(now=now)
         reports_root = resolve_reports_root(self.reports_root)
         return ResolvedCliWorkspaceTarget(
@@ -110,11 +117,29 @@ class CliWorkspaceTargetOptions:
             workspace_path=workspace_path_for_target(target, reports_root=reports_root),
         )
 
+    def resolve_generation_target(
+        self, *, now: datetime | None = None
+    ) -> ResolvedCliGenerationTarget:
+        """Resolve generation target options into either date/root or direct workspace mode."""
+        if self.workspace is not None:
+            _reject_direct_workspace_conflicts(self)
+            return ResolvedCliDirectWorkspaceTarget(workspace_path=self.workspace)
+        return self.resolve(now=now)
+
     def with_reports_root(self, reports_root: Path | None) -> CliWorkspaceTargetOptions:
         """Return the same date target with a different raw reports-root option."""
         return CliWorkspaceTargetOptions(
             report_target=self.report_target,
             reports_root=reports_root,
+            workspace=self.workspace,
+        )
+
+    def with_workspace(self, workspace: Path | None) -> CliWorkspaceTargetOptions:
+        """Return the same date/root target with a different direct workspace option."""
+        return CliWorkspaceTargetOptions(
+            report_target=self.report_target,
+            reports_root=self.reports_root,
+            workspace=workspace,
         )
 
 
@@ -125,6 +150,18 @@ class ResolvedCliWorkspaceTarget:
     target: ReportTarget
     reports_root: Path
     workspace_path: Path
+
+
+@dataclass(frozen=True)
+class ResolvedCliDirectWorkspaceTarget:
+    """Resolved direct prepared workspace target for generation commands."""
+
+    workspace_path: Path
+
+
+ResolvedCliGenerationTarget: TypeAlias = (
+    ResolvedCliWorkspaceTarget | ResolvedCliDirectWorkspaceTarget
+)
 
 
 class DynamicDefaultsTyperGroup(TyperGroup):
@@ -149,9 +186,10 @@ def workspace_target_command(
     *,
     name: str | None = None,
     cls: type[TyperCommand] | None = None,
+    include_workspace: bool = False,
 ) -> Callable[..., object]:
     """Register a command that receives one typed workspace target option object."""
-    wrapper = _workspace_target_wrapper(callback)
+    wrapper = _workspace_target_wrapper(callback, include_workspace=include_workspace)
     app.command(name=name, cls=cls)(wrapper)
     return wrapper
 
@@ -159,19 +197,26 @@ def workspace_target_command(
 def workspace_target_callback(
     app: typer.Typer,
     callback: Callable[..., object],
+    *,
+    include_workspace: bool = False,
 ) -> Callable[..., object]:
     """Register a group callback that receives one typed workspace target option object."""
-    wrapper = _workspace_target_wrapper(callback)
+    wrapper = _workspace_target_wrapper(callback, include_workspace=include_workspace)
     app.callback()(wrapper)
     return wrapper
 
 
-def _workspace_target_wrapper(callback: Callable[..., object]) -> Callable[..., object]:
+def _workspace_target_wrapper(
+    callback: Callable[..., object],
+    *,
+    include_workspace: bool,
+) -> Callable[..., object]:
     callback_signature = signature(callback)
     callback_type_hints = get_type_hints(callback, include_extras=True)
     wrapper_signature = _workspace_target_wrapper_signature(
         callback_signature,
         callback_type_hints=callback_type_hints,
+        include_workspace=include_workspace,
     )
 
     @wraps(callback)
@@ -182,6 +227,9 @@ def _workspace_target_wrapper(callback: Callable[..., object]) -> Callable[..., 
         today = cast("bool", bound.arguments.pop("today"))
         timezone = cast("str | None", bound.arguments.pop("timezone"))
         reports_root = cast("Path | None", bound.arguments.pop("reports_root"))
+        workspace = (
+            cast("Path | None", bound.arguments.pop("workspace")) if include_workspace else None
+        )
         target_options = CliWorkspaceTargetOptions(
             report_target=CliReportTargetOptions(
                 date=date,
@@ -189,6 +237,7 @@ def _workspace_target_wrapper(callback: Callable[..., object]) -> Callable[..., 
                 timezone=timezone,
             ),
             reports_root=reports_root,
+            workspace=workspace,
         )
         callback_kwargs = dict(bound.arguments)
         callback_kwargs["target_options"] = target_options
@@ -203,11 +252,14 @@ def _workspace_target_wrapper_signature(
     callback_signature: Signature,
     *,
     callback_type_hints: dict[str, object],
+    include_workspace: bool,
 ) -> Signature:
     parameters: list[Parameter] = []
     for parameter in callback_signature.parameters.values():
         if parameter.name == "target_options":
-            parameters.extend(_workspace_target_option_parameters())
+            parameters.extend(
+                _workspace_target_option_parameters(include_workspace=include_workspace)
+            )
         else:
             parameters.append(
                 parameter.replace(
@@ -226,8 +278,8 @@ def _missing_target_options_parameter_message() -> str:
     return "workspace target callbacks must accept a target_options parameter"
 
 
-def _workspace_target_option_parameters() -> tuple[Parameter, ...]:
-    return (
+def _workspace_target_option_parameters(*, include_workspace: bool) -> tuple[Parameter, ...]:
+    parameters = (
         Parameter(
             "date",
             kind=Parameter.KEYWORD_ONLY,
@@ -253,6 +305,40 @@ def _workspace_target_option_parameters() -> tuple[Parameter, ...]:
             annotation=ReportsRootOption,
         ),
     )
+    if not include_workspace:
+        return parameters
+    return (
+        *parameters,
+        Parameter(
+            "workspace",
+            kind=Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=WorkspaceOption,
+        ),
+    )
+
+
+def _reject_direct_workspace_conflicts(target_options: CliWorkspaceTargetOptions) -> None:
+    conflicts: list[str] = []
+    if target_options.report_target.date is not None:
+        conflicts.append("--date")
+    if target_options.report_target.today:
+        conflicts.append("--today")
+    if target_options.report_target.timezone is not None:
+        conflicts.append("--timezone")
+    if target_options.reports_root is not None:
+        conflicts.append("--reports-root")
+    if conflicts:
+        raise PromptDiaryError(_direct_workspace_conflict_message(tuple(conflicts)))
+
+
+def _direct_workspace_conflict_message(conflicts: tuple[str, ...]) -> str:
+    joined = ", ".join(conflicts)
+    return f"--workspace cannot be combined with {joined}."
+
+
+def _workspace_unsupported_resolution_message() -> str:
+    return "--workspace can only be resolved by generation commands"
 
 
 def refresh_dynamic_default_help(params: list[click.Parameter]) -> None:

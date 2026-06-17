@@ -7,10 +7,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import prompt_diary.targeting.resolve as targets_module
-from prompt_diary.cmds.common import CliReportTargetOptions, CliWorkspaceTargetOptions
+from prompt_diary.cmds.common import (
+    CliReportTargetOptions,
+    CliWorkspaceTargetOptions,
+)
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.models import serialize_datetime
 from prompt_diary.targeting.resolve import resolve_report_target
+
+DIRECT_WORKSPACE_DATE_RESOLUTION = "direct workspace target must not resolve date options"
 
 
 def test_resolve_report_target_defaults_to_yesterday_completed_local_day() -> None:
@@ -133,6 +138,85 @@ def test_cli_workspace_target_options_reject_conflicting_date_flags(tmp_path: Pa
 
     with pytest.raises(PromptDiaryError, match="mutually exclusive"):
         options.resolve(now=datetime(2026, 5, 20, tzinfo=ZoneInfo("UTC")))
+
+
+def test_cli_workspace_target_options_resolves_direct_workspace_without_date_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_date_resolution(
+        self: CliReportTargetOptions,
+        *,
+        now: datetime | None = None,
+    ) -> object:
+        del self, now
+        raise AssertionError(DIRECT_WORKSPACE_DATE_RESOLUTION)
+
+    monkeypatch.setattr(CliReportTargetOptions, "resolve", reject_date_resolution)
+    options = CliWorkspaceTargetOptions(
+        report_target=CliReportTargetOptions(date=None, today=False, timezone=None),
+        reports_root=None,
+        workspace=tmp_path / "direct-workspace",
+    )
+
+    resolved = options.resolve_generation_target(now=datetime(2026, 5, 20, tzinfo=ZoneInfo("UTC")))
+
+    assert type(resolved).__name__ == "ResolvedCliDirectWorkspaceTarget"
+    assert resolved.workspace_path == tmp_path / "direct-workspace"
+
+
+def test_cli_workspace_target_options_date_resolution_rejects_direct_workspace(
+    tmp_path: Path,
+) -> None:
+    options = CliWorkspaceTargetOptions(
+        report_target=CliReportTargetOptions(date=None, today=False, timezone=None),
+        reports_root=None,
+        workspace=tmp_path / "direct-workspace",
+    )
+
+    with pytest.raises(PromptDiaryError, match="generation commands"):
+        options.resolve()
+
+
+@pytest.mark.parametrize(
+    ("report_target", "reports_root", "match"),
+    [
+        (
+            CliReportTargetOptions(date="2026-05-19", today=False, timezone=None),
+            None,
+            "--date",
+        ),
+        (
+            CliReportTargetOptions(date=None, today=True, timezone=None),
+            None,
+            "--today",
+        ),
+        (
+            CliReportTargetOptions(date=None, today=False, timezone="UTC"),
+            None,
+            "--timezone",
+        ),
+        (
+            CliReportTargetOptions(date=None, today=False, timezone=None),
+            "reports",
+            "--reports-root",
+        ),
+    ],
+)
+def test_cli_workspace_target_options_rejects_direct_workspace_conflicts(
+    tmp_path: Path,
+    report_target: CliReportTargetOptions,
+    reports_root: str | None,
+    match: str,
+) -> None:
+    options = CliWorkspaceTargetOptions(
+        report_target=report_target,
+        reports_root=tmp_path / reports_root if reports_root is not None else None,
+        workspace=tmp_path / "direct-workspace",
+    )
+
+    with pytest.raises(PromptDiaryError, match=match):
+        options.resolve_generation_target()
 
 
 def test_resolve_report_target_converts_aware_now_to_target_timezone() -> None:

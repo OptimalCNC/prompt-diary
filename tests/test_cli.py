@@ -38,6 +38,8 @@ PREPARE_FAILED = "prepare failed"
 GENERATE_FAILED = "generate failed"
 PHASE_FAILED = "phase failed"
 NO_NOTION_RENDER_FAILED = "render notion must not run with --no-notion"
+FULL_GENERATE_PHASE_FAILED = "full generate must not call run_phase"
+DIRECT_WORKSPACE_PREPARE_FAILED = "direct workspace generation must not prepare a workspace"
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -452,6 +454,44 @@ def test_workspace_target_command_help_lists_shared_flags(monkeypatch: pytest.Mo
     assert "--reports-root" in help_text
 
 
+def test_workspace_target_command_can_include_workspace_flag(tmp_path: Path) -> None:
+    local_app = typer.Typer(add_completion=False)
+    captured: list[common_cmd.CliWorkspaceTargetOptions] = []
+
+    def callback() -> None:
+        pass
+
+    local_app.callback()(callback)
+
+    def handler(*, target_options: common_cmd.CliWorkspaceTargetOptions) -> None:
+        captured.append(target_options)
+
+    common_cmd.workspace_target_command(local_app, handler, name="demo", include_workspace=True)
+    workspace = tmp_path / "prepared-workspace"
+
+    result = CliRunner().invoke(local_app, ["demo", "--workspace", str(workspace)])
+
+    assert result.exit_code == 0, result.output
+    assert captured == [
+        common_cmd.CliWorkspaceTargetOptions(
+            report_target=common_cmd.CliReportTargetOptions(
+                date=None,
+                today=False,
+                timezone=None,
+            ),
+            reports_root=None,
+            workspace=workspace,
+        )
+    ]
+
+
+def test_prepare_help_does_not_list_workspace() -> None:
+    result = CliRunner().invoke(app, ["prepare", "--help"], terminal_width=180)
+
+    assert result.exit_code == 0
+    assert "--workspace" not in _one_line(result.stdout)
+
+
 def test_workspace_target_command_passes_single_options_object(tmp_path: Path) -> None:
     local_app = typer.Typer(add_completion=False)
     captured: list[common_cmd.CliWorkspaceTargetOptions] = []
@@ -809,6 +849,43 @@ def test_generate_no_notion_skips_publish_even_when_configured(
     assert result.stdout == "prepared\ngenerated\n"
 
 
+def test_generate_workspace_runs_pipeline_against_direct_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = resolve_report_target(date="2026-05-12", today=False, timezone_name="UTC")
+    prepared = prepare_workspace(target, reports_root=tmp_path / ".reports", source_specs=())
+    pipeline_calls: list[tuple[Path, tuple[str, ...]]] = []
+
+    @dataclass
+    class _RecordingWorkflow:
+        def run_pipeline(
+            self, *, workspace_path: Path, messages: tuple[str, ...] = (), **_kwargs: object
+        ) -> _FakeWorkflowResult:
+            pipeline_calls.append((workspace_path, messages))
+            return _FakeWorkflowResult(messages=(*messages, "generated"))
+
+        def run_phase(self, **_kwargs: object) -> _FakeWorkflowResult:
+            raise AssertionError(FULL_GENERATE_PHASE_FAILED)
+
+    def prepare_must_not_run(**_kwargs: object) -> object:
+        raise AssertionError(DIRECT_WORKSPACE_PREPARE_FAILED)
+
+    monkeypatch.setattr(generate_cmd, "build_generation_workflow", _RecordingWorkflow)
+    monkeypatch.setattr(generate_cmd, "prepare_workspace", prepare_must_not_run)
+
+    result = CliRunner().invoke(
+        app,
+        ["generate", "--workspace", str(prepared.workspace_path), "--no-notion"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"Using prepared workspace {prepared.workspace_path}.\ngenerated\n"
+    assert pipeline_calls == [
+        (prepared.workspace_path, (f"Using prepared workspace {prepared.workspace_path}.",))
+    ]
+
+
 def test_generate_render_notion_publishes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -949,6 +1026,38 @@ def test_generate_render_no_notion_skips_publish_even_when_configured(
     assert result.stdout == "rendered\n"
 
 
+def test_generate_render_accepts_workspace_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "prepared-workspace"
+    captured: list[Path | None] = []
+
+    def workspace_for_existing_target(
+        *, target_options: common_cmd.CliWorkspaceTargetOptions, **_kwargs: object
+    ) -> Path:
+        captured.append(target_options.workspace)
+        return workspace
+
+    monkeypatch.setattr(
+        generate_cmd, "workspace_for_existing_target", workspace_for_existing_target
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_messages=("rendered",)),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["generate", "render", "--workspace", str(workspace), "--no-notion"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "rendered\n"
+    assert captured == [workspace]
+
+
 def test_generate_render_requires_existing_workspace(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
@@ -966,6 +1075,18 @@ def test_generate_render_requires_existing_workspace(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "prepared workspace is missing" in result.stderr
+
+
+def test_generate_direct_workspace_requires_existing_workspace(tmp_path: Path) -> None:
+    missing_workspace = tmp_path / "missing-workspace"
+
+    result = CliRunner().invoke(
+        app,
+        ["generate", "--workspace", str(missing_workspace), "--no-notion"],
+    )
+
+    assert result.exit_code == 2
+    assert f"prepared workspace is missing: {missing_workspace}; run prepare first" in result.stderr
 
 
 def test_generate_phase_error_exits_with_stderr(
@@ -1145,6 +1266,117 @@ def test_generate_phase_commands_delegate(
     ]
 
 
+def test_generate_daily_accepts_workspace_before_or_after_phase(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "prepared-workspace"
+    captured: list[Path | None] = []
+
+    def workspace_for_existing_target(
+        *,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
+        **_kwargs: object,
+    ) -> Path:
+        captured.append(target_options.workspace)
+        return workspace
+
+    monkeypatch.setattr(
+        generate_cmd,
+        "workspace_for_existing_target",
+        workspace_for_existing_target,
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_messages=("completed",)),
+    )
+    runner = CliRunner()
+
+    after_phase = runner.invoke(app, ["generate", "daily", "--workspace", str(workspace)])
+    before_phase = runner.invoke(app, ["generate", "--workspace", str(workspace), "daily"])
+
+    assert after_phase.exit_code == 0, after_phase.output
+    assert before_phase.exit_code == 0, before_phase.output
+    assert captured == [workspace, workspace]
+
+
+def test_generate_phase_workspace_flag_after_phase_wins_over_group_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    group_workspace = tmp_path / "group-workspace"
+    subcommand_workspace = tmp_path / "subcommand-workspace"
+    captured: list[Path | None] = []
+
+    def workspace_for_existing_target(
+        *,
+        target_options: common_cmd.CliWorkspaceTargetOptions,
+        **_kwargs: object,
+    ) -> Path:
+        captured.append(target_options.workspace)
+        return subcommand_workspace
+
+    monkeypatch.setattr(
+        generate_cmd,
+        "workspace_for_existing_target",
+        workspace_for_existing_target,
+    )
+    monkeypatch.setattr(
+        generate_cmd,
+        "build_generation_workflow",
+        lambda: _FakeWorkflow(phase_messages=("completed",)),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "generate",
+            "--workspace",
+            str(group_workspace),
+            "daily",
+            "--workspace",
+            str(subcommand_workspace),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == [subcommand_workspace]
+
+
+def test_generate_phase_target_options_without_group_context_keeps_subcommand_options(
+    tmp_path: Path,
+) -> None:
+    target_options = common_cmd.CliWorkspaceTargetOptions(
+        report_target=common_cmd.CliReportTargetOptions(
+            date="2026-05-12",
+            today=False,
+            timezone="UTC",
+        ),
+        reports_root=tmp_path / "reports",
+    )
+    ctx = click.Context(click.Command("generate"))
+
+    assert generate_cmd._phase_target_options(ctx, target_options) is target_options  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+
+
+def test_generate_workspace_rejects_date_target_flags(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "generate",
+            "--workspace",
+            str(tmp_path / "prepared-workspace"),
+            "--date",
+            "2026-05-12",
+            "--no-notion",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--workspace cannot be combined with --date" in result.stderr
+
+
 def test_prepare_reports_root_flag_wins_over_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1249,6 +1481,29 @@ def test_generate_existing_workspace_resolution(tmp_path: Path) -> None:
                 timezone="Asia/Shanghai",
             ),
             reports_root=reports_root,
+        ),
+    )
+
+    assert workspace_path == prepared.workspace_path
+
+
+def test_generate_existing_workspace_resolution_accepts_direct_workspace(tmp_path: Path) -> None:
+    target = resolve_report_target(
+        date="2026-05-12",
+        today=False,
+        timezone_name="Asia/Shanghai",
+    )
+    prepared = prepare_workspace(target, reports_root=tmp_path / ".reports", source_specs=())
+
+    workspace_path = generate_cmd.workspace_for_existing_target(
+        target_options=common_cmd.CliWorkspaceTargetOptions(
+            report_target=common_cmd.CliReportTargetOptions(
+                date=None,
+                today=False,
+                timezone=None,
+            ),
+            reports_root=None,
+            workspace=prepared.workspace_path,
         ),
     )
 
