@@ -1,4 +1,4 @@
-"""Pinned-SDK lifecycle interoperability with in-memory RPC and notification queues."""
+"""Pinned-SDK lifecycle interoperability with in-memory RPC and turn subscriptions."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import openai_codex
 import pytest
 from openai_codex import AsyncCodex, AsyncThread
-from openai_codex._message_router import MessageRouter, NotificationQueueItem
+from openai_codex._message_router import MessageRouter
 from openai_codex.async_client import AsyncCodexClient
 from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import (
@@ -31,53 +31,60 @@ from prompt_diary.integrations.codex_runner import (
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from queue import Queue
+
+    from openai_codex._message_router import (
+        _TurnSubscription,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 class _ObservedRouter(MessageRouter):
-    """Observe real SDK queue consumption and retain emergency handles for bounded test cleanup."""
+    """Observe real SDK subscription consumption and release blocked consumers during cleanup."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop, monkeypatch: pytest.MonkeyPatch) -> None:
         super().__init__()
         self.loop = loop
+        self.monkeypatch = monkeypatch
         self.consumer_started = asyncio.Event()
         self.waiting: set[str] = set()
         self.consumed_terminal: list[str] = []
-        self.unregistered: list[str] = []
-        self.queues: list[Queue[NotificationQueueItem]] = []
+        self.closed: list[str] = []
 
-    def register_turn(self, turn_id: str) -> None:
-        super().register_turn(turn_id)
-        with self._lock:
-            turn_queue = self._turn_notifications[turn_id]
-            if turn_queue not in self.queues:
-                self.queues.append(turn_queue)
+    def prepare_turn(
+        self, turn_id: str, thread_id: str, cursors: dict[str, int], *, for_handle: bool
+    ) -> _TurnSubscription | None:
+        subscription = super().prepare_turn(turn_id, thread_id, cursors, for_handle=for_handle)
+        assert subscription is not None
+        next_notification = subscription.next
+        close = subscription.close
 
-    def next_turn_notification(self, turn_id: str) -> Notification:
-        self.waiting.add(turn_id)
-        self.loop.call_soon_threadsafe(self.consumer_started.set)
-        try:
-            notification = super().next_turn_notification(turn_id)
-            if isinstance(notification.payload, TurnCompletedNotification):
-                self.consumed_terminal.append(notification.payload.turn.id)
-            return notification
-        finally:
-            self.waiting.remove(turn_id)
+        def observed_next() -> Notification:
+            self.waiting.add(turn_id)
+            self.loop.call_soon_threadsafe(self.consumer_started.set)
+            try:
+                notification = next_notification()
+                if isinstance(notification.payload, TurnCompletedNotification):
+                    self.consumed_terminal.append(notification.payload.turn.id)
+                return notification
+            finally:
+                self.waiting.remove(turn_id)
 
-    def unregister_turn(self, turn_id: str) -> None:
-        self.unregistered.append(turn_id)
-        super().unregister_turn(turn_id)
+        def observed_close() -> None:
+            self.closed.append(turn_id)
+            close()
+
+        self.monkeypatch.setattr(subscription, "next", observed_next)
+        self.monkeypatch.setattr(subscription, "close", observed_close)
+        return subscription
 
     def release_waiters(self) -> None:
         # A regression must not leave asyncio.run waiting forever for an orphaned to_thread worker.
-        for turn_queue in self.queues:
-            turn_queue.put(RuntimeError("test transport closed"))
+        self.fail_all(RuntimeError("test transport closed"))
 
 
 class _MemoryTransport(CodexClient):
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop, monkeypatch: pytest.MonkeyPatch) -> None:
         super().__init__()
-        self.router = _ObservedRouter(loop)
+        self.router = _ObservedRouter(loop, monkeypatch)
         self._router = self.router
         self.loop = loop
         self.interrupt_received = asyncio.Event()
@@ -155,7 +162,7 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def exercise() -> None:
-        transport = _MemoryTransport(asyncio.get_running_loop())
+        transport = _MemoryTransport(asyncio.get_running_loop(), monkeypatch)
         client = AsyncCodexClient()
         monkeypatch.setattr(client, "_sync", transport)
         codex = AsyncCodex()
@@ -181,7 +188,7 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
                 await asyncio.sleep(0)
                 assert not task.done(), "interrupt acknowledgement must not release the runner"
                 assert transport.router.waiting == {"turn-1"}
-                assert transport.router.unregistered == []
+                assert transport.router.closed == []
 
                 transport.complete_interruption()
                 with pytest.raises(TimeoutError):
@@ -190,7 +197,7 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
                 assert task.done()
                 assert transport.requests == ["turn/start", "turn/interrupt"]
                 assert transport.router.consumed_terminal == ["turn-1"]
-                assert transport.router.unregistered == ["turn-1"]
+                assert transport.router.closed == ["turn-1"]
                 assert transport.router.waiting == set()
                 assert transport.close_calls == 0
                 assert backend.codex is codex
@@ -209,7 +216,7 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
                 )
                 assert transport.requests == ["turn/start", "turn/interrupt", "turn/start"]
                 assert transport.router.consumed_terminal == ["turn-1", "turn-2"]
-                assert transport.router.unregistered == ["turn-1", "turn-2"]
+                assert transport.router.closed == ["turn-1", "turn-2"]
                 assert transport.router.waiting == set()
                 assert transport.close_calls == 0
             assert transport.close_calls == 1

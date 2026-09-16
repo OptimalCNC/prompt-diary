@@ -23,7 +23,7 @@ def test_distribution_requires_codex_sdk_without_extra_marker() -> None:
         requirement for requirement in requires_dist if requirement.startswith("openai-codex")
     ]
 
-    assert codex_sdk_requirements == ["openai-codex==0.1.0b3"]
+    assert codex_sdk_requirements == ["openai-codex==0.154.0"]
 
 
 def test_distribution_does_not_declare_codex_cli_runtime_directly() -> None:

@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  MDBOOK_VERSION: "0.5.3"
-  MDBOOK_MERMAID_VERSION: "0.17.0"
+  MDBOOK_VERSION: "0.5.4"
+  MDBOOK_MERMAID_VERSION: "0.17.1"
 
 jobs:
   build:

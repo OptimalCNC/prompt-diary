@@ -576,9 +576,9 @@ def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
 
 def _codex_sdk_missing_message() -> str:
     return (
-        "The Codex SDK is not importable. Run `uv sync --prerelease=allow` inside this "
+        "The Codex SDK is not importable. Run `uv sync` inside this "
         "project, or reinstall the tool with Codex support: "
-        "`uv tool install --force --prerelease=allow prompt-diary`."
+        "`uv tool install --force prompt-diary`."
     )
 
 
