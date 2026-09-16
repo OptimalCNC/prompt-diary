@@ -193,11 +193,3 @@ Prompt source: `src/prompt_diary/generate/prompts/evidence-extractor.md` — loa
 orchestrator.
 
 See [Evidence Extractor Prompt](./evidence-extractor-prompt.md).
-
-Short next-turn prompt source: `src/prompt_diary/generate/prompts/evidence-extractor-next-turn.md` — loaded
-at runtime by the orchestrator when the same extractor agent is assigned another turn from the same
-session.
-
-````text
-{{#include ../../../src/prompt_diary/generate/prompts/evidence-extractor-next-turn.md}}
-````

@@ -306,6 +306,26 @@ def test_runner_resumes_failed_pass_on_same_runner(tmp_path: Path) -> None:
     assert report["engagement_assessment"] is not None
 
 
+def test_daily_retry_reminder_does_not_repeat_source_messages(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    envelope_path = workspace / "projects" / PROJECT_KEY / "project-synthesis.json"
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    sentinel = "DAILY_SOURCE_SENTINEL" * 1000
+    envelope["source_user_messages"][0]["messages"] = [sentinel]
+    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory(
+        fail_once_passes=frozenset({"engagement", "team_learning"})
+    )
+
+    assert _run(factory, workspace).status == "success"
+
+    for runner in factory.runners[2:]:
+        initial, retry = runner.prompts
+        assert sentinel in initial
+        assert "DAILY_SOURCE_SENTINEL" not in retry
+        assert "write_" in retry
+
+
 def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()

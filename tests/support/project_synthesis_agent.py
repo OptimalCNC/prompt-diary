@@ -22,6 +22,7 @@ _PROJECT_KEY_RE = re.compile(r"^- Project key: (.+)$", re.MULTILINE)
 _CHAIN_RE = re.compile(r"^\*\*(S\d{4})/(T\d{4})\*\* \[", re.MULTILINE)
 _UNCOVERED_REF_RE = re.compile(r"`(S\d{4})/(T\d{4})`")
 _CONTINUATION_MARKER = "Continue: cover the remaining turns"
+_COMMITTED_ITEM_REF_RE = re.compile(r"^- W(\d{4}): ", re.MULTILINE)
 
 
 @dataclass
@@ -64,6 +65,9 @@ class GroupingAgentRunner:
                 self._cover_continuation(prompt)
             return AgentTurnResult(assistant_text="continued", events=())
         project_key = _require_project_key(prompt)
+        committed_refs = _COMMITTED_ITEM_REF_RE.findall(prompt)
+        if committed_refs:
+            self.counter.value = max(int(ref) for ref in committed_refs)
         grouped = _committed_by_session(prompt)
         if self.first_turn_session_limit is not None:
             grouped = grouped[: self.first_turn_session_limit]

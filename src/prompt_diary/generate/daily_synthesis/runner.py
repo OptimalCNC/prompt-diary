@@ -221,7 +221,7 @@ class DailySynthesisRunner:
         return await run_agent_turn_with_resume(
             runner=runner,
             initial_prompt=initial_prompt,
-            resume_prompt=lambda: _resume_pass_prompt(resume_instruction, initial_prompt),
+            resume_prompt=lambda: resume_instruction,
             inspect_artifacts=inspect_artifacts,
             progress_made=lambda before, after: after and not before,
             action=action,
@@ -287,13 +287,6 @@ def _project_summary_status(workspace_path: Path, project_key: str) -> AgentArti
 def _slot_status(workspace_path: Path, slot: str) -> AgentArtifactStatus[bool]:
     written = _slot(workspace_path, slot) is not None
     return AgentArtifactStatus(complete=written, progress_marker=written)
-
-
-def _resume_pass_prompt(resume_instruction: str, initial_prompt: str) -> str:
-    return (
-        f"{resume_instruction}\n\n"
-        f"Reuse the same source context and rules below.\n\n{initial_prompt}"
-    )
 
 
 def _read_report(workspace_path: Path) -> dict[str, Any]:

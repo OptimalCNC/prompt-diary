@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from collections.abc import Mapping, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AsyncExitStack, aclosing
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
+from enum import Enum
+from typing import TYPE_CHECKING, Literal, Protocol, TypeGuard, TypeVar, cast
 
 from prompt_diary.agent import AgentTurnEvent, AgentTurnResult
 from prompt_diary.errors import PromptDiaryError
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
 
 class CodexRunnerError(PromptDiaryError):
     """Raised when the Codex SDK runner cannot execute a requested operation."""
+
+
+_TURN_CLEANUP_TIMEOUT_SECONDS = 5.0
+_T = TypeVar("_T")
 
 
 def _empty_env_overrides() -> Mapping[str, str]:
@@ -85,12 +90,20 @@ class _AsyncCodex(Protocol):
 
 
 class _AsyncThread(Protocol):
-    async def run(
+    async def turn(
         self,
         prompt: str,
         *,
         output_schema: Mapping[str, object] | None = None,
-    ) -> object: ...
+    ) -> _AsyncTurnHandle: ...
+
+
+class _AsyncTurnHandle(Protocol):
+    id: str
+
+    def stream(self) -> AsyncGenerator[object, None]: ...
+
+    async def interrupt(self) -> object: ...
 
 
 class _StringEnumFactory(Protocol):
@@ -101,6 +114,22 @@ class _ModelDump(Protocol):
     def __call__(self, *, mode: str, exclude_none: bool) -> object: ...
 
 
+@dataclass(frozen=True)
+class _CompletedTurn:
+    """A terminal notification plus the items observed before it."""
+
+    status: Literal["completed", "interrupted", "failed"]
+    error: str | None
+    result: AgentTurnResult
+
+
+@dataclass
+class _TurnState:
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    handle: _AsyncTurnHandle | None = None
+    completed: _CompletedTurn | None = None
+
+
 class CodexBackend:
     """Async context manager for a Codex SDK app-server process."""
 
@@ -109,9 +138,13 @@ class CodexBackend:
         self._sdk_module: _CodexSdkModule | None = None
         self._context: _AsyncCodexContext | None = None
         self._codex: _AsyncCodex | None = None
+        self._close_task: asyncio.Task[object] | None = None
+        self._invalidated = False
 
     async def __aenter__(self) -> CodexBackend:
         """Start and return the SDK backend."""
+        if self._invalidated:
+            raise CodexRunnerError(_invalidated_backend_message())
         sdk_module = _load_openai_codex()
         codex_config = sdk_module.CodexConfig(
             codex_bin=str(self.config.codex_bin) if self.config.codex_bin is not None else None,
@@ -131,16 +164,43 @@ class CodexBackend:
         traceback: TracebackType | None,
     ) -> None:
         """Stop the SDK backend."""
+        close_task = self._start_close(exc_type, exc, traceback)
+        if close_task is not None:
+            try:
+                await _finish_cleanup(asyncio.create_task(_wait_for_cleanup(close_task)))
+            except Exception as error:
+                self._invalidated = True
+                if isinstance(exc, (TimeoutError, asyncio.CancelledError)):
+                    raise exc from error
+                raise CodexRunnerError(_shutdown_unconfirmed_message()) from error
+
+    async def invalidate(self) -> None:
+        """Permanently disable this backend and close its transport."""
+        self._invalidated = True
+        close_task = self._start_close(None, None, None)
+        if close_task is not None:
+            await asyncio.shield(close_task)
+
+    def _start_close(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> asyncio.Task[object] | None:
         context = self._context
         self._codex = None
         self._context = None
         self._sdk_module = None
         if context is not None:
-            await context.__aexit__(exc_type, exc, traceback)
+            self._close_task = asyncio.create_task(context.__aexit__(exc_type, exc, traceback))
+            self._close_task.add_done_callback(_consume_task_exception)
+        return self._close_task
 
     @property
     def codex(self) -> _AsyncCodex:
         """Return the active SDK backend, or fail if the backend is not started."""
+        if self._invalidated:
+            raise CodexRunnerError(_invalidated_backend_message())
         if self._codex is None:
             raise CodexRunnerError(_backend_not_started_message())
         return self._codex
@@ -178,18 +238,85 @@ class CodexAgentRunner:
         self._turn_running = True
         try:
             thread = await self._ensure_thread_started()
+            state = _TurnState()
+            operation = asyncio.create_task(self._run_turn(thread, state, prompt, output_schema))
+            operation.add_done_callback(_consume_task_exception)
             try:
-                result = await asyncio.wait_for(
-                    thread.run(prompt, output_schema=output_schema),
-                    timeout=timeout_seconds,
-                )
+                completed = await asyncio.wait_for(asyncio.shield(operation), timeout_seconds)
             except asyncio.TimeoutError as exc:
+                try:
+                    await _finish_cleanup(asyncio.create_task(self._stop_turn(state, operation)))
+                except Exception as cleanup_error:
+                    raise TimeoutError(
+                        _timeout_cleanup_failed_message(timeout_seconds)
+                    ) from cleanup_error
                 raise TimeoutError(_turn_timeout_message(timeout_seconds)) from exc
-            return _agent_turn_result(result)
+            except asyncio.CancelledError as exc:
+                try:
+                    await _finish_cleanup(asyncio.create_task(self._stop_turn(state, operation)))
+                finally:
+                    raise exc
+            except Exception:
+                await _finish_cleanup(asyncio.create_task(self._abort_turn(operation)))
+                raise
+            if completed.status == "failed":
+                raise CodexRunnerError(completed.error or "Codex agent turn failed.")
+            return completed.result
         finally:
             self._turn_running = False
 
+    async def _run_turn(
+        self,
+        thread: _AsyncThread,
+        state: _TurnState,
+        prompt: str,
+        output_schema: Mapping[str, object] | None,
+    ) -> _CompletedTurn:
+        try:
+            _ = self.backend.codex  # Cached threads must not lazily restart a stopped backend.
+            state.handle = await thread.turn(prompt, output_schema=output_schema)
+        finally:
+            state.started.set()
+        _ = self.backend.codex
+        completed = await _read_turn(state.handle)
+        state.completed = completed
+        return completed
+
+    async def _stop_turn(self, state: _TurnState, operation: asyncio.Task[_CompletedTurn]) -> None:
+        stopping = asyncio.create_task(self._interrupt_and_drain(state, operation))
+        stopping.add_done_callback(_consume_task_exception)
+        try:
+            await asyncio.wait_for(asyncio.shield(stopping), _TURN_CLEANUP_TIMEOUT_SECONDS)
+        except Exception:  # noqa: BLE001 — uncertain SDK shutdown requires transport invalidation.
+            await self._abort_turn(operation, stopping)
+
+    async def _interrupt_and_drain(
+        self, state: _TurnState, operation: asyncio.Task[_CompletedTurn]
+    ) -> None:
+        await state.started.wait()
+        if state.handle is not None and state.completed is None:
+            try:
+                _ = self.backend.codex
+                await state.handle.interrupt()
+            except Exception:  # noqa: BLE001, S110 — terminal drain settles an interrupt race.
+                pass
+        await asyncio.shield(operation)
+
+    async def _abort_turn(self, *tasks: asyncio.Task[object]) -> None:
+        # Keep SDK consumers registered until transport closure can wake their worker threads.
+        closing = asyncio.create_task(self.backend.invalidate())
+        closing.add_done_callback(_consume_task_exception)
+        try:
+            await asyncio.wait_for(asyncio.shield(closing), _TURN_CLEANUP_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.gather(*tasks, return_exceptions=True)),
+                _TURN_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            raise CodexRunnerError(_shutdown_unconfirmed_message()) from exc
+
     async def _ensure_thread_started(self) -> _AsyncThread:
+        _ = self.backend.codex
         if self._thread is not None:
             return self._thread
 
@@ -316,11 +443,75 @@ def _coerce_sdk_enum(
     return value
 
 
-def _agent_turn_result(result: object) -> AgentTurnResult:
-    return AgentTurnResult(
-        assistant_text=_string_field(result, "final_response") or "",
-        events=tuple(_agent_turn_event(item) for item in _sequence_field(result, "items")),
+async def _finish_cleanup(task: asyncio.Task[_T]) -> _T:
+    """Finish cleanup even when the caller is cancelled again while waiting."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:  # noqa: PERF203 — repeated cancellation must finish cleanup.
+            cancelled = True
+    if cancelled:
+        # Retrieve any error before propagating cancellation so no task is abandoned.
+        if not task.cancelled():
+            task.exception()
+        raise asyncio.CancelledError
+    return task.result()
+
+
+async def _wait_for_cleanup(task: asyncio.Task[_T]) -> _T:
+    return await asyncio.wait_for(asyncio.shield(task), _TURN_CLEANUP_TIMEOUT_SECONDS)
+
+
+def _consume_task_exception(task: asyncio.Task[object]) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
+async def _read_turn(handle: _AsyncTurnHandle) -> _CompletedTurn:
+    items: list[object] = []
+    async with aclosing(handle.stream()) as stream:
+        async for notification in stream:
+            payload = _field(notification, "payload")
+            method = _string_field(notification, "method")
+            if method == "item/completed" and _string_field(payload, "turn_id") == handle.id:
+                item = _field(payload, "item")
+                if item is not None:
+                    items.append(item)
+            elif method == "turn/completed":
+                turn = _field(payload, "turn")
+                if _string_field(turn, "id") == handle.id:
+                    return _completed_turn(turn, items)
+    raise CodexRunnerError(_missing_terminal_message())
+
+
+def _completed_turn(turn: object, items: list[object]) -> _CompletedTurn:
+    status = _string_field(turn, "status")
+    if status not in ("completed", "interrupted", "failed"):
+        raise CodexRunnerError(_unknown_terminal_message())
+    return _CompletedTurn(
+        status=status,
+        error=_string_field(_field(turn, "error"), "message"),
+        result=AgentTurnResult(
+            assistant_text=_final_assistant_text(items),
+            events=tuple(_agent_turn_event(item) for item in items),
+        ),
     )
+
+
+def _final_assistant_text(items: list[object]) -> str:
+    fallback: str | None = None
+    for item in reversed(items):
+        unwrapped = _unwrap_root(item)
+        if _string_field(unwrapped, "type") != "agentMessage":
+            continue
+        phase = _string_field(unwrapped, "phase")
+        text = _string_field(unwrapped, "text") or ""
+        if phase == "final_answer":
+            return text
+        if phase is None and fallback is None:
+            fallback = text
+    return fallback or ""
 
 
 def _agent_turn_event(item: object) -> AgentTurnEvent:
@@ -372,16 +563,11 @@ def _field(item: object, name: str) -> object | None:
 
 def _string_field(item: object, name: str) -> str | None:
     value = _field(item, name)
+    if isinstance(value, Enum):
+        value = value.value
     if isinstance(value, str) and value:
         return value
     return None
-
-
-def _sequence_field(item: object, name: str) -> Sequence[object]:
-    value = _field(item, name)
-    if _is_sequence(value):
-        return value
-    return ()
 
 
 def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
@@ -410,3 +596,23 @@ def _turn_timeout_message(timeout_seconds: float) -> str:
 
 def _concurrent_turn_message() -> str:
     return "CodexAgentRunner.turn cannot be called concurrently on the same runner."
+
+
+def _invalidated_backend_message() -> str:
+    return "Codex backend was stopped because a turn's termination could not be confirmed."
+
+
+def _shutdown_unconfirmed_message() -> str:
+    return "Codex backend is disabled; transport shutdown or turn cleanup could not be confirmed."
+
+
+def _timeout_cleanup_failed_message(timeout_seconds: float) -> str:
+    return f"{_turn_timeout_message(timeout_seconds)} {_shutdown_unconfirmed_message()}"
+
+
+def _missing_terminal_message() -> str:
+    return "Codex turn stream ended without a terminal notification."
+
+
+def _unknown_terminal_message() -> str:
+    return "Codex terminal notification has an unknown turn status."

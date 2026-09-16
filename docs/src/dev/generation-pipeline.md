@@ -40,8 +40,9 @@ the CLI boundary by `prompt_diary.config.resolve_reports_root` (`--reports-root`
 
 Dependencies normally require successful prerequisite tasks. Project synthesis is the exception:
 it waits for all evidence extraction attempts in that project to finish, but checks that each
-expected evidence card exists before starting. A failed extraction can continue into project
-synthesis only when it wrote a durable evidence card that represents the gap.
+expected evidence card exists before starting. The project runner then validates every card's
+complete turn coverage. An extraction task failure can continue into synthesis only if its durable
+card is nevertheless complete and valid; partial cards remain checkpoints for resumed extraction.
 
 `PhaseRunner` is the narrow phase execution protocol:
 
@@ -86,9 +87,17 @@ attempts with exponential backoff from 1s up to 60s. If that budget is exhausted
 a failed task with an `agent made no progress ...` error. Deterministic rendering and non-agent
 failures remain outside this helper.
 
-A full pipeline run succeeds when terminal deliverables succeed. Non-terminal tolerated failures,
-such as failed extraction attempts that still wrote durable evidence cards for project synthesis,
-remain visible on the run result without making the final report command fail.
+The Codex runner retains the active turn handle and consumes its public event stream until a
+terminal notification confirms completion, interruption, or failure. A timeout or caller
+cancellation sends an interrupt and waits for terminal confirmation before releasing the runner
+for another turn. Cleanup and backend shutdown have bounded grace periods; cancellation is
+propagated after cleanup. If termination cannot be confirmed, the shared backend is closed and
+disabled, which can also stop other tasks using it. Cached conversation threads cannot restart a
+disabled backend. A confirmed failed turn remains eligible for ordinary artifact-aware retry.
+
+A full pipeline run succeeds when terminal deliverables succeed. Non-terminal tolerated failures
+remain visible on the run result. Project synthesis verifies that every prerequisite evidence card
+is complete; an extraction failure that leaves only partial evidence therefore blocks that project.
 
 ## CLI
 
@@ -112,21 +121,25 @@ existing `daily-report.json`; `generate render --notion` renders then publishes 
 
 ## Evidence Extraction Runner
 
-The evidence extraction phase runner drives one agent conversation per session. It sends the full
-extractor prompt on the first turn; each subsequent turn carries the prior committed result via the
-next-turn prompt. Turns are driven in indexed order until the session is complete.
+The evidence extraction phase runner creates a fresh agent conversation for each uncommitted source
+turn, in indexed order. Each receives a self-contained extractor prompt with the current turn's
+scope. An optional `previous_turn` locator supplies the preceding indexed turn's ref and bounds for
+narrow MCP context reads behind continuations or corrections; only current-turn lines may support
+citations. Earlier extraction conversations and their transcript reads are not carried forward.
 
 After each turn the runner verifies the result by reading the evidence card from the workspace
 directly. It never trusts the assistant's text response. An uncommitted turn — one where the card
 on disk does not reflect the expected turn — is retried on the same agent conversation until that
 turn is committed or the no-progress budget is exhausted. The retry counter is scoped to the
-current assigned turn and resets when the runner advances to the next committed turn.
+current assigned turn and resets when the runner advances to the next committed turn. Retries send
+short assignment reminders on the same conversation without appending the original prompt again.
 
-At the start of every task run the runner deletes any existing evidence card and re-extracts all turns
-from scratch. This reset means a re-run is always clean and never encounters `write_evidence`'s
-duplicate-turn rejection. Within that task run, retries never delete the active partial card. A
-failed mid-run may leave a partial card on disk; project synthesis treats an incomplete card as an
-evidence gap, which is outside the scope of this phase.
+At task start the runner validates any existing evidence card against the current prepared session.
+A complete card requires no agent calls. A valid partial card is retained, and only missing turns are
+extracted; committed chains also survive a later turn's failure. Invalid cards are reset. Every
+attempt checks the same schema, scope, and citation rules before accepting a committed turn. Project
+synthesis requires complete evidence cards, so partial evidence cannot silently become an evidence
+gap. `prepare --force` replaces the whole workspace and therefore invalidates its generated artifacts.
 
 The runner builds a workspace-aware agent factory once per run. For the Codex backend the factory
 registers the package MCP server (`report mcp serve`) with the prepared workspace path in the
@@ -140,14 +153,17 @@ PATH.
 
 Project synthesis uses the same helper with the current uncovered-turn count as its progress
 marker. A retry continues on the same runner with the current uncovered-turn list; progress means
-that list strictly shrinks, and completion means every indexed turn is covered. The runner deletes a
-pre-existing `project-synthesis.json` only once at task start, never between retry turns.
+that list strictly shrinks, and completion means every indexed turn is covered by valid work items.
+A valid partial `project-synthesis.json` survives failure and restart. A restarted conversation receives
+the committed refs and coverage together with evidence for only the remaining turns, and continues
+with unused work-item refs. A complete envelope needs no agent calls; an invalid envelope is reset
+at task start.
 
 Daily synthesis still uses one fresh agent conversation per pass: each project summary, report
 title, engagement assessment, and team-learning pass gets its own runner. A pass retries on that
 same runner until its target slot is written in `daily-report.json` or the no-progress budget is
 exhausted. If a turn fails after writing the slot, the artifact inspection treats the pass as
-complete.
+complete. A retry names the unwritten slot without repeating the pass's source content.
 
 ## Progress
 
@@ -162,6 +178,6 @@ runner before it returns success. For example, evidence extraction should valida
 structure, daily synthesis should validate `daily-report.json`, and the rendering phase should
 validate the rendered views.
 
-Failed extraction may become a durable evidence card that project synthesis accounts for as a gap.
 An absent evidence card is a missing prerequisite artifact and prevents the project task from
-starting. Other failed dependencies block their dependent tasks.
+starting. An incomplete or invalid card fails the project runner's prerequisite checks. Other
+failed dependencies block their dependent tasks.

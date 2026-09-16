@@ -39,6 +39,7 @@ def build_project_synthesis_inputs(
     *,
     workspace_path: Path,
     project_key: str,
+    covered_turns: frozenset[tuple[str, str]] = frozenset(),
 ) -> ProjectSynthesisInputs:
     """Build prompt inputs for one project from the prepared workspace."""
     workspace = load_prepared_workspace(workspace_path)
@@ -47,7 +48,13 @@ def build_project_synthesis_inputs(
     return ProjectSynthesisInputs(
         project_key=project_key,
         project_json=_normalized_json(project_dir / "project.json"),
-        evidence_chains=render_evidence_chains(load_committed_chains(workspace_path, project_key)),
+        evidence_chains=render_evidence_chains(
+            tuple(
+                chain
+                for chain in load_committed_chains(workspace_path, project_key)
+                if (chain.session_ref, chain.turn_ref) not in covered_turns
+            )
+        ),
     )
 
 

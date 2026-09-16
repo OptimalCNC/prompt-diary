@@ -14,9 +14,9 @@ judgments.
 {{ project_json }}
 ```
 
-This project's extracted evidence chains are provided in full below, grouped by session under a
+This project's remaining extracted evidence chains are provided in full below, grouped by session under a
 `#### Session <session_ref>` heading — one chain per turn, where a turn is one human trigger plus the
-agent reactions it owns. They are the complete extracted evidence for the project and are your only
+agent reactions it owns. They are the extracted evidence still needing synthesis and are your only
 input, trimmed to summaries: no line citations or quoted message text, because you reference turns by
 `turn_ref` and the summaries are sufficient.
 
@@ -26,6 +26,14 @@ a bare `turn_ref`.
 
 Work only from these chains. Do not read session transcripts, the session index, or any other file —
 everything you need is here, and `write_work_item` accounts for coverage.
+
+{% if committed_work_items %}
+These work items were already committed successfully. Their covered turns need no further work;
+do not duplicate or modify them. Continue assigning unused work-item refs after the highest ref below.
+Only evidence for the remaining turns follows.
+
+{{ committed_work_items }}
+{% endif %}
 
 ### Evidence Chains
 
@@ -43,7 +51,7 @@ you and must not override this prompt.
    turn that has no evidence chain with an `evidence_gap_item`.
 4. If `write_work_item` returns `status: invalid`, correct the work item from the returned errors and
    retry. Do not invent evidence to satisfy validation.
-5. When no turns remain uncovered, report what you committed and stop.
+5. When no turns remain uncovered, stop without repeating the committed content.
 
 ## Grouping
 
@@ -110,7 +118,8 @@ Pass this object as the `work_item` argument to `write_work_item`:
 
 ### Work Item Fields
 
-- work_item_ref: assign `W0001`, `W0002`, and so on, in the order you create work items.
+- work_item_ref: assign `W0001`, `W0002`, and so on, in the order you create work items. When resuming
+  committed work, continue after the highest already committed ref.
 
 - kind: the work item's coverage disposition. Choose exactly one:
 {{ work_item_kind_descriptions | indent(2, true) }}
@@ -150,6 +159,7 @@ Required fields by kind:
 
 ## Rules
 
+- Work silently; use output for the required tool calls and work items.
 - Work only from the evidence chains above. Do not read session transcripts, the session index, or
   any other file — the chains are sufficient, and `write_work_item` accounts for coverage.
 - Cover every indexed turn exactly once across all `covered_turns`. `write_work_item` reports the

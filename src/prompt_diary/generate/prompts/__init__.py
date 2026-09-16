@@ -193,26 +193,20 @@ def evidence_extractor_prompt(
     )
 
 
-def evidence_extractor_next_turn_prompt(
+def project_synthesizer_prompt(
     *,
-    write_evidence_result: str,
-    target_turn: str,
+    project_key: str,
+    project_json: str,
+    evidence_chains: str,
+    committed_work_items: str = "",
 ) -> str:
-    """Return the evidence extractor follow-up prompt for the next assigned turn."""
-    return _render(
-        "evidence-extractor-next-turn.md",
-        write_evidence_result=write_evidence_result,
-        target_turn=target_turn,
-    )
-
-
-def project_synthesizer_prompt(*, project_key: str, project_json: str, evidence_chains: str) -> str:
     """Return the project synthesizer prompt with substituted workspace values."""
     return _render(
         "project-synthesizer.md",
         project_key=project_key,
         project_json=project_json,
         evidence_chains=evidence_chains,
+        committed_work_items=committed_work_items,
         work_item_kind_descriptions=_format_enum_values(PROJECT_WORK_ITEM_KINDS),
     )
 

@@ -19,14 +19,19 @@ from prompt_diary.generate.daily_synthesis.mcp import (
 )
 from prompt_diary.generate.evidence_extraction.mcp import write_evidence as write_evidence_api
 from prompt_diary.generate.evidence_extraction.session_reader import (
+    ReadCursor,
+    serialize_read_result,
+)
+from prompt_diary.generate.evidence_extraction.session_reader import (
     read_session_lines as read_session_lines_api,
 )
 from prompt_diary.generate.project_synthesis.mcp import write_work_item as write_work_item_api
 
 _MODE_WARNING = (
     "Output verbosity. 'compact' (default) returns bounded structured records. "
-    "'full' returns raw JSONL lines and can be very large, so use it only for a narrow "
-    "line range where exact raw content is necessary."
+    "'full' returns raw JSONL content, which can require many large pages; use it only for a "
+    "narrow line range where exact raw content is necessary. Both modes return at most 32 KiB "
+    "of JSON per page. Follow next_cursor with the same request until it is null."
 )
 
 _WORKSPACE_ENV = "PROMPT_DIARY_WORKSPACE"
@@ -128,16 +133,22 @@ def read_session_lines(
     mode: Annotated[Literal["compact", "full"], pydantic.Field(description=_MODE_WARNING)] = (
         "compact"
     ),
-) -> object:
+    cursor: Annotated[
+        ReadCursor | None,
+        pydantic.Field(description="Continuation from next_cursor; omit for the first page."),
+    ] = None,
+) -> str:
     """Read a physical line range from one indexed session in the resolved prepared workspace."""
-    return read_session_lines_api(
+    result = read_session_lines_api(
         workspace_path=_resolve_workspace(),
         project_key=project_key,
         session_ref=session_ref,
         start_line=start_line,
         end_line=end_line,
         mode=mode,
+        cursor=cursor,
     )
+    return serialize_read_result(result)
 
 
 def build_mcp_server() -> FastMCP[None]:
@@ -150,7 +161,7 @@ def build_mcp_server() -> FastMCP[None]:
     server.tool()(write_report_title)
     server.tool()(write_engagement)
     server.tool()(write_team_learning)
-    server.tool()(read_session_lines)
+    server.tool(structured_output=False)(read_session_lines)
     return server
 
 

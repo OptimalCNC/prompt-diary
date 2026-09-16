@@ -533,7 +533,7 @@ def test_load_prepared_workspace_reports_workspace_shape_errors(tmp_path: Path) 
     _write_json(
         _project_dir(project_mismatch_workspace, "Alpha-111111111111") / "project.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "project_key": "Other-222222222222",
             "project_label": "Other",
         },
@@ -1024,7 +1024,7 @@ def _write_metadata(workspace: Path) -> None:
     _write_json(
         workspace / "metadata.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "report_date": "2026-05-12",
             "timezone": "Asia/Shanghai",
             "status": "final",
@@ -1064,7 +1064,6 @@ def _write_project(workspace: Path, project_key: str, session_count: int) -> Non
                         "turn_ref": "T0001",
                         "turn_start_line": 2,
                         "turn_end_line": 4,
-                        "target_subagents": [],
                     }
                 ],
             }
@@ -1077,7 +1076,7 @@ def _write_project_json(project_dir: Path) -> None:
     _write_json(
         project_dir / "project.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "project_key": project_key,
             "project_label": project_key.split("-", maxsplit=1)[0],
         },

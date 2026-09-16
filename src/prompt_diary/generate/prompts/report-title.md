@@ -32,9 +32,11 @@ Call `write_report_title` with:
 ```
 
 If it returns `status: invalid`, correct the title from the returned errors and retry.
+After the write succeeds, stop without repeating the saved title.
 
 ## Rules
 
+- Work silently; use output for the required tool call and title.
 - Name the strongest supported work theme, outcome, decision, blocker, or delivery area for the
   day.
 - The title must not include the report date. Rendering owns date presentation: Markdown may show

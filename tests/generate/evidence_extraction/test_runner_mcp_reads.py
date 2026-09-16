@@ -9,19 +9,32 @@ runner, the prompt contract, the reader, and the writer integrate end-to-end.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any, cast
 
+import pytest
+
 from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
+from prompt_diary.generate.evidence_extraction.session_compaction import CompactRecord
+from prompt_diary.generate.evidence_extraction.session_reader import (
+    ReadSessionLinesCompactResult,
+    read_session_lines,
+)
 from prompt_diary.generate.pipeline import TaskSpec, evidence_card_artifact, evidence_task_id
-from tests.support.evidence_agent import EvidenceReadingWritingAgentSessionFactory
+from tests.support.evidence_agent import (
+    EvidenceReadingWritingAgentRunner,
+    EvidenceReadingWritingAgentSessionFactory,
+)
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
     SESSION_REF,
     copy_basic_evidence_workspace,
     load_evidence_card,
 )
+from tests.support.session_reader import session_file_path
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from prompt_diary.generate.pipeline import TaskResult
@@ -89,3 +102,135 @@ def test_runner_mock_agent_reads_via_read_session_lines_then_writes(tmp_path: Pa
         start, end = _TURN_BOUNDS[chain["turn_ref"]]
         assert _citation_lines(chain["trigger"]) == f"{start}-{start}"
         assert _citation_lines(chain["terminal_state"]) == f"{end}-{end}"
+
+
+def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    project_dir = workspace / "projects" / PROJECT_KEY
+    index_path = project_dir / "sessions.index.jsonl"
+    row = json.loads(index_path.read_text(encoding="utf-8"))
+    session_path = project_dir / row["session_path"]
+    lines = session_path.read_text(encoding="utf-8").splitlines()
+    for index in (1, 8):
+        message = json.loads(lines[index])["content"]
+        lines[index] = json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": message}],
+                },
+            }
+        )
+    padding = [json.dumps({"role": "assistant", "content": "Work in progress."})] * 100
+    session_path.write_text("\n".join([*lines[:7], *padding, *lines[7:]]) + "\n", encoding="utf-8")
+    row["turns"][0]["turn_end_line"] += len(padding)
+    row["turns"][1]["turn_start_line"] += len(padding)
+    row["turns"][1]["turn_end_line"] += len(padding)
+    row["target_end_line"] += len(padding)
+    index_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    context_reads: list[ReadSessionLinesCompactResult] = []
+    original_read = EvidenceReadingWritingAgentRunner.read_assigned_turn
+
+    def read_with_continuation_context(
+        self: EvidenceReadingWritingAgentRunner,
+        project_key: str,
+        session_ref: str,
+        target_turn: dict[str, Any],
+    ) -> Iterator[ReadSessionLinesCompactResult]:
+        pages = tuple(original_read(self, project_key, session_ref, target_turn))
+        if any(
+            isinstance(record, CompactRecord) and record.text_preview == "continue"
+            for page in pages
+            for record in page.records
+        ):
+            # The fresh conversation discovers this line from its prompt, not a known fixture span.
+            previous_trigger = target_turn["previous_turn"]["turn_start_line"]
+            context = read_session_lines(
+                workspace_path=self.config.working_directory,
+                project_key=project_key,
+                session_ref=session_ref,
+                start_line=previous_trigger,
+                end_line=previous_trigger,
+                mode="compact",
+            )
+            assert isinstance(context, ReadSessionLinesCompactResult)
+            context_reads.append(context)
+        yield from pages
+
+    monkeypatch.setattr(
+        EvidenceReadingWritingAgentRunner, "read_assigned_turn", read_with_continuation_context
+    )
+    factory = EvidenceReadingWritingAgentSessionFactory()
+
+    assert _run(factory, workspace).status == "success"
+
+    assert len(factory.runners) == 2
+    assert [record.line for context in context_reads for record in context.records] == [2]
+    previous_trigger = context_reads[0].records[0]
+    assert isinstance(previous_trigger, CompactRecord)
+    assert previous_trigger.text_preview == (
+        "Please update the evidence contract docs for the MCP write surface."
+    )
+    continued = load_evidence_card(workspace)["evidence_chains"][1]
+    assert _citation_lines(continued["trigger"]) == "109-109"
+    assert _citation_lines(continued["terminal_state"]) == "110-110"
+
+
+@pytest.mark.parametrize("interrupt_page", [False, True])
+def test_runner_mock_agent_reads_all_pages_before_writing_the_assigned_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, interrupt_page: bool
+) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    path = session_file_path(workspace)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[1] = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Detailed requirement. " * 10_000}],
+            },
+        }
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    factory = EvidenceReadingWritingAgentSessionFactory()
+    original_read = EvidenceReadingWritingAgentRunner.read_assigned_turn
+    interrupted = False
+    read_error = RuntimeError("transient page read")
+
+    def possibly_interrupted_read(
+        self: EvidenceReadingWritingAgentRunner,
+        project_key: str,
+        session_ref: str,
+        target_turn: dict[str, Any],
+    ) -> Iterator[ReadSessionLinesCompactResult]:
+        nonlocal interrupted
+        for page in original_read(self, project_key, session_ref, target_turn):
+            yield page
+            if interrupt_page and page.next_cursor is not None and not interrupted:
+                interrupted = True
+                raise read_error
+
+    monkeypatch.setattr(
+        EvidenceReadingWritingAgentRunner, "read_assigned_turn", possibly_interrupted_read
+    )
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    pages = [read.result for read in factory.reads if read.turn_ref == "T0001"]
+    assert len(pages) > 1
+    assert all(page.next_cursor is not None for page in pages[:-1])
+    assert pages[-1].next_cursor is None
+    assert pages[-1].records[-1].line == 8
+    card = load_evidence_card(workspace)
+    assert _citation_lines(card["evidence_chains"][0]["terminal_state"]) == "8-8"
+    assert len(factory.runners) == 2
+    assert [len(runner.prompts) for runner in factory.runners] == [2 if interrupt_page else 1, 1]
+    if interrupt_page:
+        assert "```json" not in factory.runners[0].prompts[1]

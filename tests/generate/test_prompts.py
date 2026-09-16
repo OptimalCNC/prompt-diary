@@ -7,7 +7,6 @@ from typer.testing import CliRunner
 from prompt_diary.cli import app
 from prompt_diary.generate.prompts import (
     engagement_prompt,
-    evidence_extractor_next_turn_prompt,
     evidence_extractor_prompt,
     project_summary_prompt,
     project_synthesizer_next_prompt,
@@ -28,9 +27,7 @@ def test_evidence_extractor_prompt() -> None:
             '{"session_ref":"S0001","session_path":"sessions/codex/session.jsonl",'
             '"target_start_line":1,"target_end_line":10}'
         ),
-        target_turn=(
-            '{"turn_ref":"T0001","turn_start_line":1,"turn_end_line":10,"target_subagents":[]}'
-        ),
+        target_turn=('{"turn_ref":"T0001","turn_start_line":1,"turn_end_line":10}'),
     )
 
     assert isinstance(result, str)
@@ -61,24 +58,6 @@ def test_evidence_extractor_prompt() -> None:
     # session_path is no longer surfaced as a resolved file to read.
     assert "Session path, resolved relative to" not in result
     assert "{{ session_path }}" not in result
-
-
-def test_evidence_extractor_next_turn_prompt() -> None:
-    result = evidence_extractor_next_turn_prompt(
-        write_evidence_result='{"status":"appended","turn_ref":"T0001"}',
-        target_turn='{"turn_ref":"T0002","turn_start_line":11,"turn_end_line":20}',
-    )
-
-    assert isinstance(result, str)
-    assert len(result) > 0
-    assert "The previous turn was written successfully" in result
-    assert "T0002" in result
-    assert "write_evidence" in result
-    # The next-turn prompt is a fresh agent turn, so it must re-state the MCP-only read rule and
-    # the raw-session-file prohibition rather than relying on the initial prompt's context.
-    assert "read_session_lines" in result
-    assert "not even a single line" in result
-    assert "Work silently" in result
 
 
 def test_project_synthesizer_prompt() -> None:
@@ -203,14 +182,6 @@ def test_cli_prompts_evidence_extractor() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["prompts", "evidence-extractor"])
-
-    assert result.exit_code == 0
-
-
-def test_cli_prompts_evidence_extractor_next_turn() -> None:
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["prompts", "evidence-extractor-next-turn"])
 
     assert result.exit_code == 0
 

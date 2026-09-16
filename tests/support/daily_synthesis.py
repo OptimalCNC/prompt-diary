@@ -367,7 +367,7 @@ def empty_daily_workspace(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "report_date": "2026-05-28",
         "timezone": "Asia/Shanghai",
         "status": "final",

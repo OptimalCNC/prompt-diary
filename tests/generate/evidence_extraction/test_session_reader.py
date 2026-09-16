@@ -7,8 +7,7 @@ from prompt_diary.generate.evidence_extraction.session_compaction import (
     line_provenance,
 )
 from prompt_diary.generate.evidence_extraction.session_reader import (
-    MAX_COMPACT_LINES,
-    MAX_FULL_LINES,
+    FullRecord,
     ReadSessionLinesCompactResult,
 )
 from tests.support.session_reader import (
@@ -21,7 +20,6 @@ from tests.support.session_reader import (
     copy_session_reader_workspace,
     expect_compact,
     expect_full,
-    grow_session_to,
     overwrite_session_line,
     session_file_path,
     session_physical_lines,
@@ -56,7 +54,9 @@ def test_compact_result_type_narrows_records_for_serialization(tmp_path: Path) -
     result = call_read_session_lines(workspace_path=workspace, start_line=2, end_line=8)
     assert isinstance(result, ReadSessionLinesCompactResult), result
 
-    payload = [compact_record_to_json(record) for record in result.records]
+    payload = [
+        compact_record_to_json(record) for record in compact_records_by_line(result).values()
+    ]
 
     assert [entry["line"] for entry in payload] == [2, 3, 4, 5, 6, 7, 8]
 
@@ -79,7 +79,7 @@ def test_compact_read_omits_assistant_reasoning(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
     ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=7, end_line=7))
-    reasoning = ok.records[0]
+    reasoning = compact_records_by_line(ok)[7]
 
     assert reasoning.content_kinds == ("thinking",)
     assert reasoning.text_preview is None
@@ -97,6 +97,7 @@ def test_full_read_returns_raw_lines_verbatim_with_matching_provenance(tmp_path:
     assert ok.mode == "full"
     assert [record.line for record in ok.records] == [2, 3, 4]
     for record in ok.records:
+        assert isinstance(record, FullRecord)
         raw_line = physical[record.line - 1]
         raw_bytes, raw_sha256 = line_provenance(raw_line)
         assert record.raw_line == raw_line
@@ -145,6 +146,7 @@ def test_line_numbers_match_true_physical_lines(tmp_path: Path) -> None:
 
     assert [record.line for record in ok.records] == [3, 4, 5]
     for record in ok.records:
+        assert isinstance(record, FullRecord)
         assert record.raw_line == physical[record.line - 1]
 
 
@@ -225,28 +227,6 @@ def test_end_line_past_end_of_session_is_invalid(tmp_path: Path) -> None:
     assert_read_invalid(result, field="end_line")
 
 
-def test_compact_range_wider_than_cap_is_invalid(tmp_path: Path) -> None:
-    workspace = copy_session_reader_workspace(tmp_path)
-    grow_session_to(workspace, total_lines=MAX_COMPACT_LINES + 1)
-
-    result = call_read_session_lines(
-        workspace_path=workspace, start_line=1, end_line=MAX_COMPACT_LINES + 1
-    )
-
-    assert_read_invalid(result, field="end_line", hint_contains="narrower")
-
-
-def test_full_range_wider_than_cap_is_invalid(tmp_path: Path) -> None:
-    workspace = copy_session_reader_workspace(tmp_path)
-    grow_session_to(workspace, total_lines=MAX_FULL_LINES + 1)
-
-    result = call_read_session_lines(
-        workspace_path=workspace, start_line=1, end_line=MAX_FULL_LINES + 1, mode="full"
-    )
-
-    assert_read_invalid(result, field="end_line", hint_contains="narrower")
-
-
 def test_malformed_line_in_range_is_handled_gracefully_in_compact_mode(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
     malformed = "this is not json {"
@@ -274,6 +254,7 @@ def test_malformed_line_in_range_is_returned_verbatim_in_full_mode(tmp_path: Pat
         call_read_session_lines(workspace_path=workspace, start_line=4, end_line=4, mode="full")
     )
     record = ok.records[0]
+    assert isinstance(record, FullRecord)
 
     raw_bytes, raw_sha256 = line_provenance(malformed)
     assert record.raw_line == malformed

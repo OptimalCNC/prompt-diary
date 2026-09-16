@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_retry import AgentRetryPolicy
+from prompt_diary.generate.evidence_extraction.mcp import write_evidence
 from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import TaskSpec, evidence_card_artifact, evidence_task_id
 from prompt_diary.progress.events import TurnAdvanced
-from tests.support.evidence_agent import EvidenceWritingAgentSessionFactory
+from tests.support.evidence_agent import (
+    EvidenceWritingAgentRunner,
+    EvidenceWritingAgentSessionFactory,
+)
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
     SESSION_REF,
@@ -22,8 +26,10 @@ from tests.support.evidence_extraction import (
 from tests.support.progress import RecordingReporter
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
+    from prompt_diary.agent import AgentTurnResult
     from prompt_diary.generate.pipeline import TaskResult
 
 _FAST_RETRY_POLICY = AgentRetryPolicy(initial_backoff_seconds=0.0, max_backoff_seconds=0.0)
@@ -57,7 +63,7 @@ def test_runner_extracts_all_turns_in_index_order(tmp_path: Path) -> None:
 
     assert result.status == "success"
     assert factory.processed == [(SESSION_REF, "T0001"), (SESSION_REF, "T0002")]
-    assert len(factory.runners) == 1
+    assert len(factory.runners) == 2
     card = load_evidence_card(workspace)
     assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001", "T0002"]
 
@@ -74,21 +80,24 @@ def test_runner_reuses_complete_existing_card(tmp_path: Path) -> None:
     assert second_factory.runners == []
 
 
-def test_runner_second_turn_uses_next_turn_prompt_with_prior_result(tmp_path: Path) -> None:
+def test_each_assignment_has_its_own_complete_conversation(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     factory = EvidenceWritingAgentSessionFactory()
 
     _run(factory, workspace)
 
-    prompts = factory.runners[0].prompts
-    assert len(prompts) == 2
-    assert "## Role" in prompts[0]
-    assert "The previous turn was written successfully." in prompts[1]
-    assert '"turn_ref": "T0001"' in prompts[1]
-    assert '"turn_ref": "T0002"' in prompts[1]
+    assert [len(runner.prompts) for runner in factory.runners] == [1, 1]
+    for runner in factory.runners:
+        assert "## Role" in runner.prompts[0]
+        assert f"- Project key: {PROJECT_KEY}" in runner.prompts[0]
+        assert f"- Session reference: {SESSION_REF}" in runner.prompts[0]
+    assert factory.runners[0].target_turn is not None
+    assert factory.runners[0].target_turn["turn_ref"] == "T0001"
+    assert factory.runners[1].target_turn is not None
+    assert factory.runners[1].target_turn["turn_ref"] == "T0002"
 
 
-def test_runner_resets_a_preexisting_partial_card(tmp_path: Path) -> None:
+def test_runner_resets_a_preexisting_invalid_partial_card(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
     card_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +160,121 @@ def test_runner_fails_when_a_turn_is_not_committed(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert any("T0002" in error for error in result.errors)
     card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
-    assert not card_path.exists()
+    assert card_path.exists()
+    assert [chain["turn_ref"] for chain in load_evidence_card(workspace)["evidence_chains"]] == [
+        "T0001"
+    ]
+
+
+def test_runner_resumes_valid_partial_card_without_repeating_committed_turn(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    result = write_evidence(
+        workspace_path=workspace,
+        project_key=PROJECT_KEY,
+        session_ref=SESSION_REF,
+        evidence_chain=build_evidence_chain(turn_ref="T0001", span=(2, 8)),
+    )
+    assert result.status == "appended"
+    first_chain = load_evidence_card(workspace)["evidence_chains"][0]
+    factory = EvidenceWritingAgentSessionFactory()
+
+    assert _run(factory, workspace).status == "success"
+
+    assert factory.processed == [(SESSION_REF, "T0002")]
+    assert len(factory.runners) == 1
+    assert load_evidence_card(workspace)["evidence_chains"][0] == first_chain
+
+
+def test_runner_reuses_commits_after_later_turn_exhausts_retries(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    failing = EvidenceWritingAgentSessionFactory(fail_turns=frozenset({"T0002"}))
+    assert _run(failing, workspace).status == "failed"
+    first_chain = load_evidence_card(workspace)["evidence_chains"][0]
+    recovered = EvidenceWritingAgentSessionFactory()
+
+    assert _run(recovered, workspace).status == "success"
+
+    assert recovered.processed == [(SESSION_REF, "T0002")]
+    assert load_evidence_card(workspace)["evidence_chains"][0] == first_chain
+
+
+def test_runner_fails_when_later_assignment_removes_an_earlier_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    assert (
+        write_evidence(
+            workspace_path=workspace,
+            project_key=PROJECT_KEY,
+            session_ref=SESSION_REF,
+            evidence_chain=build_evidence_chain(turn_ref="T0001", span=(2, 8)),
+        ).status
+        == "appended"
+    )
+    original_turn = EvidenceWritingAgentRunner.turn
+
+    async def clobber_previous_commit(
+        self: EvidenceWritingAgentRunner,
+        prompt: str,
+        *,
+        timeout_seconds: float = 600.0,
+        output_schema: Mapping[str, object] | None = None,
+    ) -> AgentTurnResult:
+        result = await original_turn(
+            self, prompt, timeout_seconds=timeout_seconds, output_schema=output_schema
+        )
+        card = load_evidence_card(workspace)
+        card["evidence_chains"] = [card["evidence_chains"][-1]]
+        card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
+        card_path.write_text(json.dumps(card), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(EvidenceWritingAgentRunner, "turn", clobber_previous_commit)
+    factory = EvidenceWritingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert factory.processed == [(SESSION_REF, "T0002")]
+    assert result.status == "failed"
+    assert result.errors == ("missing turn_ref(s): T0001",)
+
+
+@pytest.mark.parametrize("corruption", ["schema", "chain", "citation", "json"])
+def test_runner_does_not_accept_invalid_committed_looking_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corruption: str
+) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    card_path = workspace / evidence_card_artifact(PROJECT_KEY, SESSION_REF).path
+    original_turn = EvidenceWritingAgentRunner.turn
+
+    async def tampered_turn(
+        self: EvidenceWritingAgentRunner,
+        prompt: str,
+        *,
+        timeout_seconds: float = 600.0,
+        output_schema: Mapping[str, object] | None = None,
+    ) -> AgentTurnResult:
+        result = await original_turn(
+            self, prompt, timeout_seconds=timeout_seconds, output_schema=output_schema
+        )
+        card: dict[str, Any] = load_evidence_card(workspace)
+        if corruption == "schema":
+            card["schema_version"] = 99
+        elif corruption == "chain":
+            del card["evidence_chains"][0]["terminal_state"]
+        elif corruption == "citation":
+            card["evidence_chains"][0]["trigger"]["citations"] = [{"lines": "1-1"}]
+        card_path.write_text("{" if corruption == "json" else json.dumps(card), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(EvidenceWritingAgentRunner, "turn", tampered_turn)
+    factory = EvidenceWritingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "failed"
+    assert len(factory.runners[0].prompts) == 3
+    assert all(turn_ref == "T0001" for _, turn_ref in factory.processed)
 
 
 def test_runner_resumes_failed_turns_on_same_runner(tmp_path: Path) -> None:
@@ -161,12 +284,29 @@ def test_runner_resumes_failed_turns_on_same_runner(tmp_path: Path) -> None:
     result = _run(factory, workspace)
 
     assert result.status == "success"
-    assert len(factory.runners) == 1
+    assert len(factory.runners) == 2
     assert factory.processed == [(SESSION_REF, "T0001"), (SESSION_REF, "T0002")]
-    prompts = factory.runners[0].prompts
-    assert len(prompts) == 4
-    assert "Continue this assigned evidence extraction turn" in prompts[1]
-    assert "Continue this assigned evidence extraction turn" in prompts[3]
+    assert [len(runner.prompts) for runner in factory.runners] == [2, 2]
+    for runner in factory.runners:
+        assert "Continue this assigned evidence extraction turn" in runner.prompts[1]
+        assert "## Role" not in runner.prompts[1]
+
+
+def test_retry_reminder_does_not_append_large_original_prompt(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    project_path = workspace / "projects" / PROJECT_KEY / "project.json"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    sentinel = "ASSIGNMENT_CONTEXT_SENTINEL" * 1000
+    project["project_label"] = sentinel
+    project_path.write_text(json.dumps(project), encoding="utf-8")
+    factory = EvidenceWritingAgentSessionFactory(raise_once_turns=frozenset({"T0001"}))
+
+    assert _run(factory, workspace).status == "success"
+
+    initial, retry = factory.runners[0].prompts
+    assert sentinel in initial
+    assert "ASSIGNMENT_CONTEXT_SENTINEL" not in retry
+    assert "T0001" in retry
 
 
 def test_runner_writes_empty_card_for_zero_turn_session(tmp_path: Path) -> None:

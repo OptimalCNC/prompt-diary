@@ -169,7 +169,29 @@ def test_runner_fails_when_a_turn_is_left_uncovered(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert any("agent made no progress" in error for error in result.errors)
     assert len(factory.runners[0].prompts) == 4  # main turn + three no-progress continuations
-    assert not synthesis_path(workspace).exists()
+    assert synthesis_path(workspace).exists()
+    assert len(load_project_synthesis(workspace)["work_items"]) == 1
+
+
+def test_runner_resumes_committed_work_items_after_failure(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
+    failing = GroupingAgentSessionFactory(
+        cover_gaps=False, fail_continuation=True, first_turn_session_limit=1
+    )
+    assert _run(failing, workspace).status == "failed"
+    original = load_project_synthesis(workspace)
+    recovered = GroupingAgentSessionFactory()
+
+    assert _run(recovered, workspace).status == "success"
+
+    envelope = load_project_synthesis(workspace)
+    assert envelope["work_items"][0] == original["work_items"][0]
+    assert envelope["source_user_messages"] == original["source_user_messages"]
+    assert recovered.processed == ["W0002"]
+    prompt = recovered.runners[0].prompts[0]
+    assert "W0001: S0001/T0001, S0001/T0002" in prompt
+    assert "**S0001/T0001**" not in prompt
+    assert "**S0002/T0001**" in prompt
 
 
 def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) -> None:

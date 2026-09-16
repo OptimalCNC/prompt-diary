@@ -20,4 +20,4 @@ files.
 
 Reference turns as `{session_ref, turn_ref}`. If `write_work_item` returns `status: invalid`, correct
 the work item from the returned errors and retry. Keep calling `write_work_item` until it reports that
-no turns remain uncovered, then stop.
+no turns remain uncovered, then stop without repeating the committed content.

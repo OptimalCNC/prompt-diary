@@ -280,7 +280,7 @@ def _write_generated_workspace_artifacts(workspace: Path) -> None:
     _write_json(
         project_dir / "project.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "project_key": PROJECT_KEY,
             "project_label": "ReportGenerator",
         },

@@ -47,9 +47,11 @@ support. If little of substance happened, say so plainly.
 ```
 
 3. If it returns `status: invalid`, correct the summary from the returned errors and retry.
+4. After the write succeeds, stop without repeating the saved summary.
 
 ## Rules
 
+- Work silently; use output for the required tool call and summary.
 - Summarize only this project; make no cross-project judgment.
 - The summary is qualitative, never a count of work items.
 - Cite the turns the summary rests on; every citation must be a turn one of this project's work

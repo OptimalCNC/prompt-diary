@@ -21,8 +21,6 @@ The `prompt_diary.generate.prompts` module exposes one function per prompt:
 
 - `evidence_extractor_prompt(*, project_key: str, project_json: str, session_ref: str,
   session_index_record: str, target_turn: str) -> str`
-- `evidence_extractor_next_turn_prompt(*, write_evidence_result: str,
-  target_turn: str) -> str`
 - `project_synthesizer_prompt(*, project_key: str, project_json: str,
   evidence_chains: str) -> str`
 - `project_synthesizer_next_prompt(*, project_key: str, uncovered_turns: str) -> str`
@@ -58,8 +56,6 @@ report prompts evidence-extractor \
   [--project-key KEY] [--project-json JSON] \
   [--session-ref REF] [--session-index-record JSON] \
   [--target-turn JSON]
-report prompts evidence-extractor-next-turn \
-  [--write-evidence-result JSON] [--target-turn JSON]
 report prompts project-synthesizer
 report prompts daily-synthesizer
 ```

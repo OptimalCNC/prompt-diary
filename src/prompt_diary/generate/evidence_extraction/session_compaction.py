@@ -1,11 +1,12 @@
 """Pure, deterministic, source-aware compaction of one raw session JSONL line.
 
-This module turns a single physical JSONL line into a bounded, citation-safe ``CompactRecord``. It
+This module turns a single physical JSONL line into a citation-safe ``CompactRecord``. It
 does no filesystem, network, time, or randomness work: the same line and arguments always produce
 the same record. Large tool-result payloads and assistant reasoning are trimmed to keep compact
 reads small, while user-authored and assistant text messages are preserved in full because they are
-primary evidence. A malformed line never raises; it still reports its physical line, raw byte count,
-and content hash so provenance survives.
+primary evidence; the reader paginates oversized records. Known source-generated context receives
+a bounded preview. A malformed line still reports its physical line, raw byte count, and hash so
+provenance survives.
 """
 
 from __future__ import annotations
@@ -14,6 +15,12 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, cast
+
+from prompt_diary.source_records import (
+    is_codex_message_echo,
+    is_codex_source_context,
+    parse_codex_message,
+)
 
 SHORT_TOOL_RESULT_BYTES = 1024
 """Tool-result payloads at or below this UTF-8 byte size pass through untrimmed (1 KiB)."""
@@ -64,6 +71,7 @@ class CompactRecord:
     raw_bytes: int
     raw_sha256: str
     truncated: bool
+    duplicate_of: int | None
 
 
 @dataclass
@@ -124,11 +132,27 @@ def line_provenance(raw_line: str) -> tuple[int, str]:
     return len(raw_bytes), hashlib.sha256(raw_bytes).hexdigest()
 
 
-def compact_record(raw_line: str, *, line: int, source: str) -> CompactRecord:
-    """Compact one raw physical JSONL line into a bounded structured record."""
+def compact_record(
+    raw_line: str,
+    *,
+    line: int,
+    source: str,
+    previous_line: str | None = None,
+    next_line: str | None = None,
+) -> CompactRecord:
+    """Compact a physical line, recognizing Codex echoes from its immediate neighbors."""
     raw_bytes, raw_sha256 = line_provenance(raw_line)
     record = _parse_object(raw_line)
     compaction = _compact_unknown(record) if record is None else _compact_source(record, source)
+    duplicate_of = (
+        _codex_duplicate_of(record, line=line, previous_line=previous_line, next_line=next_line)
+        if source == "codex" and record is not None
+        else None
+    )
+    if duplicate_of is not None:
+        compaction.summary = f"Echo of message at line {duplicate_of}."
+        compaction.text_preview = None
+        compaction.truncated = True
     return CompactRecord(
         line=line,
         record_type=compaction.record_type,
@@ -141,7 +165,29 @@ def compact_record(raw_line: str, *, line: int, source: str) -> CompactRecord:
         raw_bytes=raw_bytes,
         raw_sha256=raw_sha256,
         truncated=compaction.truncated,
+        duplicate_of=duplicate_of,
     )
+
+
+def _codex_duplicate_of(
+    record: dict[str, Any],
+    *,
+    line: int,
+    previous_line: str | None,
+    next_line: str | None,
+) -> int | None:
+    message = parse_codex_message(record)
+    if message is None or message.representation != "event":
+        return None
+    neighbor_line = previous_line if message.role == "user" else next_line
+    neighbor_record = _parse_object(neighbor_line) if neighbor_line is not None else None
+    neighbor = parse_codex_message(neighbor_record) if neighbor_record is not None else None
+    if neighbor is None:
+        return None
+    first, second = (neighbor, message) if message.role == "user" else (message, neighbor)
+    if not is_codex_message_echo(first, second):
+        return None
+    return line - 1 if message.role == "user" else line + 1
 
 
 def compact_record_to_json(record: CompactRecord) -> dict[str, Any]:
@@ -158,6 +204,7 @@ def compact_record_to_json(record: CompactRecord) -> dict[str, Any]:
         "raw_bytes": record.raw_bytes,
         "raw_sha256": record.raw_sha256,
         "truncated": record.truncated,
+        "duplicate_of": record.duplicate_of,
     }
 
 
@@ -209,7 +256,7 @@ def _claude_message(record_type: str, record: dict[str, Any]) -> _Compaction:
     role = _string(message, "role") if message is not None else None
     result_meta = _claude_result_meta(_object(record, "toolUseResult"))
     parts = _claude_content_parts(message, result_meta)
-    return _Compaction(
+    compaction = _Compaction(
         record_type=record_type,
         role=role,
         content_kinds=parts.content_kinds,
@@ -219,6 +266,9 @@ def _claude_message(record_type: str, record: dict[str, Any]) -> _Compaction:
         tool_results=parts.tool_results,
         truncated=parts.truncated,
     )
+    if role == "user" and (record.get("isMeta") is True or record.get("isCompactSummary") is True):
+        _compact_source_context(compaction)
+    return compaction
 
 
 def _claude_summary(role: str | None, parts: _ClaudeParts) -> str:
@@ -235,6 +285,10 @@ def _claude_content_parts(
 ) -> _ClaudeParts:
     parts = _ClaudeParts()
     items = message.get("content") if message is not None else None
+    if isinstance(items, str):
+        parts.add_kind("text")
+        parts.texts.append(items)
+        return parts
     if not isinstance(items, list):
         return parts
     for item in cast("list[Any]", items):
@@ -250,8 +304,8 @@ def _claude_content_item(
 ) -> None:
     item_type = _string(item, "type")
     if item_type == "text":
-        text = _string(item, "text")
-        if text is not None:
+        text = item.get("text")
+        if isinstance(text, str):
             parts.add_kind("text")
             parts.texts.append(text)
     elif item_type == "tool_use":
@@ -404,7 +458,7 @@ def _tool_result(
     command: str | None = None,
 ) -> ToolResult:
     """Build a tool result, trimming only payloads larger than the short-result threshold."""
-    raw_bytes = len(payload.encode("utf-8"))
+    raw_bytes = len(payload.encode("utf-8", errors="backslashreplace"))
     if raw_bytes <= SHORT_TOOL_RESULT_BYTES:
         return ToolResult(
             kind=kind,
@@ -430,20 +484,45 @@ def _tool_result(
 def _codex_message(record_type: str, payload: dict[str, Any]) -> _Compaction:
     role = _string(payload, "role")
     text = _codex_content_text(payload)
-    return _Compaction(
+    compaction = _Compaction(
         record_type=record_type,
         role=role,
         content_kinds=("text",) if text is not None else (),
         summary=_message_summary(role),
         text_preview=text,
     )
+    if role in ("developer", "system") or (
+        role == "user" and text is not None and is_codex_source_context(text)
+    ):
+        _compact_source_context(compaction)
+    return compaction
+
+
+def _compact_source_context(compaction: _Compaction) -> None:
+    compaction.summary = "Source-generated context."
+    if compaction.text_preview is not None:
+        text = compaction.text_preview.lstrip()
+        if text.startswith("<subagent_notification>"):
+            compaction.summary = "Subagent notification."
+        elif text.startswith("<turn_aborted>"):
+            compaction.summary = "Turn interruption notification."
+        compaction.text_preview, trimmed = _bounded_preview(
+            compaction.text_preview, head=PREVIEW_HEAD_BYTES, tail=PREVIEW_TAIL_BYTES
+        )
+        compaction.truncated = compaction.truncated or trimmed
 
 
 def _codex_content_text(payload: dict[str, Any]) -> str | None:
     content = payload.get("content")
     if not isinstance(content, list):
         return None
-    texts = _content_item_texts(cast("list[Any]", content))
+    texts = [
+        text
+        for item in cast("list[Any]", content)
+        if isinstance(item, dict)
+        for text in (cast("dict[str, Any]", item).get("text"),)
+        if isinstance(text, str)
+    ]
     return "\n".join(texts) if texts else None
 
 
@@ -486,13 +565,16 @@ def _text_message(
     payload: dict[str, Any],
 ) -> _Compaction:
     message = _string(payload, "message")
-    return _Compaction(
+    compaction = _Compaction(
         record_type=record_type,
         role=role,
         content_kinds=("text",) if message is not None else (),
         summary=summary,
         text_preview=message,
     )
+    if role == "user" and message is not None and is_codex_source_context(message):
+        _compact_source_context(compaction)
+    return compaction
 
 
 def _compact_unknown(record: dict[str, Any] | None) -> _Compaction:
@@ -520,7 +602,7 @@ def _bounded_preview(text: str, *, head: int, tail: int) -> tuple[str, bool]:
     tail slice joined by an elision marker. Slicing happens on UTF-8 bytes and decodes with partial
     trailing bytes dropped, so the result stays deterministic and never splits a code point.
     """
-    encoded = text.encode("utf-8")
+    encoded = text.encode("utf-8", errors="backslashreplace")
     if len(encoded) <= head:
         return text, False
     head_text = encoded[:head].decode("utf-8", errors="ignore")

@@ -80,9 +80,11 @@ Call `write_team_learning` with:
 ```
 
 If it returns `status: invalid`, correct from the returned errors and retry.
+After the write succeeds, stop without repeating the saved findings.
 
 ## Rules
 
+- Work silently; use output for the required tool call and findings.
 - Patterns, not a verdict on the person; productivity is the measure, not prompt polish.
 - Every pattern and the takeaways must cite the turns they rest on, each citation carrying the cited
   work item's `project_key`.
