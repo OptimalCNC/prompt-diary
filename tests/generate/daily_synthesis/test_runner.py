@@ -19,6 +19,7 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_retry import AgentRetryPolicy
+from prompt_diary.generate.agent_settings import AgentSettings, DailySynthesisAgentSettings
 from prompt_diary.generate.daily_synthesis.runner import DailySynthesisRunner
 from prompt_diary.generate.pipeline import (
     TaskSpec,
@@ -326,19 +327,34 @@ def test_daily_retry_reminder_does_not_repeat_source_messages(tmp_path: Path) ->
         assert "write_" in retry
 
 
-def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
+def test_runner_uses_packaged_settings_for_each_pass(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
 
     _run(factory, workspace)
 
-    assert factory.runners[0].config.reasoning_effort == "medium"
+    assert [
+        (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
+    ] == [
+        ("gpt-5.6-terra", "low"),
+        ("gpt-5.6-terra", "low"),
+        ("gpt-6-astra", "medium"),
+        ("gpt-6-astra", "medium"),
+    ]
 
 
-def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+def test_runner_selects_independent_settings_for_each_pass(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
-    runner = DailySynthesisRunner(agent_factory=factory, reasoning_effort="high")
+    runner = DailySynthesisRunner(
+        agent_factory=factory,
+        settings=DailySynthesisAgentSettings(
+            project_summary=AgentSettings(model="summary-model", reasoning_effort="low"),
+            report_title=AgentSettings(model="title-model", reasoning_effort="medium"),
+            engagement=AgentSettings(model="engagement-model", reasoning_effort="high"),
+            team_learning=AgentSettings(model="learning-model", reasoning_effort="xhigh"),
+        ),
+    )
 
     async def run() -> None:
         async with factory:
@@ -346,7 +362,16 @@ def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
 
     asyncio.run(run())
 
-    assert factory.runners[0].config.reasoning_effort == "high"
+    expected = {
+        "write_project_summary": ("summary-model", "low"),
+        "write_report_title": ("title-model", "medium"),
+        "write_engagement": ("engagement-model", "high"),
+        "write_team_learning": ("learning-model", "xhigh"),
+    }
+    for tool_name, settings in expected.items():
+        configs = [agent.config for agent in factory.runners if tool_name in agent.prompts[0]]
+        assert len(configs) == 1
+        assert (configs[0].model, configs[0].reasoning_effort) == settings
 
 
 # --- pass failures -------------------------------------------------------------------------------

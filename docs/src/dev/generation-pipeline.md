@@ -71,6 +71,13 @@ shared `AgentSessionFactory` is entered once at the workflow scope, above the pi
 still enters any phase runner that *is* an async context manager (once per run), but that mechanism
 now serves only a runner's own additional resources, not the agent backend.
 
+Model and reasoning choices live in the bundled
+`src/prompt_diary/generate/agent-settings.json`. The agent phase runners load typed settings from
+this package resource and pass an explicit model and reasoning effort to each conversation. Daily
+synthesis selects settings separately for project summaries, the report title, engagement, and
+team learning. These are internal package settings, with no CLI, environment, or user-config
+overrides.
+
 `GenerateWorkspaceWorkflow` is the shared workspace executor for both the full pipeline and one
 standalone phase task. `run_generation_task` is the lower-level task API used after declared
 prerequisites exist, which keeps phase development and debugging independent from the full pipeline.

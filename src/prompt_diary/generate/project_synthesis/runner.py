@@ -13,6 +13,7 @@ from prompt_diary.generate.agent_retry import (
     AgentRetryPolicy,
     run_agent_turn_with_resume,
 )
+from prompt_diary.generate.agent_settings import AgentSettings, load_agent_settings
 from prompt_diary.generate.evidence_extraction.completeness import (
     inspect_evidence_card_for_session,
 )
@@ -46,22 +47,12 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
-DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT = "medium"
-"""Per-thread Codex reasoning effort for project synthesis.
-
-Grouping evidence chains into work items needs more judgment than evidence extraction but is not
-deep problem solving, so the synthesis thread pins a mid-level effort instead of inheriting the
-user's global Codex setting. It is a per-thread (``AgentConfig``) value; override it by
-constructing the runner with ``reasoning_effort``.
-"""
-
-
 @dataclass(frozen=True)
 class ProjectSynthesisRunner:
     """Drive an agent to group one project's evidence chains into work items."""
 
     agent_factory: AgentSessionFactory
-    reasoning_effort: str | None = DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT
+    settings: AgentSettings = field(default_factory=lambda: load_agent_settings().project_synthesis)
     retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
@@ -107,9 +98,10 @@ class ProjectSynthesisRunner:
         runner = await self.agent_factory.runner(
             AgentConfig(
                 working_directory=workspace_path,
+                model=self.settings.model,
                 approval_mode="auto_review",
                 sandbox="workspace-write",
-                reasoning_effort=self.reasoning_effort,
+                reasoning_effort=self.settings.reasoning_effort,
             )
         )
         initial_prompt = project_synthesizer_prompt(

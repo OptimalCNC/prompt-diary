@@ -8,6 +8,7 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_retry import AgentRetryPolicy
+from prompt_diary.generate.agent_settings import AgentSettings
 from prompt_diary.generate.pipeline import (
     TaskSpec,
     project_synthesis_artifact,
@@ -52,19 +53,23 @@ def _run(factory: GroupingAgentSessionFactory, workspace: Path) -> TaskResult:
     return asyncio.run(run())
 
 
-def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
+def test_runner_uses_packaged_agent_settings(tmp_path: Path) -> None:
     workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
 
     _run(factory, workspace)
 
+    assert factory.runners[0].config.model == "gpt-5.6-sol"
     assert factory.runners[0].config.reasoning_effort == "medium"
 
 
-def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+def test_runner_passes_agent_settings_to_conversation(tmp_path: Path) -> None:
     workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
-    runner = ProjectSynthesisRunner(agent_factory=factory, reasoning_effort="high")
+    runner = ProjectSynthesisRunner(
+        agent_factory=factory,
+        settings=AgentSettings(model="project-model", reasoning_effort="high"),
+    )
 
     async def run() -> None:
         async with factory:
@@ -72,6 +77,7 @@ def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
 
     asyncio.run(run())
 
+    assert factory.runners[0].config.model == "project-model"
     assert factory.runners[0].config.reasoning_effort == "high"
 
 

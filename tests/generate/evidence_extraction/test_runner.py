@@ -8,6 +8,7 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_retry import AgentRetryPolicy
+from prompt_diary.generate.agent_settings import AgentSettings
 from prompt_diary.generate.evidence_extraction.mcp import write_evidence
 from prompt_diary.generate.evidence_extraction.runner import EvidenceExtractionRunner
 from prompt_diary.generate.pipeline import TaskSpec, evidence_card_artifact, evidence_task_id
@@ -365,19 +366,27 @@ def test_runner_emits_turn_advanced_per_committed_turn(tmp_path: Path) -> None:
     assert [event.turn_ref for event in turns] == ["T0001", "T0002"]
 
 
-def test_runner_uses_low_reasoning_effort_by_default(tmp_path: Path) -> None:
+def test_runner_uses_packaged_agent_settings(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     factory = EvidenceWritingAgentSessionFactory()
 
     _run(factory, workspace)
 
-    assert factory.runners[0].config.reasoning_effort == "low"
+    assert [
+        (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
+    ] == [
+        ("gpt-5.6-terra", "medium"),
+        ("gpt-5.6-terra", "medium"),
+    ]
 
 
-def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+def test_runner_passes_agent_settings_to_every_conversation(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     factory = EvidenceWritingAgentSessionFactory()
-    runner = EvidenceExtractionRunner(agent_factory=factory, reasoning_effort="high")
+    runner = EvidenceExtractionRunner(
+        agent_factory=factory,
+        settings=AgentSettings(model="extraction-model", reasoning_effort="high"),
+    )
 
     async def run() -> None:
         async with factory:
@@ -385,7 +394,12 @@ def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
 
     asyncio.run(run())
 
-    assert factory.runners[0].config.reasoning_effort == "high"
+    assert [
+        (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
+    ] == [
+        ("extraction-model", "high"),
+        ("extraction-model", "high"),
+    ]
 
 
 def _strip_turns_from_index(workspace: Path) -> None:

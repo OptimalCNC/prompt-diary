@@ -14,6 +14,7 @@ from prompt_diary.generate.agent_retry import (
     AgentRetryPolicy,
     run_agent_turn_with_resume,
 )
+from prompt_diary.generate.agent_settings import AgentSettings, load_agent_settings
 from prompt_diary.generate.evidence_extraction.completeness import (
     EvidenceCardCheckpoint,
     inspect_evidence_card,
@@ -33,22 +34,14 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
-DEFAULT_EVIDENCE_REASONING_EFFORT = "low"
-"""Per-thread Codex reasoning effort for evidence extraction.
-
-Extraction is reconstruct-the-turn-and-cite-exact-lines work, not deep problem solving, so the
-extraction thread pins a low effort instead of inheriting the user's global Codex setting
-(which is often much higher). It is a per-thread (``AgentConfig``) value, so other generation
-phases keep their own effort; override it by constructing the runner with ``reasoning_effort``.
-"""
-
-
 @dataclass(frozen=True)
 class EvidenceExtractionRunner:
     """Drive an agent to extract one evidence chain per indexed turn of a session."""
 
     agent_factory: AgentSessionFactory
-    reasoning_effort: str | None = DEFAULT_EVIDENCE_REASONING_EFFORT
+    settings: AgentSettings = field(
+        default_factory=lambda: load_agent_settings().evidence_extraction
+    )
     retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
@@ -91,9 +84,10 @@ class EvidenceExtractionRunner:
             runner = await self.agent_factory.runner(
                 AgentConfig(
                     working_directory=workspace_path,
+                    model=self.settings.model,
                     approval_mode="auto_review",
                     sandbox="workspace-write",
-                    reasoning_effort=self.reasoning_effort,
+                    reasoning_effort=self.settings.reasoning_effort,
                 )
             )
             prompt = evidence_extractor_prompt(
