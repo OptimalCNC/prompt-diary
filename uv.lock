@@ -779,7 +779,7 @@ wheels = [
 
 [[package]]
 name = "prompt-diary"
-version = "0.2.11"
+version = "0.2.12"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
