@@ -1,7 +1,7 @@
 """Prompt-reading fake agent that fills daily-report slots via the real write_* APIs.
 
 Like :class:`GroupingAgentRunner`, this fake never starts Codex: each turn it detects which pass it
-is running from the tool name named in the prompt (``write_project_summary`` /
+is running from the tool name in its base instructions (``write_project_summary`` /
 ``write_report_title`` / ``write_engagement`` / ``write_team_learning``) and calls the matching
 real write API with a valid submission derived from the workspace's committed evidence — so the
 runner's slot checks, Finalize, and the Markdown render all run against real, validated data.
@@ -68,12 +68,12 @@ class DailySynthesisAgentRunner:
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
         self.prompts.append(prompt)
-        pass_name = _pass_of(prompt)
+        pass_name = _pass_of(self.config.base_instructions or prompt)
         if pass_name in self.fail_once_passes and pass_name not in self.failed_passes:
             self.failed_passes.add(pass_name)
             raise RuntimeError(_transient_pass_message(pass_name))
         if pass_name not in self.skip_pass:
-            self._write(pass_name, prompt)
+            self._write(pass_name, self.prompts[0])
         return AgentTurnResult(assistant_text=f"{pass_name} done", events=())
 
     def _write(self, pass_name: str, prompt: str) -> None:

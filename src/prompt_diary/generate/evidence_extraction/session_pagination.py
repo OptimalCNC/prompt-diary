@@ -23,11 +23,9 @@ class ReadCursor:
 
 @dataclass(frozen=True)
 class RecordFragment:
-    """A lossless fragment of one oversized record; provenance describes the original line."""
+    """A lossless fragment of one oversized record at its physical citation line."""
 
     line: int
-    raw_bytes: int
-    raw_sha256: str
     record_format: Literal["compact_json", "raw_line"]
     offset: int
     total_chars: int
@@ -37,12 +35,6 @@ class RecordFragment:
 class _Record(Protocol):
     @property
     def line(self) -> int: ...
-
-    @property
-    def raw_bytes(self) -> int: ...
-
-    @property
-    def raw_sha256(self) -> str: ...
 
 
 _RecordT = TypeVar("_RecordT", bound=_Record)
@@ -80,8 +72,15 @@ def paginate_records(
     """Keep whole records when possible; split oversized ones without dropping any characters."""
     page: tuple[_RecordT | RecordFragment, ...] = ()
     for record in records:
+        if record.line != cursor.line:
+            if cursor.offset:
+                return PaginationError("cursor offset refers to an omitted record")
+            cursor = ReadCursor(record.line)
         after_record = _after_record(record.line, end_line)
-        if cursor.offset == 0 and _fits(encode_page((*page, record), after_record)):
+        # Omitted physical lines can move the eventual continuation farther than line + 1.
+        # Reserve enough digits for any remaining line before accepting this record.
+        continuation_budget = ReadCursor(end_line) if after_record is not None else None
+        if cursor.offset == 0 and _fits(encode_page((*page, record), continuation_budget)):
             page = (*page, record)
         elif page:
             return RecordPage(page, cursor)
@@ -91,7 +90,7 @@ def paginate_records(
                 content=record_content(record),
                 offset=cursor.offset,
                 record_format=record_format,
-                after_record=after_record,
+                after_record=continuation_budget,
                 encode_page=encode_page,
             )
             if isinstance(fragment, PaginationError):
@@ -103,6 +102,8 @@ def paginate_records(
         if after_record is None:
             break
         cursor = after_record
+    if cursor.offset and not page:
+        return PaginationError("cursor offset refers to an omitted record")
     return RecordPage(page, None)
 
 
@@ -129,8 +130,6 @@ def _fit_fragment(
     def candidate(count: int) -> RecordFragment:
         return RecordFragment(
             line=record.line,
-            raw_bytes=record.raw_bytes,
-            raw_sha256=record.raw_sha256,
             record_format=record_format,
             offset=offset,
             total_chars=len(content),
@@ -150,5 +149,5 @@ def _fit_fragment(
         else:
             high = count - 1
     if low == 0:
-        return PaginationError("session identifiers leave no room for record content in a page")
+        return PaginationError("page metadata leaves no room for record content")
     return candidate(low)

@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     compact_record_to_json,
-    line_provenance,
 )
 from prompt_diary.generate.evidence_extraction.session_reader import (
     FullRecord,
@@ -39,7 +38,7 @@ def test_compact_read_returns_compact_records_with_absolute_line_numbers(tmp_pat
     assert ok.session_ref == SESSION_REF
     assert ok.mode == "compact"
     assert (ok.line_range.start, ok.line_range.end) == (2, 8)
-    assert [record.line for record in ok.records] == [2, 3, 4, 5, 6, 7, 8]
+    assert [record.line for record in ok.records] == [2, 3, 4, 5, 6, 8]
 
 
 def test_compact_result_type_narrows_records_for_serialization(tmp_path: Path) -> None:
@@ -58,7 +57,7 @@ def test_compact_result_type_narrows_records_for_serialization(tmp_path: Path) -
         compact_record_to_json(record) for record in compact_records_by_line(result).values()
     ]
 
-    assert [entry["line"] for entry in payload] == [2, 3, 4, 5, 6, 7, 8]
+    assert [entry["line"] for entry in payload] == [2, 3, 4, 5, 6, 8]
 
 
 def test_compact_read_trims_large_tool_result_and_passes_small_through(tmp_path: Path) -> None:
@@ -69,7 +68,6 @@ def test_compact_read_trims_large_tool_result_and_passes_small_through(tmp_path:
 
     large = by_line[5].tool_results[0]
     assert large.truncated is True
-    assert large.raw_bytes == 1920
     small = by_line[6].tool_results[0]
     assert small.truncated is False
     assert small.preview == "ok: 3 files changed, all tests passed."
@@ -79,14 +77,12 @@ def test_compact_read_omits_assistant_reasoning(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
     ok = expect_compact(call_read_session_lines(workspace_path=workspace, start_line=7, end_line=7))
-    reasoning = compact_records_by_line(ok)[7]
-
-    assert reasoning.content_kinds == ("thinking",)
-    assert reasoning.text_preview is None
-    assert reasoning.summary == "Assistant reasoning omitted."
+    assert ok.records == ()
+    assert ok.next_cursor is None
+    assert (ok.line_range.start, ok.line_range.end) == (7, 7)
 
 
-def test_full_read_returns_raw_lines_verbatim_with_matching_provenance(tmp_path: Path) -> None:
+def test_full_read_returns_raw_lines_verbatim(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
     physical = session_physical_lines(workspace)
 
@@ -99,10 +95,7 @@ def test_full_read_returns_raw_lines_verbatim_with_matching_provenance(tmp_path:
     for record in ok.records:
         assert isinstance(record, FullRecord)
         raw_line = physical[record.line - 1]
-        raw_bytes, raw_sha256 = line_provenance(raw_line)
         assert record.raw_line == raw_line
-        assert record.raw_bytes == raw_bytes
-        assert record.raw_sha256 == raw_sha256
 
 
 def test_default_mode_is_compact(tmp_path: Path) -> None:
@@ -114,12 +107,7 @@ def test_default_mode_is_compact(tmp_path: Path) -> None:
 
 
 def test_compact_read_uses_the_resolved_session_source(tmp_path: Path) -> None:
-    """The reader must compact with the session's real source, not a hardcoded one.
-
-    The same claude-shaped line yields ``content_kinds=("text",)`` plus a preview under the
-    claude-code source, but ``()`` and no preview under codex, so a hardcoded source would change
-    the parsed record.
-    """
+    """The reader must compact with the session's real source, not a hardcoded one."""
     workspace = copy_session_reader_workspace(tmp_path)
 
     ok = expect_compact(
@@ -129,11 +117,10 @@ def test_compact_read_uses_the_resolved_session_source(tmp_path: Path) -> None:
     )
     by_line = compact_records_by_line(ok)
 
-    assert by_line[1].record_type == "user"
-    assert by_line[1].content_kinds == ("text",)
-    assert by_line[1].text_preview == "Summarize today's changes."
-    assert by_line[2].record_type == "assistant"
-    assert by_line[2].text_preview == "Here is the summary of changes."
+    assert by_line[1].kind == "user"
+    assert by_line[1].text == "Summarize today's changes."
+    assert by_line[2].kind == "assistant"
+    assert by_line[2].text == "Here is the summary of changes."
 
 
 def test_line_numbers_match_true_physical_lines(tmp_path: Path) -> None:
@@ -150,7 +137,7 @@ def test_line_numbers_match_true_physical_lines(tmp_path: Path) -> None:
         assert record.raw_line == physical[record.line - 1]
 
 
-def test_provenance_parity_between_compact_and_full_for_same_line(tmp_path: Path) -> None:
+def test_compact_and_full_read_cite_the_same_physical_line(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
 
     compact = expect_compact(
@@ -160,7 +147,7 @@ def test_provenance_parity_between_compact_and_full_for_same_line(tmp_path: Path
         call_read_session_lines(workspace_path=workspace, start_line=5, end_line=5, mode="full")
     ).records[0]
 
-    assert (compact.raw_bytes, compact.raw_sha256) == (full.raw_bytes, full.raw_sha256)
+    assert compact.line == full.line == 5
 
 
 def test_unknown_project_key_is_invalid(tmp_path: Path) -> None:
@@ -237,12 +224,10 @@ def test_malformed_line_in_range_is_handled_gracefully_in_compact_mode(tmp_path:
 
     fallback = by_line[4]
     assert fallback.line == 4
-    assert fallback.summary == "Malformed JSONL line."
-    raw_bytes, raw_sha256 = line_provenance(malformed)
-    assert fallback.raw_bytes == raw_bytes
-    assert fallback.raw_sha256 == raw_sha256
+    assert fallback.kind == "malformed"
+    assert fallback.text == malformed
     # Surrounding well-formed lines are still parsed normally.
-    assert by_line[3].content_kinds == ("text",)
+    assert by_line[3].kind == "assistant"
 
 
 def test_malformed_line_in_range_is_returned_verbatim_in_full_mode(tmp_path: Path) -> None:
@@ -256,7 +241,4 @@ def test_malformed_line_in_range_is_returned_verbatim_in_full_mode(tmp_path: Pat
     record = ok.records[0]
     assert isinstance(record, FullRecord)
 
-    raw_bytes, raw_sha256 = line_provenance(malformed)
     assert record.raw_line == malformed
-    assert record.raw_bytes == raw_bytes
-    assert record.raw_sha256 == raw_sha256

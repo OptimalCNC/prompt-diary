@@ -32,6 +32,7 @@ from prompt_diary.generate.project_synthesis.model import (
     new_project_synthesis_envelope,
 )
 from prompt_diary.generate.prompts import (
+    project_synthesizer_instructions,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
 )
@@ -102,6 +103,8 @@ class ProjectSynthesisRunner:
                 approval_mode="auto_review",
                 sandbox="workspace-write",
                 reasoning_effort=self.settings.reasoning_effort,
+                base_instructions=project_synthesizer_instructions(),
+                mcp_tools=("write_work_item",),
             )
         )
         initial_prompt = project_synthesizer_prompt(

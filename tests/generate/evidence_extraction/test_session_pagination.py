@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
@@ -11,7 +12,12 @@ from pydantic import TypeAdapter
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     CompactRecord,
     compact_record,
-    line_provenance,
+)
+from prompt_diary.generate.evidence_extraction.session_pagination import (
+    PaginationError,
+    RecordPage,
+    encode_read_json,
+    paginate_records,
 )
 from prompt_diary.generate.evidence_extraction.session_reader import (
     MAX_SESSION_READ_BYTES,
@@ -77,7 +83,6 @@ def test_large_messages_reconstruct_exactly_through_bounded_pages(
         assert len(encoded.encode("utf-8")) <= MAX_SESSION_READ_BYTES
         assert page.records
         for record in page.records:
-            assert (record.raw_bytes, record.raw_sha256) == line_provenance(lines[record.line - 1])
             if isinstance(record, RecordFragment):
                 prior = fragments.get(record.line, "")
                 assert record.offset == len(prior)
@@ -112,14 +117,14 @@ def test_large_messages_reconstruct_exactly_through_bounded_pages(
         }
         message = reconstructed[1]
         assert isinstance(message, CompactRecord)
-        assert message.text_preview == text
+        assert message.text == text
     else:
         assert reconstructed == dict(enumerate(lines, 1))
 
 
 def test_more_than_two_thousand_lines_page_without_an_extra_record_cap(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
-    _write_lines(workspace, ['{"type":"turn_context"}'] * 2100)
+    _write_lines(workspace, [_codex_message("Observed.", "assistant")] * 2100)
     cursor = None
     seen: list[int] = []
     page_sizes: list[int] = []
@@ -262,5 +267,103 @@ def test_indexed_identifier_cannot_make_result_metadata_exceed_the_page_budget(
         mode=mode,
     )
 
-    assert_read_invalid(result, field="cursor", message_contains="no room")
+    assert isinstance(result, (ReadSessionLinesCompactResult, ReadSessionLinesFullResult))
+    assert result.records
+    assert set(json.loads(serialize_read_result(result))) == {"records", "next_cursor"}
     assert len(serialize_read_result(result).encode()) <= MAX_SESSION_READ_BYTES
+
+
+def test_omitted_lines_do_not_create_empty_pages_or_change_citations(tmp_path: Path) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    lines = [
+        '{"type":"turn_context"}',
+        _codex_message("First " + "a" * 20_000),
+        '{"type":"event_msg","payload":{"type":"token_count"}}',
+        _codex_message("Second " + "b" * 20_000, "assistant"),
+        '{"type":"turn_context"}',
+    ]
+    _write_lines(workspace, lines)
+
+    first = expect_compact(
+        call_read_session_lines(workspace_path=workspace, start_line=1, end_line=5)
+    )
+    assert [record.line for record in first.records] == [2]
+    assert first.next_cursor == ReadCursor(4)
+    second = expect_compact(
+        call_read_session_lines(
+            workspace_path=workspace, start_line=1, end_line=5, cursor=first.next_cursor
+        )
+    )
+    assert [record.line for record in second.records] == [4]
+    assert second.next_cursor is None
+    assert (second.line_range.start, second.line_range.end) == (1, 5)
+
+
+def test_all_omitted_range_completes_without_a_continuation(tmp_path: Path) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    _write_lines(workspace, ['{"type":"turn_context"}'] * 2100)
+
+    page = expect_compact(
+        call_read_session_lines(workspace_path=workspace, start_line=1, end_line=2100)
+    )
+
+    assert json.loads(serialize_read_result(page)) == {"records": [], "next_cursor": None}
+    assert (page.line_range.start, page.line_range.end) == (1, 2100)
+
+
+@pytest.mark.parametrize("has_later_record", [False, True])
+def test_offset_on_an_omitted_line_is_invalid(tmp_path: Path, *, has_later_record: bool) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    lines = ['{"type":"turn_context"}']
+    if has_later_record:
+        lines.append(_codex_message("Keep this evidence."))
+    _write_lines(workspace, lines)
+
+    result = call_read_session_lines(
+        workspace_path=workspace,
+        start_line=1,
+        end_line=len(lines),
+        cursor=ReadCursor(1, 1),
+    )
+
+    assert_read_invalid(result, field="cursor", message_contains="omitted")
+
+
+def test_pagination_rejects_an_envelope_that_leaves_no_room_for_content() -> None:
+    result = paginate_records(
+        iter([FullRecord(1, "observed")]),
+        cursor=ReadCursor(1),
+        end_line=1,
+        record_format="raw_line",
+        record_content=lambda record: record.raw_line,
+        encode_page=lambda _records, _cursor: "x" * (MAX_SESSION_READ_BYTES + 1),
+    )
+
+    assert isinstance(result, PaginationError)
+    assert "no room" in result.message
+
+
+def test_skipping_omitted_lines_reserves_space_for_larger_cursor_line_numbers() -> None:
+    def encode_page(
+        records: tuple[FullRecord | RecordFragment, ...], cursor: ReadCursor | None
+    ) -> str:
+        return encode_read_json(
+            {
+                "records": [asdict(record) for record in records],
+                "next_cursor": asdict(cursor) if cursor else None,
+            }
+        )
+
+    empty_page_size = len(encode_page((FullRecord(1, ""),), ReadCursor(2)).encode())
+    first = FullRecord(1, "x" * (MAX_SESSION_READ_BYTES - empty_page_size))
+    result = paginate_records(
+        iter([first, FullRecord(10_000, "later evidence")]),
+        cursor=ReadCursor(1),
+        end_line=10_000,
+        record_format="raw_line",
+        record_content=lambda record: record.raw_line,
+        encode_page=encode_page,
+    )
+
+    assert isinstance(result, RecordPage)
+    assert len(encode_page(result.records, result.next_cursor).encode()) <= MAX_SESSION_READ_BYTES

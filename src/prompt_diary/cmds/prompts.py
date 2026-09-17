@@ -7,12 +7,18 @@ from typing import Annotated
 import typer
 
 from prompt_diary.generate.prompts import (
+    engagement_instructions,
     engagement_prompt,
+    evidence_extractor_instructions,
     evidence_extractor_prompt,
+    project_summary_instructions,
     project_summary_prompt,
+    project_synthesizer_instructions,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
+    report_title_instructions,
     report_title_prompt,
+    team_learning_instructions,
     team_learning_prompt,
 )
 
@@ -22,7 +28,7 @@ ProjectJsonOption = Annotated[
 ]
 SessionRefOption = Annotated[str, typer.Option(help="Session reference for template substitution.")]
 SessionIndexRecordOption = Annotated[
-    str, typer.Option(help="Session index record without turns for template substitution.")
+    str, typer.Option(help="Prepared session metadata for template substitution.")
 ]
 TargetTurnOption = Annotated[str, typer.Option(help="Target turn for template substitution.")]
 EvidenceChainsOption = Annotated[
@@ -65,7 +71,9 @@ def prompts_evidence_extractor(
 ) -> None:
     """Print the evidence extractor prompt."""
     typer.echo(
-        evidence_extractor_prompt(
+        evidence_extractor_instructions()
+        + "\n"
+        + evidence_extractor_prompt(
             project_key=project_key,
             project_json=project_json,
             session_ref=session_ref,
@@ -83,7 +91,9 @@ def prompts_project_synthesizer(
 ) -> None:
     """Print the project synthesizer prompt."""
     typer.echo(
-        project_synthesizer_prompt(
+        project_synthesizer_instructions()
+        + "\n"
+        + project_synthesizer_prompt(
             project_key=project_key,
             project_json=project_json,
             evidence_chains=evidence_chains,
@@ -113,7 +123,9 @@ def prompts_project_summary(
 ) -> None:
     """Print the per-project summary prompt."""
     typer.echo(
-        project_summary_prompt(
+        project_summary_instructions()
+        + "\n"
+        + project_summary_prompt(
             project_key=project_key,
             project_json=project_json,
             work_items=work_items,
@@ -126,7 +138,7 @@ def prompts_report_title(
     context: ReportContextOption = "<REPORT_TITLE_CONTEXT>",
 ) -> None:
     """Print the report-title prompt."""
-    typer.echo(report_title_prompt(context=context))
+    typer.echo(report_title_instructions() + "\n" + report_title_prompt(context=context))
 
 
 def prompts_engagement(
@@ -136,7 +148,9 @@ def prompts_engagement(
 ) -> None:
     """Print the engagement prompt."""
     typer.echo(
-        engagement_prompt(
+        engagement_instructions()
+        + "\n"
+        + engagement_prompt(
             work_items=work_items,
             source_user_messages=source_user_messages,
         )
@@ -150,7 +164,9 @@ def prompts_team_learning(
 ) -> None:
     """Print the team-learning prompt."""
     typer.echo(
-        team_learning_prompt(
+        team_learning_instructions()
+        + "\n"
+        + team_learning_prompt(
             work_items=work_items,
             source_user_messages=source_user_messages,
         )

@@ -78,6 +78,19 @@ synthesis selects settings separately for project summaries, the report title, e
 team learning. These are internal package settings, with no CLI, environment, or user-config
 overrides.
 
+Each phase supplies a stable task contract as Codex base instructions and keeps variable input in
+its user message. Invocation-local settings suppress memory use and generation, skill catalogs,
+plugins, apps, delegation instructions, and project/environment context. `CODEX_HOME`, credentials,
+global AGENTS guidance, and persisted session logs remain inherited. Language rules are explicit
+developer instructions. These context controls were verified with Codex CLI 0.153.4; some are
+version-specific. Each phase directly exposes only its required Prompt Diary MCP tools, including
+on models that otherwise defer tool schemas behind code-mode discovery.
+
+Generation uses the persisted client identity `prompt_diary`, allowing preparation to exclude its
+sessions independently of the report directory while retaining normal Codex logs for debugging.
+Stable prefixes can improve cache reuse; the pipeline does not fork template conversations or
+assume that provider caching guarantees a particular saving.
+
 `GenerateWorkspaceWorkflow` is the shared workspace executor for both the full pipeline and one
 standalone phase task. `run_generation_task` is the lower-level task API used after declared
 prerequisites exist, which keeps phase development and debugging independent from the full pipeline.
@@ -129,10 +142,11 @@ existing `daily-report.json`; `generate render --notion` renders then publishes 
 ## Evidence Extraction Runner
 
 The evidence extraction phase runner creates a fresh agent conversation for each uncommitted source
-turn, in indexed order. Each receives a self-contained extractor prompt with the current turn's
-scope. An optional `previous_turn` locator supplies the preceding indexed turn's ref and bounds for
-narrow MCP context reads behind continuations or corrections; only current-turn lines may support
-citations. Earlier extraction conversations and their transcript reads are not carried forward.
+turn, in indexed order. Each receives the stable extractor contract as base instructions and the
+current turn's scope in a separate user message. An optional `previous_turn` locator supplies the
+preceding indexed turn's ref and bounds for narrow MCP context reads behind continuations or
+corrections; only current-turn lines may support citations. Earlier extraction conversations and
+their transcript reads are not carried forward.
 
 After each turn the runner verifies the result by reading the evidence card from the workspace
 directly. It never trusts the assistant's text response. An uncommitted turn — one where the card

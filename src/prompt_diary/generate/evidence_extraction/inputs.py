@@ -52,15 +52,6 @@ def build_session_extraction_inputs(
     project = _find_project(workspace, project_key)
     session = _find_session(project, session_ref, project_key)
 
-    record_without_turns = {
-        "session_ref": session.session_ref,
-        "source": session.source,
-        "source_session_id": session.source_session_id,
-        "session_path": session.session_path.as_posix(),
-        "target_start_line": session.target_span.start,
-        "target_end_line": session.target_span.end,
-    }
-
     turns = tuple(
         ExtractionTurn(
             turn_ref=turn.turn_ref,
@@ -75,11 +66,11 @@ def build_session_extraction_inputs(
         project_key=project_key,
         session_ref=session_ref,
         project_json=json.dumps(
-            {"project_key": project.project_key, "project_label": project.project_label},
+            {"project_label": project.project_label},
             indent=2,
             ensure_ascii=False,
         ),
-        session_index_record=json.dumps(record_without_turns, indent=2, ensure_ascii=False),
+        session_index_record=json.dumps({"source": session.source}, indent=2, ensure_ascii=False),
         turns=turns,
     )
 

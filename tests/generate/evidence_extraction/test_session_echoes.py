@@ -7,7 +7,6 @@ import pytest
 
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     compact_record_to_json,
-    line_provenance,
 )
 from tests.support.session_reader import (
     call_read_session_lines,
@@ -53,7 +52,7 @@ def _workspace_with_lines(tmp_path: Path, lines: list[str]) -> Path:
     return workspace
 
 
-def test_large_codex_echoes_preserve_one_message_and_every_physical_provenance(
+def test_large_codex_echoes_preserve_one_message_and_physical_line_citations(
     tmp_path: Path,
 ) -> None:
     user_text = "U" * 50_000
@@ -70,24 +69,22 @@ def test_large_codex_echoes_preserve_one_message_and_every_physical_provenance(
     full = read_full_records(workspace_path=workspace, start_line=1, end_line=4)
 
     assert [record.line for record in compact] == [1, 2, 3, 4]
-    assert [record.text_preview for record in compact] == [
+    assert [record.text for record in compact] == [
         user_text,
         None,
         None,
         assistant_text,
     ]
-    assert sum(len(record.text_preview or "") for record in compact) == 80_000
+    assert sum(len(record.text or "") for record in compact) == 80_000
     assert [record.duplicate_of for record in compact] == [None, 1, 4, None]
     assert [record.raw_line for record in full] == lines
-    for record, raw_line in zip(compact, lines, strict=True):
-        assert (record.raw_bytes, record.raw_sha256) == line_provenance(raw_line)
-        assert compact_record_to_json(record)["duplicate_of"] == record.duplicate_of
+    for record in compact:
+        assert compact_record_to_json(record).get("duplicate_of") == record.duplicate_of
         singleton = read_compact_records(
             workspace_path=workspace, start_line=record.line, end_line=record.line
         )
         assert singleton == (record,)
-    assert compact[1].truncated is True
-    assert compact[1].summary == "Echo of message at line 1."
+    assert compact_record_to_json(compact[1]) == {"line": 2, "kind": "duplicate", "duplicate_of": 1}
 
 
 def test_repeated_human_actions_and_unmatched_events_remain_distinct(tmp_path: Path) -> None:
@@ -117,7 +114,7 @@ def test_repeated_human_actions_and_unmatched_events_remain_distinct(tmp_path: P
         None,
         None,
     ]
-    assert [record.line for record in records if record.text_preview == text] == [
+    assert [record.line for record in records if record.text == text] == [
         1,
         3,
         5,
@@ -151,8 +148,8 @@ def test_canonical_message_preserves_blank_content_parts_from_confirmed_echo(
     )
 
     records = compact_records_by_line(result)
-    assert records[1].text_preview == text
-    assert records[2].text_preview is None
+    assert records[1].text == text
+    assert records[2].text is None
     assert records[2].duplicate_of == 1
 
 
@@ -191,4 +188,79 @@ def test_uncertain_codex_pairs_keep_message_text(tmp_path: Path, lines: list[str
     expected_texts = [
         "Two" if '"Two"' in line else "One" for line in lines if '"One"' in line or '"Two"' in line
     ]
-    assert [record.text_preview for record in records if record.text_preview] == expected_texts
+    assert [
+        record.text for record in records if record.kind in ("user", "assistant")
+    ] == expected_texts
+
+
+def _modern_message(role: str, content: object) -> str:
+    return json.dumps(
+        {
+            "type": "event_msg",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "UserMessage" if role == "user" else "AgentMessage",
+                    "content": content,
+                },
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("role", ["user", "assistant"])
+def test_modern_message_echo_requires_identical_adjacent_text(
+    tmp_path: Path, role: Literal["user", "assistant"]
+) -> None:
+    text = "Please continue.\n\n "
+    event = _modern_message(
+        role,
+        [
+            {"type": "text" if role == "user" else "Text", "text": part}
+            for part in ("Please continue.", "", " ")
+        ],
+    )
+    canonical = _message("response", role, text)
+    lines = [canonical, event] if role == "user" else [event, canonical]
+    workspace = _workspace_with_lines(tmp_path, lines)
+
+    records = read_compact_records(workspace_path=workspace, start_line=1, end_line=2)
+
+    assert [record.text for record in records if record.text is not None] == [text]
+    echo = records[1] if role == "user" else records[0]
+    assert echo.duplicate_of == (1 if role == "user" else 2)
+    assert read_compact_records(
+        workspace_path=workspace, start_line=echo.line, end_line=echo.line
+    ) == (echo,)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "different text",
+        [{"type": "text", "text": "different text"}],
+        [{"type": "image"}],
+        [1],
+        None,
+    ],
+)
+def test_modern_message_uncertainty_keeps_evidence_visible(tmp_path: Path, content: object) -> None:
+    workspace = _workspace_with_lines(
+        tmp_path, [_message("response", "user", "Original"), _modern_message("user", content)]
+    )
+
+    records = read_compact_records(workspace_path=workspace, start_line=1, end_line=2)
+
+    assert len(records) == 2
+    assert records[1].duplicate_of is None
+    assert records[1].text is not None or records[1].unavailable
+
+
+def test_source_context_echo_does_not_leave_a_dangling_pointer(tmp_path: Path) -> None:
+    text = "<environment_context>injected setup</environment_context>"
+    workspace = _workspace_with_lines(
+        tmp_path, [_message("response", "user", text), _message("event", "user", text)]
+    )
+
+    assert read_compact_records(workspace_path=workspace, start_line=1, end_line=2) == ()

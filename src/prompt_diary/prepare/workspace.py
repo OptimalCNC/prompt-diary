@@ -9,13 +9,14 @@ import re
 import shutil
 import time
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone, tzinfo
+from datetime import date, datetime, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
 
 import msgspec
 
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.language import GENERATED_AGENTS_MARKER
 from prompt_diary.models import (
     WORKSPACE_SCHEMA_VERSION,
     JsonObject,
@@ -35,6 +36,7 @@ from prompt_diary.progress.events import (
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.source_records import (
+    CODEX_REPORT_ORIGINATOR,
     CodexMessage,
     is_claude_tool_result_content,
     is_codex_message_echo,
@@ -150,6 +152,8 @@ class _ProbePayload(msgspec.Struct):
     role: str | None = None
     thread_source: str | None = None
     originator: str | None = None
+    cwd: str | None = None
+    timestamp: str | None = None
     source: object | None = None
     message: str | None = None
 
@@ -187,6 +191,12 @@ class _ProbeContentRecord(msgspec.Struct):
 
 _PROBE_RECORD_DECODER = msgspec.json.Decoder(_ProbeRecord)
 _PROBE_CONTENT_DECODER = msgspec.json.Decoder(_ProbeContentRecord)
+
+
+class _LegacyWorkspaceProvenance(msgspec.Struct):
+    schema_version: int
+    report_date: date
+    prepared_at: datetime
 
 
 def default_source_specs(
@@ -602,9 +612,12 @@ def _probe_source_file(
         for line in handle:
             record = _probe_record_from_line(line)
             if record is None:
+                raw_record = _json_object_from_line(line.decode("utf-8", errors="replace"))
+                if source == "codex" and raw_record is not None and _is_report_metadata(raw_record):
+                    return False
                 candidate_root = True
                 continue
-            if _probe_is_subagent(record, source):
+            if _probe_is_excluded_session(record, source):
                 return False
             if _probe_is_target_trigger(record, line, source, target):
                 candidate_root = True
@@ -612,18 +625,64 @@ def _probe_source_file(
     return candidate_root
 
 
-def _probe_is_subagent(record: _ProbeRecord, source: SourceName) -> bool:
+def _probe_is_excluded_session(record: _ProbeRecord, source: SourceName) -> bool:
     if source == "claude-code":
         return record.is_sidechain is True
     payload = record.payload
     return (
         record.type == "session_meta"
         and payload is not None
-        and _is_codex_subagent(
-            thread_source=payload.thread_source,
-            originator=payload.originator,
-            source=payload.source,
+        and (
+            _is_codex_subagent(
+                thread_source=payload.thread_source,
+                originator=payload.originator,
+                source=payload.source,
+            )
+            or _is_report_session(
+                originator=payload.originator,
+                cwd=payload.cwd,
+                timestamp=_parse_timestamp(record.timestamp) or _parse_timestamp(payload.timestamp),
+            )
         )
+    )
+
+
+def _is_report_metadata(record: JsonObject) -> bool:
+    payload = _object_value(record, "payload")
+    return (
+        _string_value(record, "type") == "session_meta"
+        and payload is not None
+        and _is_report_session(
+            originator=_string_value(payload, "originator"),
+            cwd=_string_value(payload, "cwd"),
+            timestamp=_record_timestamp("codex", record),
+        )
+    )
+
+
+def _is_report_session(
+    *, originator: str | None, cwd: str | None, timestamp: datetime | None
+) -> bool:
+    if originator == CODEX_REPORT_ORIGINATOR:
+        return True
+    if originator != "codex_python_sdk" or cwd is None or timestamp is None:
+        return False
+    workspace = Path(cwd)
+    if not workspace.is_absolute():
+        return False
+    try:
+        metadata = msgspec.json.decode(
+            (workspace / "metadata.json").read_bytes(), type=_LegacyWorkspaceProvenance
+        )
+        agents = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeError, msgspec.DecodeError):
+        return False
+    return (
+        metadata.schema_version in (1, 2, WORKSPACE_SCHEMA_VERSION)
+        and metadata.report_date.isoformat() == workspace.name
+        and metadata.prepared_at.tzinfo is not None
+        and metadata.prepared_at <= timestamp
+        and GENERATED_AGENTS_MARKER in agents
     )
 
 
@@ -726,7 +785,7 @@ def _parse_session_file(
     state = _ParseState(
         source_path=source_path,
         source=spec.source,
-        is_subagent=_path_identifies_subagent_session(
+        is_excluded=_path_identifies_subagent_session(
             source_path=source_path,
             source=spec.source,
         ),
@@ -767,7 +826,7 @@ def _parse_session_file(
         source=spec.source,
         total_lines=len(lines),
     )
-    if state.is_subagent or not turns:
+    if state.is_excluded or not turns:
         return None
 
     source_session_id = _source_session_id_for_state(state)
@@ -820,7 +879,7 @@ class _TriggerLine:
 class _ParseState:
     source_path: Path
     source: SourceName
-    is_subagent: bool
+    is_excluded: bool
     source_session_id: str | None = None
     forked_from_id: str | None = None
     session_metadata_count: int = 0
@@ -978,7 +1037,7 @@ def _record_session_metadata(state: _ParseState, record: JsonObject) -> None:
         _record_codex_metadata(state, record)
     else:
         if _bool_value(record, "isSidechain"):  # pragma: no cover
-            state.is_subagent = True
+            state.is_excluded = True
         cwd = _string_value(record, "cwd")
         if cwd is not None and state.claude_cwd is None:
             state.claude_cwd = cwd
@@ -995,12 +1054,12 @@ def _record_codex_metadata(state: _ParseState, record: JsonObject) -> None:
         source_session_id = _string_value(payload, "id")
         if source_session_id is not None:
             state.source_session_id = source_session_id
-        if _is_codex_subagent(
+        if _is_report_metadata(record) or _is_codex_subagent(
             thread_source=_string_value(payload, "thread_source"),
             originator=_string_value(payload, "originator"),
             source=payload.get("source"),
         ):
-            state.is_subagent = True
+            state.is_excluded = True
         cwd = _string_value(payload, "cwd")
         if cwd is not None:
             state.codex_session_meta_cwd = cwd

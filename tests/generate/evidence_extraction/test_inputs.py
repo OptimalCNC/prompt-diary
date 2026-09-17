@@ -17,16 +17,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_inputs_strip_turns_from_index_record(tmp_path: Path) -> None:
+def test_inputs_include_only_model_relevant_metadata(tmp_path: Path) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     inputs = build_session_extraction_inputs(
         workspace_path=workspace, project_key=PROJECT_KEY, session_ref=SESSION_REF
     )
 
     record = json.loads(inputs.session_index_record)
-    assert "turns" not in record
-    assert record["session_ref"] == SESSION_REF
-    assert json.loads(inputs.project_json)["project_key"] == PROJECT_KEY
+    assert record == {"source": "codex"}
+    assert json.loads(inputs.project_json) == {"project_label": "ReportGenerator"}
+    assert inputs.project_key == PROJECT_KEY
+    assert inputs.session_ref == SESSION_REF
 
 
 def test_inputs_preserve_target_turn_spans_in_order(tmp_path: Path) -> None:

@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Literal, cast
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+CODEX_REPORT_ORIGINATOR = "prompt_diary"
+"""Persisted Codex client identity for report generation, independent of workspace location."""
+
 _CODEX_SOURCE_CONTEXT_PREFIXES = (
     "<environment_context>",
     "# AGENTS.md",

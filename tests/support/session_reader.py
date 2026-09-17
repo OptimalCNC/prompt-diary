@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Mapping
-from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -19,6 +18,7 @@ from prompt_diary.generate.evidence_extraction.session_reader import (
     ReadSessionLinesInvalidResult,
     ReadSessionLinesResult,
     read_session_lines,
+    serialize_read_result,
 )
 
 if TYPE_CHECKING:
@@ -179,11 +179,7 @@ def read_full_records(
             else:
                 fragments.append(record.content)
                 if record.offset + len(record.content) == record.total_chars:
-                    records.append(
-                        FullRecord(
-                            record.line, "".join(fragments), record.raw_bytes, record.raw_sha256
-                        )
-                    )
+                    records.append(FullRecord(record.line, "".join(fragments)))
                     fragments.clear()
         cursor = page.next_cursor
         if cursor is None:
@@ -192,17 +188,12 @@ def read_full_records(
 
 
 def result_to_dict(result: object) -> dict[str, Any]:
-    """Serialize a reader result into the JSON wire shape FastMCP emits for the same dataclass.
-
-    The MCP wrapper returns the dataclass result and lets FastMCP serialize it, so this mirror
-    must match that serialization exactly for invalid-parity assertions to hold. A parsed JSON
-    ``Mapping`` (the decoded MCP content block) passes through unchanged.
-    """
+    """Serialize a reader result to the same sparse JSON wire shape the MCP wrapper emits."""
     if isinstance(
         result,
         (ReadSessionLinesCompactResult, ReadSessionLinesFullResult, ReadSessionLinesInvalidResult),
     ):
-        return cast("dict[str, Any]", json.loads(json.dumps(asdict(result))))
+        return cast("dict[str, Any]", json.loads(serialize_read_result(result)))
     if isinstance(result, str):
         return cast("dict[str, Any]", json.loads(result))
     if isinstance(result, Mapping):

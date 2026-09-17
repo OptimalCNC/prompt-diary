@@ -89,9 +89,17 @@ def test_each_assignment_has_its_own_complete_conversation(tmp_path: Path) -> No
 
     assert [len(runner.prompts) for runner in factory.runners] == [1, 1]
     for runner in factory.runners:
-        assert "## Role" in runner.prompts[0]
+        instructions = runner.config.base_instructions
+        assert instructions is not None
+        assert "## Role" in instructions
+        assert "## Role" not in runner.prompts[0]
+        assert PROJECT_KEY not in instructions
+        assert runner.config.mcp_tools == ("read_session_lines", "write_evidence")
         assert f"- Project key: {PROJECT_KEY}" in runner.prompts[0]
         assert f"- Session reference: {SESSION_REF}" in runner.prompts[0]
+    assert (
+        factory.runners[0].config.base_instructions == factory.runners[1].config.base_instructions
+    )
     assert factory.runners[0].target_turn is not None
     assert factory.runners[0].target_turn["turn_ref"] == "T0001"
     assert factory.runners[1].target_turn is not None

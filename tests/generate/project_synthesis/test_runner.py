@@ -89,6 +89,13 @@ def test_runner_covers_every_turn_and_writes_envelope(tmp_path: Path) -> None:
 
     assert result.status == "success"
     assert len(factory.runners) == 1
+    runner = factory.runners[0]
+    assert runner.config.mcp_tools == ("write_work_item",)
+    assert runner.config.base_instructions is not None
+    assert "## Work Item Shape" in runner.config.base_instructions
+    assert "## Work Item Shape" not in runner.prompts[0]
+    assert PROJECT_KEY not in runner.config.base_instructions
+    assert PROJECT_KEY in runner.prompts[0]
     envelope = load_project_synthesis(workspace)
     covered = {
         (ref["session_ref"], ref["turn_ref"])

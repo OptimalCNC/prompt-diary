@@ -22,7 +22,10 @@ from prompt_diary.generate.evidence_extraction.completeness import (
 from prompt_diary.generate.evidence_extraction.inputs import build_session_extraction_inputs
 from prompt_diary.generate.evidence_extraction.model import new_session_card
 from prompt_diary.generate.pipeline import TaskResult, evidence_card_artifact
-from prompt_diary.generate.prompts import evidence_extractor_prompt
+from prompt_diary.generate.prompts import (
+    evidence_extractor_instructions,
+    evidence_extractor_prompt,
+)
 from prompt_diary.progress.events import TurnAdvanced
 from prompt_diary.progress.reporter import NULL_REPORTER
 
@@ -88,6 +91,8 @@ class EvidenceExtractionRunner:
                     approval_mode="auto_review",
                     sandbox="workspace-write",
                     reasoning_effort=self.settings.reasoning_effort,
+                    base_instructions=evidence_extractor_instructions(),
+                    mcp_tools=("read_session_lines", "write_evidence"),
                 )
             )
             prompt = evidence_extractor_prompt(

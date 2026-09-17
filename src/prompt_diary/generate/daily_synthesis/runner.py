@@ -46,9 +46,13 @@ from prompt_diary.generate.daily_synthesis.inputs import (
 from prompt_diary.generate.daily_synthesis.model import REPORTABLE_WORK_ITEM_KINDS
 from prompt_diary.generate.pipeline import TaskResult
 from prompt_diary.generate.prompts import (
+    engagement_instructions,
     engagement_prompt,
+    project_summary_instructions,
     project_summary_prompt,
+    report_title_instructions,
     report_title_prompt,
+    team_learning_instructions,
     team_learning_prompt,
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
@@ -122,7 +126,12 @@ class DailySynthesisRunner:
         inputs = build_project_summary_inputs(
             workspace_path=workspace_path, project_key=project_key
         )
-        runner = await self._new_runner(workspace_path, self.settings.project_summary)
+        runner = await self._new_runner(
+            workspace_path,
+            self.settings.project_summary,
+            instructions=project_summary_instructions(),
+            writer="write_project_summary",
+        )
         prompt = project_summary_prompt(
             project_key=inputs.project_key,
             project_json=inputs.project_json,
@@ -147,7 +156,12 @@ class DailySynthesisRunner:
         if _slot_status(workspace_path, "report_title").complete:
             return None
         inputs = build_report_title_inputs(workspace_path=workspace_path)
-        runner = await self._new_runner(workspace_path, self.settings.report_title)
+        runner = await self._new_runner(
+            workspace_path,
+            self.settings.report_title,
+            instructions=report_title_instructions(),
+            writer="write_report_title",
+        )
         prompt = report_title_prompt(context=inputs.context)
         retry = await self._run_pass(
             runner=runner,
@@ -167,7 +181,12 @@ class DailySynthesisRunner:
         inputs: Any | None = None
         if not _slot_status(workspace_path, "engagement_assessment").complete:
             inputs = build_report_inputs(workspace_path=workspace_path)
-            engagement_runner = await self._new_runner(workspace_path, self.settings.engagement)
+            engagement_runner = await self._new_runner(
+                workspace_path,
+                self.settings.engagement,
+                instructions=engagement_instructions(),
+                writer="write_engagement",
+            )
             engagement = engagement_prompt(
                 work_items=inputs.work_items,
                 source_user_messages=inputs.source_user_messages,
@@ -188,7 +207,12 @@ class DailySynthesisRunner:
         if not _slot_status(workspace_path, "team_learning").complete:
             if inputs is None:
                 inputs = build_report_inputs(workspace_path=workspace_path)
-            learning_runner = await self._new_runner(workspace_path, self.settings.team_learning)
+            learning_runner = await self._new_runner(
+                workspace_path,
+                self.settings.team_learning,
+                instructions=team_learning_instructions(),
+                writer="write_team_learning",
+            )
             learning = team_learning_prompt(
                 work_items=inputs.work_items,
                 source_user_messages=inputs.source_user_messages,
@@ -226,7 +250,14 @@ class DailySynthesisRunner:
             retry_policy=self.retry_policy,
         )
 
-    async def _new_runner(self, workspace_path: Path, settings: AgentSettings) -> AgentRunner:
+    async def _new_runner(
+        self,
+        workspace_path: Path,
+        settings: AgentSettings,
+        *,
+        instructions: str,
+        writer: str,
+    ) -> AgentRunner:
         return await self.agent_factory.runner(
             AgentConfig(
                 working_directory=workspace_path,
@@ -234,6 +265,8 @@ class DailySynthesisRunner:
                 approval_mode="auto_review",
                 sandbox="workspace-write",
                 reasoning_effort=settings.reasoning_effort,
+                base_instructions=instructions,
+                mcp_tools=(writer,),
             )
         )
 

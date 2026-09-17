@@ -179,6 +179,13 @@ variant under `source.subagent`, `thread_source = "subagent"`, and `originator =
 Claude Code records with `isSidechain = true` also identify child sessions. Child transcript bodies
 are not parsed for evidence or copied, even when the parent refers to them.
 
+Prompt Diary generation sessions carry Codex's persisted `originator = "prompt_diary"` marker and
+are excluded at discovery, even when a later invocation uses another reports root. Logs remain in
+normal Codex session storage for debugging. Older `codex_python_sdk` sessions are also excluded
+when their working directory has matching prepared-workspace metadata and the generated language
+AGENTS marker, with preparation preceding the session. Missing provenance preserves an untagged
+session; the existing exclusion for the current reports root remains in effect.
+
 A human-authored trigger is an externally authored user message, correction, approval, resume
 action, or explicit human-supplied context that asks or directs the agent to act.
 [Source Session Formats](./source-session-formats.md) documents the per-source record structures

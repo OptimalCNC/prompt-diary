@@ -41,10 +41,12 @@ class FakeCodexConfig:
         codex_bin: str | None,
         config_overrides: tuple[str, ...],
         env: dict[str, str] | None,
+        client_name: str,
     ) -> None:
         self.codex_bin = codex_bin
         self.config_overrides = config_overrides
         self.env = env
+        self.client_name = client_name
 
 
 class FakeSandbox:
@@ -247,6 +249,7 @@ def test_backend_enter_exit_and_runner_config_pass_through(
                     base_instructions="base",
                     developer_instructions="developer",
                     personality="concise",
+                    mcp_tools=("read_session_lines", "write_evidence"),
                 ),
             )
             result = await runner.turn("Generate the report.", output_schema=output_schema)
@@ -267,6 +270,7 @@ def test_backend_enter_exit_and_runner_config_pass_through(
     assert app_config.codex_bin == str(codex_bin)
     assert app_config.config_overrides == ("mcp.prompt_diary={}",)
     assert app_config.env == {"PROMPT_DIARY": "1"}
+    assert app_config.client_name == "prompt_diary"
     assert fake_codex.thread_start_calls == [
         {
             "cwd": str(tmp_path),
@@ -277,7 +281,11 @@ def test_backend_enter_exit_and_runner_config_pass_through(
             "base_instructions": "base",
             "developer_instructions": "developer",
             "personality": "concise",
-            "config": {"model_reasoning_effort": "low"},
+            "config": {
+                "model_reasoning_effort": "low",
+                "features.code_mode.direct_only_tool_namespaces": ["mcp__prompt_diary"],
+                "mcp_servers.prompt_diary.enabled_tools": ["read_session_lines", "write_evidence"],
+            },
         }
     ]
     assert fake_codex.thread.run_calls == [

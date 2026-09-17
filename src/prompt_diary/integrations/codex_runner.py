@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeGuard, TypeVar, cast
 
 from prompt_diary.agent import AgentTurnEvent, AgentTurnResult
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.source_records import CODEX_REPORT_ORIGINATOR
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -50,6 +51,7 @@ class _CodexConfigFactory(Protocol):
         codex_bin: str | None,
         config_overrides: tuple[str, ...],
         env: dict[str, str] | None,
+        client_name: str,
     ) -> object: ...
 
 
@@ -150,6 +152,7 @@ class CodexBackend:
             codex_bin=str(self.config.codex_bin) if self.config.codex_bin is not None else None,
             config_overrides=self.config.mcp_config_overrides,
             env=dict(self.config.env_overrides) or None,
+            client_name=CODEX_REPORT_ORIGINATOR,
         )
         context = sdk_module.AsyncCodex(config=codex_config)
         self._sdk_module = sdk_module
@@ -416,9 +419,14 @@ def _load_openai_codex() -> _CodexSdkModule:
 
 
 def _thread_config(config: AgentConfig) -> JsonObject | None:
-    if config.reasoning_effort is None:
-        return None
-    return {"model_reasoning_effort": config.reasoning_effort}
+    overrides: JsonObject = {}
+    if config.reasoning_effort is not None:
+        overrides["model_reasoning_effort"] = config.reasoning_effort
+    if config.mcp_tools:
+        # Code-mode models otherwise defer these schemas behind tool discovery.
+        overrides["features.code_mode.direct_only_tool_namespaces"] = ["mcp__prompt_diary"]
+        overrides["mcp_servers.prompt_diary.enabled_tools"] = list(config.mcp_tools)
+    return overrides or None
 
 
 def _coerce_sdk_enum(

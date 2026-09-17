@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     CompactRecord,
     compact_record,
-    line_provenance,
+    compact_record_to_json,
 )
 from prompt_diary.generate.evidence_extraction.session_pagination import (
     MAX_SESSION_READ_BYTES,
@@ -61,7 +61,7 @@ class SessionReadError:
 
 @dataclass(frozen=True)
 class LineRange:
-    """Inclusive 1-based physical line range that a read covered."""
+    """Inclusive 1-based physical line range requested across the cursor sequence."""
 
     start: int
     end: int
@@ -69,12 +69,10 @@ class LineRange:
 
 @dataclass(frozen=True)
 class FullRecord:
-    """One physical JSONL line returned verbatim with its provenance."""
+    """One physical JSONL line returned verbatim at its citation location."""
 
     line: int
     raw_line: str
-    raw_bytes: int
-    raw_sha256: str
 
 
 @dataclass(frozen=True)
@@ -176,7 +174,18 @@ def read_session_lines(
 
 def serialize_read_result(result: ReadSessionLinesResult) -> str:
     """Return the exact canonical JSON text budgeted by the API and emitted through MCP."""
-    return encode_read_json(asdict(result))
+    if isinstance(result, ReadSessionLinesInvalidResult):
+        return encode_read_json(asdict(result))
+    records = [
+        compact_record_to_json(record) if isinstance(record, CompactRecord) else asdict(record)
+        for record in result.records
+    ]
+    return encode_read_json(
+        {
+            "records": records,
+            "next_cursor": asdict(result.next_cursor) if result.next_cursor is not None else None,
+        }
+    )
 
 
 def _compact_page(
@@ -202,7 +211,7 @@ def _compact_page(
         cursor=cursor,
         end_line=line_range.end,
         record_format="compact_json",
-        record_content=lambda record: encode_read_json(asdict(record)),
+        record_content=lambda record: encode_read_json(compact_record_to_json(record)),
         encode_page=lambda records, next_cursor: serialize_read_result(
             result(records, next_cursor)
         ),
@@ -229,7 +238,7 @@ def _full_page(
 
     page = paginate_records(
         (
-            _full_record(physical_lines[line - 1], line=line)
+            FullRecord(line=line, raw_line=physical_lines[line - 1])
             for line in range(cursor.line, line_range.end + 1)
         ),
         cursor=cursor,
@@ -249,18 +258,15 @@ def _compact_records(
     physical_lines: tuple[str, ...], *, start_line: int, end_line: int, source: str
 ) -> Iterator[CompactRecord]:
     for index in range(start_line - 1, end_line):
-        yield compact_record(
+        record = compact_record(
             physical_lines[index],
             line=index + 1,
             source=source,
             previous_line=physical_lines[index - 1] if index > 0 else None,
             next_line=physical_lines[index + 1] if index + 1 < len(physical_lines) else None,
         )
-
-
-def _full_record(raw_line: str, *, line: int) -> FullRecord:
-    raw_bytes, raw_sha256 = line_provenance(raw_line)
-    return FullRecord(line=line, raw_line=raw_line, raw_bytes=raw_bytes, raw_sha256=raw_sha256)
+        if record is not None:
+            yield record
 
 
 def _validate_range(

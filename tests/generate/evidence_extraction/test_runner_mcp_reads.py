@@ -89,19 +89,39 @@ def test_runner_mock_agent_reads_via_read_session_lines_then_writes(tmp_path: Pa
         assert read.result.records, "compact read returned no records for the assigned turn"
         # Every record the agent read is an absolute physical line inside the assigned turn.
         assert all(start <= record.line <= end for record in read.result.records)
-        # The compact read returns the COMPLETE requested range, in order: exactly one record per
-        # physical line from start to end, no gaps, no subset, no reordered or wrong line numbers.
-        assert [record.line for record in read.result.records] == list(range(start, end + 1))
+        # Exhausting the requested cursor sequence establishes coverage even when compact
+        # records omit physical lines that contain only source metadata or reasoning.
+        assert (read.result.line_range.start, read.result.line_range.end) == (start, end)
+        assert read.result.next_cursor is None
     # The write the agent committed is tied to what it read: the card has both chains in order.
     card = load_evidence_card(workspace)
     assert [chain["turn_ref"] for chain in card["evidence_chains"]] == ["T0001", "T0002"]
-    # Each committed chain's citation span is the read-derived span (min/max of the lines read),
-    # which by the exact-coverage assertion above equals the turn's (start, end). This locks that
-    # the write span came from the read results, not from some unrelated source.
+    # Citations refer to the evidence actually returned, independently of cursor coverage.
     for chain in card["evidence_chains"]:
         start, end = _TURN_BOUNDS[chain["turn_ref"]]
         assert _citation_lines(chain["trigger"]) == f"{start}-{start}"
         assert _citation_lines(chain["terminal_state"]) == f"{end}-{end}"
+
+
+def test_runner_read_completes_when_last_physical_line_is_omitted(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    path = session_file_path(workspace)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[2] = '{"type":"turn_context"}'
+    lines[7] = '{"type":"turn_context"}'
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    factory = EvidenceReadingWritingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    first = factory.reads[0].result
+    assert (first.line_range.start, first.line_range.end) == (2, 8)
+    assert first.next_cursor is None
+    assert [record.line for record in first.records] == [2, 4, 5, 6, 7]
+    chain = load_evidence_card(workspace)["evidence_chains"][0]
+    assert _citation_lines(chain["trigger"]) == "2-2"
+    assert _citation_lines(chain["terminal_state"]) == "7-7"
 
 
 def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
@@ -143,7 +163,7 @@ def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
     ) -> Iterator[ReadSessionLinesCompactResult]:
         pages = tuple(original_read(self, project_key, session_ref, target_turn))
         if any(
-            isinstance(record, CompactRecord) and record.text_preview == "continue"
+            isinstance(record, CompactRecord) and record.text == "continue"
             for page in pages
             for record in page.records
         ):
@@ -172,7 +192,7 @@ def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
     assert [record.line for context in context_reads for record in context.records] == [2]
     previous_trigger = context_reads[0].records[0]
     assert isinstance(previous_trigger, CompactRecord)
-    assert previous_trigger.text_preview == (
+    assert previous_trigger.text == (
         "Please update the evidence contract docs for the MCP write surface."
     )
     continued = load_evidence_card(workspace)["evidence_chains"][1]

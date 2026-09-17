@@ -66,20 +66,30 @@ def test_disable_overrides_without_config_file_returns_empty(tmp_path: Path) -> 
     assert codex_global_mcp_disable_overrides(tmp_path) == ()
 
 
-def test_clean_startup_overrides_disable_plugins_feature_and_global_mcp(tmp_path: Path) -> None:
+def test_clean_startup_overrides_disable_unrelated_context_and_global_mcp(tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
     config.write_text('[mcp_servers.playwright]\ncommand = "npx"\n', encoding="utf-8")
 
     overrides = codex_clean_startup_overrides(tmp_path)
 
-    # Disabling the plugins feature drops the global skills catalog + skill auto-loading; it works
-    # via a bare key, unlike the per-plugin enabled override Codex silently ignores.
-    assert "features.plugins=false" in overrides
     assert "mcp_servers.playwright.enabled=false" in overrides
+    assert set(codex_clean_startup_overrides(tmp_path / "absent")) <= set(overrides)
+    assert config.read_text(encoding="utf-8") == '[mcp_servers.playwright]\ncommand = "npx"\n'
 
 
-def test_clean_startup_overrides_without_config_still_disable_plugins(tmp_path: Path) -> None:
-    assert codex_clean_startup_overrides(tmp_path) == ("features.plugins=false",)
+def test_clean_startup_overrides_preserve_auth_and_storage(tmp_path: Path) -> None:
+    assert set(codex_clean_startup_overrides(tmp_path)) == {
+        "features.memories=false",
+        "memories.use_memories=false",
+        "memories.generate_memories=false",
+        "features.plugins=false",
+        "features.apps=false",
+        "skills.include_instructions=false",
+        "agents.enabled=false",
+        "include_collaboration_mode_instructions=false",
+        "include_environment_context=false",
+        "project_doc_max_bytes=0",
+    }
 
 
 def test_default_codex_home_uses_codex_home_env(

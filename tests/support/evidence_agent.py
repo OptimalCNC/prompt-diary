@@ -218,6 +218,8 @@ class EvidenceReadingWritingAgentSessionFactory:
 
 
 def _span_from_records(pages: tuple[ReadSessionLinesCompactResult, ...]) -> tuple[int, int]:
+    assert pages
+    assert pages[-1].next_cursor is None, "assigned read has not exhausted its cursor"
     lines = [record.line for page in pages for record in page.records]
     if not lines:
         raise AssertionError(_empty_read_message())

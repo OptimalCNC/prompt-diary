@@ -9,7 +9,7 @@ import pytest
 
 from prompt_diary.agent import AgentConfig
 from prompt_diary.generate.evidence_extraction.inputs import build_session_extraction_inputs
-from prompt_diary.generate.prompts import evidence_extractor_prompt
+from prompt_diary.generate.prompts import evidence_extractor_instructions, evidence_extractor_prompt
 from prompt_diary.integrations.codex_runner import (
     CodexAgentRunner,
     CodexBackend,
@@ -219,6 +219,8 @@ def test_codex_runner_live_evidence_prompt_reads_only_via_read_session_lines(
                     working_directory=workspace,
                     approval_mode="auto_review",
                     sandbox="workspace-write",
+                    base_instructions=evidence_extractor_instructions(),
+                    mcp_tools=("read_session_lines", "write_evidence"),
                 ),
             )
             return await runner.turn(prompt, timeout_seconds=300.0)
