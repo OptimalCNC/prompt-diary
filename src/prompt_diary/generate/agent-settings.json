@@ -1,0 +1,28 @@
+{
+  "evidence_extraction": {
+    "model": "gpt-5.6-terra",
+    "reasoning_effort": "medium"
+  },
+  "project_synthesis": {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "medium"
+  },
+  "daily_synthesis": {
+    "project_summary": {
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "low"
+    },
+    "report_title": {
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "low"
+    },
+    "engagement": {
+      "model": "gpt-6-astra",
+      "reasoning_effort": "medium"
+    },
+    "team_learning": {
+      "model": "gpt-6-astra",
+      "reasoning_effort": "medium"
+    }
+  }
+}

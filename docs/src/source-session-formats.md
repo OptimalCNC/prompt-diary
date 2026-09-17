@@ -38,7 +38,7 @@ A turn typically contains two `response_item` records with `payload.role=user`. 
 source-generated context; the second is the human-authored trigger. Both have `payload.type=message`,
 so structural fields alone do not distinguish them.
 
-**Source-generated context** (not triggers) is identified by content prefix:
+**Source-generated user-shaped records** (not triggers) are identified by content prefix:
 
 | Content prefix | Meaning |
 | --- | --- |
@@ -47,19 +47,26 @@ so structural fields alone do not distinguish them.
 | `<turn_aborted>` | System notification that the user interrupted the previous turn |
 | `<subagent_notification>` | Subagent result injected as a user message for the parent agent |
 | `<INSTRUCTIONS>` | Instruction block injected by the CLI (older format variant) |
+| `A previous agent produced the plan below` | Reset-plan bootstrap prompt generated from a prior agent plan |
 
-These records carry `payload.role=user` but are authored by the CLI, not the human.
+These records carry a user-shaped role or echo, but are authored by the CLI or agent source, not the
+human.
 
 **Human-authored triggers** are detected by either:
 
-1. `event_msg` with `payload.type=user_message` — always echoes the real human prompt, never the
-   context messages. When present, this is the most reliable trigger indicator.
+1. `event_msg` with `payload.type=user_message` after source-generated prefixes have been excluded.
+   For ordinary turns this echoes the real human prompt and is the most reliable trigger indicator;
+   reset-plan bootstraps are the observed exception.
 2. `response_item` with `payload.role=user` and `payload.type=message` whose content does not match
    any source-generated prefix — this is necessary because the `event_msg` echo is absent for ~40%
    of triggers.
 
-When both records appear for the same human action, they share the same timestamp and appear on
-consecutive lines.
+A user message and its echo form one trigger only when the `response_item` is immediately followed
+by `event_msg/user_message`, both contain exactly the same complete text, and the echo timestamp is
+0–100 milliseconds later. Each record can belong to only one pair. Other adjacent user messages
+remain separate triggers, even when their text matches. Assistant echoes use the reverse order:
+`event_msg/agent_message` followed by `response_item` with the same role, text, and timestamp window.
+Unknown shapes and unproven matches remain separate records.
 
 ### Codex Turn Boundaries and Pre-Trigger Scaffolding
 
@@ -79,14 +86,20 @@ The records between `task_complete` and the next trigger are pre-trigger scaffol
 the next trigger's turn, not to the previous trigger's reactions. Target span construction must
 exclude them from the previous trigger's owned range.
 
+Source-owned result and terminal-state messages are reactions: `<subagent_notification>` and
+`<turn_aborted>`, including their `event_msg/user_message` echoes, stay in the preceding human
+trigger's span. They do not start human turns and must not be trimmed as setup context.
+
 ### Codex Subagent Sessions
 
 Codex subagent sessions are identified by `session_meta.payload.thread_source == "subagent"` or by
-the presence of `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`. Subagent
-sessions are not scanned for human triggers during root session discovery. Codex sessions launched
+any string or object variant under `session_meta.payload.source.subagent`, including guardian,
+review, compaction, and spawned work agents. Preparation stops scanning when that metadata is
+encountered and excludes the child transcript from the report workspace. Codex sessions launched
 from Claude Code through the Codex companion are identified by
 `session_meta.payload.originator == "Claude Code"` and are treated the same way: their prompt is an
-agent-owned delegation, not a human-authored root trigger.
+agent-owned delegation, not a human-authored root trigger. Delegation results already recorded in
+the parent transcript remain available as evidence of the parent's reactions.
 
 ## Claude Code Session Structure
 
@@ -119,16 +132,21 @@ A Claude Code human trigger is a record where all of these hold:
 | `message.role` | `"user"` | Confirms it carries a user message |
 | `sourceToolAssistantUUID` | absent | Tool results have this field; triggers do not |
 | `isSidechain` | `false` or absent | Sidechain records belong to subagent sessions |
+| `isMeta` | `false` or absent | Meta messages are source-generated context |
+| `isCompactSummary` | `false` or absent | Compaction summaries are source-generated context |
+| `message.content` | not a nonempty list containing only `tool_result` items | Tool-only results are agent reactions, including records without `sourceToolAssistantUUID` |
 
-All 486 triggers observed across 52 real sessions also have `userType=external` and a `promptId`
-field, but the four fields above are sufficient for detection.
+All 486 triggers observed across the original 52-session sample also have `userType=external` and a
+`promptId` field. Neither field is required for trigger detection. Messages mixing tool results with
+new human text remain triggers unless explicit source metadata identifies them as machine-authored.
 
 Records with `type=user` and `sourceToolAssistantUUID` present are tool results — the assistant
 invoked a tool, and the result is delivered as a `role=user` message. These are agent reactions, not
 human triggers.
 
 Claude Code tool results from the Codex companion include a `[codex] Thread ready (<thread-id>)`
-line. That thread id associates the launched Codex transcript with the Claude turn that invoked it.
+line. These parent-visible results remain part of the Claude turn; the launched Codex transcript
+is excluded from report input.
 
 ### Claude Code Turn Boundaries
 
@@ -144,8 +162,9 @@ not reactions to the previous trigger.
 ### Claude Code Subagent Sessions
 
 Claude Code subagent (sidechain) sessions are identified by path (`subagents/` directory component)
-or by `isSidechain=true` on records. Sidechain sessions are not scanned for human triggers during
-root session discovery.
+or by `isSidechain=true` on records. Preparation skips child paths without opening them and stops
+scanning other files when sidechain metadata appears. Child transcripts are not copied into the
+report workspace.
 
 ## Design Decisions
 
@@ -153,10 +172,12 @@ root session discovery.
 
 Codex injects source-generated context as `response_item` records with `payload.role=user`, making
 them structurally identical to human-authored triggers. The `event_msg/user_message` echo is the
-cleanest discriminator (it only echoes real human prompts), but it is absent for ~40% of triggers.
-Content-prefix detection handles the remaining cases. The known prefixes (`<environment_context>`,
-`# AGENTS.md`, `<turn_aborted>`, `<subagent_notification>`) are stable CLI conventions unlikely to
-appear in human-authored prompts.
+cleanest discriminator for ordinary turns, but it is absent for ~40% of triggers and can also echo
+source-generated context. Content-prefix detection applies to both record forms. The known
+prefixes include `<environment_context>`, `# AGENTS.md`, `<turn_aborted>`, `<subagent_notification>`,
+`<INSTRUCTIONS>`, and `A previous agent produced the plan below`. Preparation excludes these
+source-generated records from human-trigger detection before evidence extraction. Later genuine
+human messages in the same session remain eligible triggers.
 
 ### Why trigger-owned spans instead of timestamp-per-line
 

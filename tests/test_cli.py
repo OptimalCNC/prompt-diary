@@ -7,9 +7,10 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
-import click
 import pytest
 import typer
+from typer import _click as click
+from typer.core import TyperArgument, TyperCommand
 from typer.testing import CliRunner
 
 import prompt_diary.cli as cli_module
@@ -422,8 +423,8 @@ def test_generate_render_help_shows_default_notion_publish_from_env(
     ) in help_text
 
 
-def test_refresh_dynamic_default_help_ignores_click_arguments() -> None:
-    argument = click.Argument(["name"])
+def test_refresh_dynamic_default_help_ignores_arguments() -> None:
+    argument = TyperArgument(param_decls=["name"])
 
     common_cmd.refresh_dynamic_default_help([argument])
 
@@ -1355,7 +1356,7 @@ def test_generate_phase_target_options_without_group_context_keeps_subcommand_op
         ),
         reports_root=tmp_path / "reports",
     )
-    ctx = click.Context(click.Command("generate"))
+    ctx = click.Context(TyperCommand("generate"))
 
     assert generate_cmd._phase_target_options(ctx, target_options) is target_options  # pyright: ignore[reportPrivateUsage, reportArgumentType]
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.workspace import load_prepared_workspace
@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from prompt_diary.generate.workspace import (
         IndexedSession,
+        IndexedTurn,
         LineSpan,
         PreparedProject,
         PreparedWorkspace,
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ExtractionTurn:
-    """One assigned turn with its verified span and faithful target-turn JSON."""
+    """One assigned turn with its verified span and target-turn JSON."""
 
     turn_ref: str
     span: LineSpan
@@ -51,26 +52,42 @@ def build_session_extraction_inputs(
     project = _find_project(workspace, project_key)
     session = _find_session(project, session_ref, project_key)
 
-    project_dir = workspace_path / "projects" / project_key
-    raw_row = _find_index_row(project_dir / "sessions.index.jsonl", session_ref)
-    raw_turns = _raw_turns_by_ref(raw_row)
-    record_without_turns = {key: value for key, value in raw_row.items() if key != "turns"}
-
     turns = tuple(
         ExtractionTurn(
             turn_ref=turn.turn_ref,
             span=turn.span,
-            target_turn_json=json.dumps(raw_turns[turn.turn_ref], indent=2, ensure_ascii=False),
+            target_turn_json=_target_turn_json(
+                turn, session.turns[index - 1] if index > 0 else None
+            ),
         )
-        for turn in session.turns
+        for index, turn in enumerate(session.turns)
     )
     return SessionExtractionInputs(
         project_key=project_key,
         session_ref=session_ref,
-        project_json=_normalized_json(project_dir / "project.json"),
-        session_index_record=json.dumps(record_without_turns, indent=2, ensure_ascii=False),
+        project_json=json.dumps(
+            {"project_label": project.project_label},
+            indent=2,
+            ensure_ascii=False,
+        ),
+        session_index_record=json.dumps({"source": session.source}, indent=2, ensure_ascii=False),
         turns=turns,
     )
+
+
+def _target_turn_json(turn: IndexedTurn, previous: IndexedTurn | None) -> str:
+    assignment = _turn_locator(turn)
+    if previous is not None:
+        assignment["previous_turn"] = _turn_locator(previous)
+    return json.dumps(assignment, indent=2, ensure_ascii=False)
+
+
+def _turn_locator(turn: IndexedTurn) -> dict[str, object]:
+    return {
+        "turn_ref": turn.turn_ref,
+        "turn_start_line": turn.span.start,
+        "turn_end_line": turn.span.end,
+    }
 
 
 def _find_project(workspace: PreparedWorkspace, project_key: str) -> PreparedProject:
@@ -89,31 +106,6 @@ def _find_session(
     if session is None:
         raise PromptDiaryError(_unknown_session_message(session_ref, project_key))
     return session
-
-
-def _find_index_row(index_path: Path, session_ref: str) -> dict[str, Any]:
-    rows_by_ref: dict[str, dict[str, Any]] = {}
-    for line in index_path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            row = cast("dict[str, Any]", json.loads(line))
-            rows_by_ref[cast("str", row["session_ref"])] = row
-    # session_ref was already validated to exist by load_prepared_workspace, which parsed this
-    # same index; we re-read only to keep raw row fields the typed model drops (e.g. per-turn
-    # target_subagents).
-    return rows_by_ref[session_ref]
-
-
-def _raw_turns_by_ref(raw_row: dict[str, Any]) -> dict[str, Any]:
-    turns = raw_row.get("turns")
-    rows = cast("list[Any]", turns) if isinstance(turns, list) else []
-    return {
-        cast("dict[str, Any]", turn)["turn_ref"]: turn for turn in rows if isinstance(turn, dict)
-    }
-
-
-def _normalized_json(path: Path) -> str:
-    raw: object = json.loads(path.read_text(encoding="utf-8"))
-    return json.dumps(raw, indent=2, ensure_ascii=False)
 
 
 def _unknown_project_message(project_key: str) -> str:

@@ -22,11 +22,10 @@ Prompt Diary 会从本地助手会话历史准备有边界的工作区，并生�
 通过 PyPI 把 Prompt Diary 安装为隔离的 `uv` 工具：
 
 ```bash
-uv tool install --prerelease=allow prompt-diary
+uv tool install prompt-diary
 ```
 
-Prompt Diary 依赖 Codex Python SDK 来生成由代理支持的报告。当前 Codex SDK
-打包使用预发布包，因此 `uv` 解析工具环境时需要显式允许预发布版本。
+Prompt Diary 依赖稳定版 Codex Python SDK 来生成由代理支持的报告。
 
 如果希望把报告发布到 Notion，先配置发布信息：
 

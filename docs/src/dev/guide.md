@@ -12,13 +12,11 @@ verification, debugging, and maintainer-only commands out of it.
 Set up the development environment:
 
 ```bash
-uv sync --prerelease=allow
+uv sync
 ```
 
-Prompt Diary requires the published `openai-codex` Python SDK. The current SDK packaging uses
-prerelease packages, so local dependency resolution needs `--prerelease=allow`. Prompt Diary starts
-the SDK against the local `codex` CLI found on `PATH`, so live tests reuse the same Codex
-authentication as the CLI.
+Prompt Diary requires the stable `openai-codex` Python SDK. Prompt Diary starts the SDK against
+the local `codex` CLI found on `PATH`, so live tests reuse the same Codex authentication as the CLI.
 
 The repository also includes an optional Ubuntu 24.04 devcontainer. It builds from
 `.devcontainer/Dockerfile`, installs the project with `uv sync --locked --python 3.10`, and includes
@@ -44,7 +42,7 @@ Standalone generation phase commands are covered in the
 Install the local checkout as an isolated uv tool:
 
 ```bash
-uv tool install --prerelease=allow .
+uv tool install .
 ```
 
 ## Dependencies

@@ -7,19 +7,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
+from pydantic import TypeAdapter
 
-from prompt_diary.generate.evidence_extraction.session_compaction import compact_record_to_json
+from prompt_diary.generate.evidence_extraction.session_compaction import CompactRecord
 from prompt_diary.generate.evidence_extraction.session_reader import (
     FullRecord,
+    ReadCursor,
     ReadSessionLinesCompactResult,
     ReadSessionLinesFullResult,
     ReadSessionLinesInvalidResult,
     ReadSessionLinesResult,
     read_session_lines,
+    serialize_read_result,
 )
 
 if TYPE_CHECKING:
-    from prompt_diary.generate.evidence_extraction.session_compaction import CompactRecord
     from prompt_diary.generate.evidence_extraction.session_reader import SessionReadError
 
 PROJECT_KEY = "ReportGenerator-e6ff7eeda632"
@@ -86,6 +88,7 @@ def call_read_session_lines(
     start_line: int,
     end_line: int,
     mode: Literal["compact", "full"] = "compact",
+    cursor: ReadCursor | None = None,
 ) -> ReadSessionLinesResult:
     return read_session_lines(
         workspace_path=workspace_path,
@@ -94,6 +97,7 @@ def call_read_session_lines(
         start_line=start_line,
         end_line=end_line,
         mode=mode,
+        cursor=cursor,
     )
 
 
@@ -115,54 +119,86 @@ def compact_records_by_line(ok: ReadSessionLinesCompactResult) -> dict[int, Comp
     ``ok.records`` is already ``tuple[CompactRecord, ...]`` thanks to the discriminated result type,
     so no per-element narrowing is needed here.
     """
-    return {record.line: record for record in ok.records}
+    records: dict[int, CompactRecord] = {}
+    for record in ok.records:
+        assert isinstance(record, CompactRecord), "expected complete compact records in this page"
+        records[record.line] = record
+    return records
+
+
+def read_compact_records(
+    *, workspace_path: Path, start_line: int, end_line: int
+) -> tuple[CompactRecord, ...]:
+    records: list[CompactRecord] = []
+    fragments: list[str] = []
+    cursor = None
+    while True:
+        page = expect_compact(
+            call_read_session_lines(
+                workspace_path=workspace_path,
+                start_line=start_line,
+                end_line=end_line,
+                cursor=cursor,
+            )
+        )
+        for record in page.records:
+            if isinstance(record, CompactRecord):
+                records.append(record)
+            else:
+                fragments.append(record.content)
+                if record.offset + len(record.content) == record.total_chars:
+                    records.append(
+                        TypeAdapter(CompactRecord).validate_python(json.loads("".join(fragments)))
+                    )
+                    fragments.clear()
+        cursor = page.next_cursor
+        if cursor is None:
+            assert not fragments
+            return tuple(records)
+
+
+def read_full_records(
+    *, workspace_path: Path, start_line: int, end_line: int
+) -> tuple[FullRecord, ...]:
+    records: list[FullRecord] = []
+    fragments: list[str] = []
+    cursor = None
+    while True:
+        page = expect_full(
+            call_read_session_lines(
+                workspace_path=workspace_path,
+                start_line=start_line,
+                end_line=end_line,
+                mode="full",
+                cursor=cursor,
+            )
+        )
+        for record in page.records:
+            if isinstance(record, FullRecord):
+                records.append(record)
+            else:
+                fragments.append(record.content)
+                if record.offset + len(record.content) == record.total_chars:
+                    records.append(FullRecord(record.line, "".join(fragments)))
+                    fragments.clear()
+        cursor = page.next_cursor
+        if cursor is None:
+            assert not fragments
+            return tuple(records)
 
 
 def result_to_dict(result: object) -> dict[str, Any]:
-    """Serialize a reader result into the JSON wire shape FastMCP emits for the same dataclass.
-
-    The MCP wrapper returns the dataclass result and lets FastMCP serialize it, so this mirror
-    must match that serialization exactly for invalid-parity assertions to hold. A parsed JSON
-    ``Mapping`` (the decoded MCP content block) passes through unchanged.
-    """
-    if isinstance(result, ReadSessionLinesCompactResult):
-        return {
-            "status": result.status,
-            "project_key": result.project_key,
-            "session_ref": result.session_ref,
-            "line_range": {"start": result.line_range.start, "end": result.line_range.end},
-            "mode": result.mode,
-            "records": [compact_record_to_json(record) for record in result.records],
-        }
-    if isinstance(result, ReadSessionLinesFullResult):
-        return {
-            "status": result.status,
-            "project_key": result.project_key,
-            "session_ref": result.session_ref,
-            "line_range": {"start": result.line_range.start, "end": result.line_range.end},
-            "mode": result.mode,
-            "records": [_full_record_to_json(record) for record in result.records],
-        }
-    if isinstance(result, ReadSessionLinesInvalidResult):
-        return {
-            "status": result.status,
-            "errors": [
-                {"field": error.field, "message": error.message, "hint": error.hint}
-                for error in result.errors
-            ],
-        }
+    """Serialize a reader result to the same sparse JSON wire shape the MCP wrapper emits."""
+    if isinstance(
+        result,
+        (ReadSessionLinesCompactResult, ReadSessionLinesFullResult, ReadSessionLinesInvalidResult),
+    ):
+        return cast("dict[str, Any]", json.loads(serialize_read_result(result)))
+    if isinstance(result, str):
+        return cast("dict[str, Any]", json.loads(result))
     if isinstance(result, Mapping):
         return dict(cast("Mapping[str, Any]", result))
     pytest.fail(f"result must be a read session lines result or mapping, got {type(result)!r}")
-
-
-def _full_record_to_json(record: FullRecord) -> dict[str, Any]:
-    return {
-        "line": record.line,
-        "raw_line": record.raw_line,
-        "raw_bytes": record.raw_bytes,
-        "raw_sha256": record.raw_sha256,
-    }
 
 
 def assert_read_invalid(

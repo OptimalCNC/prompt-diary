@@ -37,15 +37,9 @@ like this:
 │               ├── sessions.index.jsonl   # copied session inventory and target spans
 │               ├── sessions/
 │               │   ├── codex/
-│               │   │   ├── 019e1bb6-620a-7462-9fb0-d28c3acef59d.jsonl
-│               │   │   └── subagents/
-│               │   │       └── 019e1bb6-620a-7462-9fb0-d28c3acef59d/
-│               │   │           └── 019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d.jsonl
+│               │   │   └── 019e1bb6-620a-7462-9fb0-d28c3acef59d.jsonl
 │               │   └── claude-code/
-│               │       ├── 3e1dcfb6-32e7-4059-9d1c-5fddc8b8d0c3.jsonl
-│               │       └── subagents/
-│               │           └── 3e1dcfb6-32e7-4059-9d1c-5fddc8b8d0c3/
-│               │               └── agent-a9636c61b58788670.jsonl
+│               │       └── 3e1dcfb6-32e7-4059-9d1c-5fddc8b8d0c3.jsonl
 ```
 
 The reports root defaults to a per-user data directory (`~/.local/share/prompt-diary/` on Linux;
@@ -65,9 +59,8 @@ root. Those sessions are Prompt Diary's own generation side effects, not user-au
 
 Copied session files keep their source filenames. The examples above use UUID-based filenames
 because both Codex and Claude Code identify local session transcript files by session id rather
-than by report date. Source-native subagent transcripts are copied under
-`sessions/<source>/subagents/<parent-session-id>/` when they are associated with a copied parent
-session.
+than by report date. Only root session transcripts are copied. Delegation prompts, tool results,
+and completion notifications already recorded in a parent session remain available as evidence.
 
 The workspace boundary is an intended-input boundary, not a security sandbox. This design does not
 require filesystem or network isolation.
@@ -110,7 +103,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "report_date": "2026-05-12",
   "timezone": "Asia/Shanghai",
   "status": "final",
@@ -128,6 +121,9 @@ flowchart LR
 
 Rules:
 
+- `schema_version` is `3`. Preparation reuse and generation reject older workspaces, whose indexes
+  may include subagent sessions. Run `prompt-diary prepare --date YYYY-MM-DD --timezone Area/City
+  --force` to rebuild them from source histories.
 - `report_window_utc` is the canonical serialized trigger-inclusion boundary.
 - `report_window_local` is the human-facing period shown in the report. Do not render a
   `00:00Z` to next-day `00:00Z` report window unless the requested timezone is UTC.
@@ -162,7 +158,7 @@ Each project folder contains `project.json`.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator"
 }
@@ -176,10 +172,19 @@ belong in `project.json`.
 
 Adapters parse source-specific JSONL records enough to identify human-authored triggers, copy
 sessions, and create the session index. Session discovery targets only root/main assistant
-sessions. Source-native subagent sessions and agent-invoked child sessions are skipped during
-initial discovery and are not copied merely because they contain target-window timestamps. A child
-session is copied only when an indexed parent session references it through a spawn/result
-association inside that parent session's target span.
+sessions. Source-native subagent sessions and agent-invoked child sessions are excluded from the
+workspace. Claude Code child paths are skipped without opening them; other files are read only
+until metadata identifies them as children. Codex subagent metadata includes every string or object
+variant under `source.subagent`, `thread_source = "subagent"`, and `originator = "Claude Code"`.
+Claude Code records with `isSidechain = true` also identify child sessions. Child transcript bodies
+are not parsed for evidence or copied, even when the parent refers to them.
+
+Prompt Diary generation sessions carry Codex's persisted `originator = "prompt_diary"` marker and
+are excluded at discovery, even when a later invocation uses another reports root. Logs remain in
+normal Codex session storage for debugging. Older `codex_python_sdk` sessions are also excluded
+when their working directory has matching prepared-workspace metadata and the generated language
+AGENTS marker, with preparation preceding the session. Missing provenance preserves an untagged
+session; the existing exclusion for the current reports root remains in effect.
 
 A human-authored trigger is an externally authored user message, correction, approval, resume
 action, or explicit human-supplied context that asks or directs the agent to act.
@@ -199,16 +204,29 @@ Malformed JSONL lines are never standalone evidence for a work claim. The adapte
 malformed and untimestamped records as preparation diagnostics, not report evidence.
 
 Copied root session files keep original source filenames and original record order under
-`sessions/<source>/`. Copied subagent files keep original source filenames under
-`sessions/<source>/subagents/<parent-session-id>/`. Adapters must preserve line numbering because
-the session index cites parent session line numbers.
+`sessions/<source>/`. Adapters must preserve line numbering because the session index cites
+root session line numbers.
+
+Before writing the workspace, preparation groups selected files by `(source, source_session_id)`.
+Files with the same bytes and project identity contribute one session, chosen by the
+lexicographically smallest absolute source path. Conflicting content or project identities fail
+preparation before workspace changes, including replacement with `--force`.
+
+For Codex root forks, an explicit `session_meta.payload.forked_from_id` and exact complete-turn
+records in a selected ancestor can prove a leading inherited prefix. Preparation compares canonical
+JSON records, including timestamps and agent reactions, across all human turns before filtering by
+report date. It stops at the first distinct turn, retains later turns, and omits an index row when
+no target-day turns remain. Missing immediate parents, cyclic or ambiguous ancestry, and malformed
+history preserve the fork's turns. A known ancestor can still prove inheritance when its own parent
+is unavailable. Retained turns keep source line numbers and receive consecutive `T0001` references;
+copied transcript bytes stay intact.
 
 ## Session Index Context (`sessions.index.jsonl`)
 
 Each project has one `sessions.index.jsonl` file. It has one JSON object per copied root session
 file in that project and is both the copied-session inventory and the trigger-owned span index.
-Subagent sessions do not get their own session index rows; they are optional context for the parent
-agent reaction that spawned or received them.
+Subagent sessions have no session index rows or child-file locators. Evidence about delegated work
+comes from the parent session's recorded prompts, results, and completion notifications.
 
 `session_ref` is unique within the project session index and deterministic for the same project
 inputs. It gives citations a short stable handle for a copied session.
@@ -223,37 +241,23 @@ Required fields:
   "session_path": "sessions/codex/019e1bb6-620a-7462-9fb0-d28c3acef59d.jsonl",
   "target_start_line": 21,
   "target_end_line": 98,
-  "subagent_path": "sessions/codex/subagents/019e1bb6-620a-7462-9fb0-d28c3acef59d",
   "turns": [
     {
       "turn_ref": "T0001",
       "turn_start_line": 21,
-      "turn_end_line": 55,
-      "target_subagents": [
-        {
-          "session_file": "019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d.jsonl",
-          "source_session_id": "019e1bb7-0c0f-74f2-a0c4-a8f5a0ef7f7d",
-          "agent_role": "explorer",
-          "parent_spawn_line": 43,
-          "parent_result_line": 51,
-          "association": "spawned_or_returned_in_target_span"
-        }
-      ]
+      "turn_end_line": 55
     },
     {
       "turn_ref": "T0002",
       "turn_start_line": 60,
-      "turn_end_line": 98,
-      "target_subagents": []
+      "turn_end_line": 98
     }
   ]
 }
 ```
 
 `session_path` is relative to the project folder and must resolve under that project's `sessions/`
-directory. `subagent_path` is relative to the project folder and names the folder containing copied
-subagent files for this parent session. If the parent has no associated copied subagents,
-`subagent_path` is `""`.
+directory.
 Downstream evidence artifacts should reference copied sessions by `session_ref`; `session_path`
 stays in the session index as the canonical copied-session locator.
 
@@ -271,27 +275,9 @@ Each `turns` item records one trigger-owned work unit inside the target span:
   inclusive. For the last trigger in a session, this extends to the end of the file. For earlier
   triggers, it ends before the pre-trigger scaffolding of the next turn (see
   [Source Session Formats](./source-session-formats.md) for scaffolding rules per source).
-- `target_subagents` lists subagent transcripts associated with this turn. Each item has the fields
-  described below. If no subagents are associated with this turn, `target_subagents` is `[]`.
 
-Each `target_subagents` item records one copied child transcript associated with its parent turn:
-
-- `session_file` is the copied source transcript filename under `subagent_path`.
-- `source_session_id` is the source-native child session id when available; otherwise use the
-  filename stem.
-- `agent_role` is the source-normalized role when available, such as `explorer` or `reviewer`;
-  otherwise it is `null`.
-- `parent_spawn_line` is the parent session line that launches the subagent and contains the
-  delegation reason or prompt. It is `null` when the spawn line is unavailable.
-- `parent_result_line` is the parent session line that receives the subagent output, completion
-  notice, or summarized result. It is `null` when the result line is unavailable.
-- `association` is `spawned_or_returned_in_target_span` when either the spawn line or result line
-  falls inside the parent turn's line range.
-
-Other parent references to the same subagent are not indexed by default. Subagent files are copied
-as richer context for parent agent reactions, not as independent report targets. Diagnostic data
-such as checksums, total line counts, event bounds, event counts, and parse warnings is not report
-input.
+Diagnostic data such as checksums, total line counts, event bounds, event counts, and parse warnings
+is not report input.
 
 Reference generation:
 
@@ -309,7 +295,10 @@ Target span and turn construction:
 - `target_start_line` is the first included turn's `turn_start_line`.
 - `target_end_line` is the last included turn's `turn_end_line`.
 - A human-authored trigger belongs to the target report date when its timestamp falls inside
-  `report_window_utc`. Each in-window trigger produces one entry in `turns`.
+  `report_window_utc`. Each in-window trigger produces one entry in `turns`. Only confirmed adjacent
+  Codex message/echo pairs share a trigger; distinct adjacent human messages remain separate.
+- Source-generated reset-plan bootstraps, meta messages, compaction summaries, and tool-only results
+  do not create turns. Later human followups in the same root session remain eligible.
 - A trigger's turn starts at the trigger line (`turn_start_line`) and ends after the agent reactions
   and outcomes caused by that trigger (`turn_end_line`), even when those reaction lines have
   timestamps outside the report window.
@@ -324,4 +313,4 @@ Target span and turn construction:
   trigger-owned work unit, preparation still records the inclusive turn it can determine
   and treats the anomaly as a preparation diagnostic.
 - No separate context index is generated. The reporter can inspect surrounding lines directly in the
-  copied root session file, and can inspect listed subagent files when richer context is useful.
+  copied root session file. Child session transcripts are outside the report evidence boundary.

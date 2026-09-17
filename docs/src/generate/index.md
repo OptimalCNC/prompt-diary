@@ -29,8 +29,8 @@ shape, and phase-local checks.
   returning success.
 - Missing, stale, or invalid prerequisite artifacts must be reported as actionable errors instead
   of causing a phase to silently re-run the whole pipeline.
-- Evidence extraction failures may be carried into project synthesis as evidence gaps only when
-  represented by durable evidence-card artifacts.
+- Project synthesis requires complete, valid evidence cards. Partial cards survive extraction
+  failure as checkpoints, and extraction must finish their missing turns before synthesis succeeds.
 - Codex-backed phases retry ordinary agent-turn failures inside the active task by re-reading their
   durable artifacts and continuing on the same agent conversation. The pipeline scheduler does not
   recover these failures by starting a new task attempt.

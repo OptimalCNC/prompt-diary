@@ -10,9 +10,9 @@ from inspect import Parameter, Signature, signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn, TypeAlias, cast, get_type_hints
 
-import click
 import typer
-from typer.core import TyperCommand, TyperGroup
+from typer import _click as click
+from typer.core import TyperCommand, TyperGroup, TyperOption
 
 import prompt_diary.targeting.resolve as target_resolution
 from prompt_diary.config import (
@@ -345,7 +345,7 @@ def refresh_dynamic_default_help(params: list[click.Parameter]) -> None:
     """Append effective runtime defaults to shared targeting option help."""
     defaults = _dynamic_default_help_by_option()
     for param in params:
-        if not isinstance(param, click.Option):
+        if not isinstance(param, TyperOption):
             continue
         if param.name == "notion":
             default_help = _notion_default_help(param)
@@ -436,7 +436,7 @@ def _reports_root_source(reports_root: Path) -> str:
     )
 
 
-def _notion_default_help(param: click.Option) -> str:
+def _notion_default_help(param: TyperOption) -> str:
     del param
     configured, reason = _notion_configuration_reason()
     if configured:

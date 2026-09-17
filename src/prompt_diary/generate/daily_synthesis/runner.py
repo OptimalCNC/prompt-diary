@@ -28,6 +28,11 @@ from prompt_diary.generate.agent_retry import (
     AgentRetryResult,
     run_agent_turn_with_resume,
 )
+from prompt_diary.generate.agent_settings import (
+    AgentSettings,
+    DailySynthesisAgentSettings,
+    load_agent_settings,
+)
 from prompt_diary.generate.daily_synthesis.build import build_daily_report
 from prompt_diary.generate.daily_synthesis.finalize import (
     FinalizeInvalidResult,
@@ -41,9 +46,13 @@ from prompt_diary.generate.daily_synthesis.inputs import (
 from prompt_diary.generate.daily_synthesis.model import REPORTABLE_WORK_ITEM_KINDS
 from prompt_diary.generate.pipeline import TaskResult
 from prompt_diary.generate.prompts import (
+    engagement_instructions,
     engagement_prompt,
+    project_summary_instructions,
     project_summary_prompt,
+    report_title_instructions,
     report_title_prompt,
+    team_learning_instructions,
     team_learning_prompt,
 )
 from prompt_diary.progress.reporter import NULL_REPORTER
@@ -57,15 +66,6 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
-DEFAULT_DAILY_SYNTHESIS_REASONING_EFFORT = "medium"
-"""Per-pass Codex reasoning effort for daily synthesis.
-
-Writing a curated, cited project summary or judgment section is comparable in depth to project
-synthesis — more judgment than evidence extraction, but not deep problem solving — so each pass pins
-a mid-level effort instead of inheriting the user's global Codex setting. It is a per-conversation
-(``AgentConfig``) value; override it by constructing the runner with ``reasoning_effort``.
-"""
-
 _REPORT_NAME = "daily-report.json"
 
 
@@ -74,7 +74,9 @@ class DailySynthesisRunner:
     """Drive the deterministic steps and agent passes that build one day's report."""
 
     agent_factory: AgentSessionFactory
-    reasoning_effort: str | None = DEFAULT_DAILY_SYNTHESIS_REASONING_EFFORT
+    settings: DailySynthesisAgentSettings = field(
+        default_factory=lambda: load_agent_settings().daily_synthesis
+    )
     retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
@@ -124,7 +126,12 @@ class DailySynthesisRunner:
         inputs = build_project_summary_inputs(
             workspace_path=workspace_path, project_key=project_key
         )
-        runner = await self._new_runner(workspace_path)
+        runner = await self._new_runner(
+            workspace_path,
+            self.settings.project_summary,
+            instructions=project_summary_instructions(),
+            writer="write_project_summary",
+        )
         prompt = project_summary_prompt(
             project_key=inputs.project_key,
             project_json=inputs.project_json,
@@ -149,7 +156,12 @@ class DailySynthesisRunner:
         if _slot_status(workspace_path, "report_title").complete:
             return None
         inputs = build_report_title_inputs(workspace_path=workspace_path)
-        runner = await self._new_runner(workspace_path)
+        runner = await self._new_runner(
+            workspace_path,
+            self.settings.report_title,
+            instructions=report_title_instructions(),
+            writer="write_report_title",
+        )
         prompt = report_title_prompt(context=inputs.context)
         retry = await self._run_pass(
             runner=runner,
@@ -169,7 +181,12 @@ class DailySynthesisRunner:
         inputs: Any | None = None
         if not _slot_status(workspace_path, "engagement_assessment").complete:
             inputs = build_report_inputs(workspace_path=workspace_path)
-            engagement_runner = await self._new_runner(workspace_path)
+            engagement_runner = await self._new_runner(
+                workspace_path,
+                self.settings.engagement,
+                instructions=engagement_instructions(),
+                writer="write_engagement",
+            )
             engagement = engagement_prompt(
                 work_items=inputs.work_items,
                 source_user_messages=inputs.source_user_messages,
@@ -190,7 +207,12 @@ class DailySynthesisRunner:
         if not _slot_status(workspace_path, "team_learning").complete:
             if inputs is None:
                 inputs = build_report_inputs(workspace_path=workspace_path)
-            learning_runner = await self._new_runner(workspace_path)
+            learning_runner = await self._new_runner(
+                workspace_path,
+                self.settings.team_learning,
+                instructions=team_learning_instructions(),
+                writer="write_team_learning",
+            )
             learning = team_learning_prompt(
                 work_items=inputs.work_items,
                 source_user_messages=inputs.source_user_messages,
@@ -221,20 +243,30 @@ class DailySynthesisRunner:
         return await run_agent_turn_with_resume(
             runner=runner,
             initial_prompt=initial_prompt,
-            resume_prompt=lambda: _resume_pass_prompt(resume_instruction, initial_prompt),
+            resume_prompt=lambda: resume_instruction,
             inspect_artifacts=inspect_artifacts,
             progress_made=lambda before, after: after and not before,
             action=action,
             retry_policy=self.retry_policy,
         )
 
-    async def _new_runner(self, workspace_path: Path) -> AgentRunner:
+    async def _new_runner(
+        self,
+        workspace_path: Path,
+        settings: AgentSettings,
+        *,
+        instructions: str,
+        writer: str,
+    ) -> AgentRunner:
         return await self.agent_factory.runner(
             AgentConfig(
                 working_directory=workspace_path,
+                model=settings.model,
                 approval_mode="auto_review",
                 sandbox="workspace-write",
-                reasoning_effort=self.reasoning_effort,
+                reasoning_effort=settings.reasoning_effort,
+                base_instructions=instructions,
+                mcp_tools=(writer,),
             )
         )
 
@@ -287,13 +319,6 @@ def _project_summary_status(workspace_path: Path, project_key: str) -> AgentArti
 def _slot_status(workspace_path: Path, slot: str) -> AgentArtifactStatus[bool]:
     written = _slot(workspace_path, slot) is not None
     return AgentArtifactStatus(complete=written, progress_marker=written)
-
-
-def _resume_pass_prompt(resume_instruction: str, initial_prompt: str) -> str:
-    return (
-        f"{resume_instruction}\n\n"
-        f"Reuse the same source context and rules below.\n\n{initial_prompt}"
-    )
 
 
 def _read_report(workspace_path: Path) -> dict[str, Any]:

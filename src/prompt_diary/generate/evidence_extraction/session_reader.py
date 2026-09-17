@@ -10,49 +10,44 @@ keeping ends, so returned line numbers equal physical JSONL line numbers and cit
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     CompactRecord,
     compact_record,
-    line_provenance,
+    compact_record_to_json,
+)
+from prompt_diary.generate.evidence_extraction.session_pagination import (
+    MAX_SESSION_READ_BYTES,
+    PaginationError,
+    ReadCursor,
+    RecordFragment,
+    encode_read_json,
+    paginate_records,
 )
 from prompt_diary.generate.workspace import load_prepared_workspace
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from prompt_diary.generate.workspace import IndexedSession, PreparedWorkspace
 
 __all__ = [
-    "MAX_COMPACT_LINES",
-    "MAX_FULL_LINES",
+    "MAX_SESSION_READ_BYTES",
     "FullRecord",
     "LineRange",
+    "ReadCursor",
     "ReadSessionLinesCompactResult",
     "ReadSessionLinesFullResult",
     "ReadSessionLinesInvalidResult",
     "ReadSessionLinesResult",
+    "RecordFragment",
     "SessionReadError",
     "read_session_lines",
+    "serialize_read_result",
 ]
-
-MAX_COMPACT_LINES = 2000
-"""Maximum number of physical lines one compact read may cover.
-
-Compact records are individually bounded, so this cap is generous: a whole assigned turn must
-always fit in a single compact read.
-"""
-
-MAX_FULL_LINES = 100
-"""Maximum number of physical lines one full read may cover.
-
-Full reads return raw JSONL lines, which can be very large per line, so this cap is deliberately
-narrow to keep raw reads from producing huge results.
-"""
-
-_MODE_CAPS: dict[str, int] = {"compact": MAX_COMPACT_LINES, "full": MAX_FULL_LINES}
 
 
 @dataclass(frozen=True)
@@ -66,7 +61,7 @@ class SessionReadError:
 
 @dataclass(frozen=True)
 class LineRange:
-    """Inclusive 1-based physical line range that a read covered."""
+    """Inclusive 1-based physical line range requested across the cursor sequence."""
 
     start: int
     end: int
@@ -74,12 +69,10 @@ class LineRange:
 
 @dataclass(frozen=True)
 class FullRecord:
-    """One physical JSONL line returned verbatim with its provenance."""
+    """One physical JSONL line returned verbatim at its citation location."""
 
     line: int
     raw_line: str
-    raw_bytes: int
-    raw_sha256: str
 
 
 @dataclass(frozen=True)
@@ -91,7 +84,8 @@ class ReadSessionLinesCompactResult:
     session_ref: str
     line_range: LineRange
     mode: Literal["compact"]
-    records: tuple[CompactRecord, ...]
+    records: tuple[CompactRecord | RecordFragment, ...]
+    next_cursor: ReadCursor | None
 
 
 @dataclass(frozen=True)
@@ -103,7 +97,8 @@ class ReadSessionLinesFullResult:
     session_ref: str
     line_range: LineRange
     mode: Literal["full"]
-    records: tuple[FullRecord, ...]
+    records: tuple[FullRecord | RecordFragment, ...]
+    next_cursor: ReadCursor | None
 
 
 @dataclass(frozen=True)
@@ -135,8 +130,9 @@ def read_session_lines(
     start_line: int,
     end_line: int,
     mode: Literal["compact", "full"] = "compact",
+    cursor: ReadCursor | None = None,
 ) -> ReadSessionLinesResult:
-    """Read a physical line range from one indexed session, compact by default or full raw."""
+    """Read one bounded page of a physical line range; follow next_cursor until it is null."""
     resolved = _resolve_session(
         workspace_path=workspace_path,
         project_key=project_key,
@@ -150,51 +146,127 @@ def read_session_lines(
         start_line=start_line,
         end_line=end_line,
         total_lines=len(physical_lines),
-        mode=mode,
     )
     if range_error is not None:
         return range_error
 
-    raw_range = list(physical_lines[start_line - 1 : end_line])
     line_range = LineRange(start=start_line, end=end_line)
+    position = cursor or ReadCursor(start_line)
+    if not start_line <= position.line <= end_line or position.offset < 0:
+        return _invalid("cursor", "cursor is outside the requested range", _CURSOR_HINT)
     if mode == "full":
-        return ReadSessionLinesFullResult(
-            status="ok",
+        return _full_page(
+            physical_lines,
             project_key=project_key,
             session_ref=session_ref,
             line_range=line_range,
-            mode="full",
-            records=_full_records(raw_range, start_line=start_line),
+            cursor=position,
         )
-    return ReadSessionLinesCompactResult(
-        status="ok",
+    return _compact_page(
+        physical_lines,
         project_key=project_key,
         session_ref=session_ref,
         line_range=line_range,
-        mode="compact",
-        records=_compact_records(raw_range, start_line=start_line, source=resolved.session.source),
+        cursor=position,
+        source=resolved.session.source,
     )
+
+
+def serialize_read_result(result: ReadSessionLinesResult) -> str:
+    """Return the exact canonical JSON text budgeted by the API and emitted through MCP."""
+    if isinstance(result, ReadSessionLinesInvalidResult):
+        return encode_read_json(asdict(result))
+    records = [
+        compact_record_to_json(record) if isinstance(record, CompactRecord) else asdict(record)
+        for record in result.records
+    ]
+    return encode_read_json(
+        {
+            "records": records,
+            "next_cursor": asdict(result.next_cursor) if result.next_cursor is not None else None,
+        }
+    )
+
+
+def _compact_page(
+    physical_lines: tuple[str, ...],
+    *,
+    project_key: str,
+    session_ref: str,
+    line_range: LineRange,
+    cursor: ReadCursor,
+    source: str,
+) -> ReadSessionLinesCompactResult | ReadSessionLinesInvalidResult:
+    def result(
+        records: tuple[CompactRecord | RecordFragment, ...], next_cursor: ReadCursor | None
+    ) -> ReadSessionLinesCompactResult:
+        return ReadSessionLinesCompactResult(
+            "ok", project_key, session_ref, line_range, "compact", records, next_cursor
+        )
+
+    page = paginate_records(
+        _compact_records(
+            physical_lines, start_line=cursor.line, end_line=line_range.end, source=source
+        ),
+        cursor=cursor,
+        end_line=line_range.end,
+        record_format="compact_json",
+        record_content=lambda record: encode_read_json(compact_record_to_json(record)),
+        encode_page=lambda records, next_cursor: serialize_read_result(
+            result(records, next_cursor)
+        ),
+    )
+    if isinstance(page, PaginationError):
+        return _invalid("cursor", page.message, _CURSOR_HINT)
+    return result(page.records, page.next_cursor)
+
+
+def _full_page(
+    physical_lines: tuple[str, ...],
+    *,
+    project_key: str,
+    session_ref: str,
+    line_range: LineRange,
+    cursor: ReadCursor,
+) -> ReadSessionLinesFullResult | ReadSessionLinesInvalidResult:
+    def result(
+        records: tuple[FullRecord | RecordFragment, ...], next_cursor: ReadCursor | None
+    ) -> ReadSessionLinesFullResult:
+        return ReadSessionLinesFullResult(
+            "ok", project_key, session_ref, line_range, "full", records, next_cursor
+        )
+
+    page = paginate_records(
+        (
+            FullRecord(line=line, raw_line=physical_lines[line - 1])
+            for line in range(cursor.line, line_range.end + 1)
+        ),
+        cursor=cursor,
+        end_line=line_range.end,
+        record_format="raw_line",
+        record_content=lambda record: record.raw_line,
+        encode_page=lambda records, next_cursor: serialize_read_result(
+            result(records, next_cursor)
+        ),
+    )
+    if isinstance(page, PaginationError):
+        return _invalid("cursor", page.message, _CURSOR_HINT)
+    return result(page.records, page.next_cursor)
 
 
 def _compact_records(
-    raw_range: list[str], *, start_line: int, source: str
-) -> tuple[CompactRecord, ...]:
-    return tuple(
-        compact_record(raw_line, line=start_line + offset, source=source)
-        for offset, raw_line in enumerate(raw_range)
-    )
-
-
-def _full_records(raw_range: list[str], *, start_line: int) -> tuple[FullRecord, ...]:
-    return tuple(
-        _full_record(raw_line, line=start_line + offset)
-        for offset, raw_line in enumerate(raw_range)
-    )
-
-
-def _full_record(raw_line: str, *, line: int) -> FullRecord:
-    raw_bytes, raw_sha256 = line_provenance(raw_line)
-    return FullRecord(line=line, raw_line=raw_line, raw_bytes=raw_bytes, raw_sha256=raw_sha256)
+    physical_lines: tuple[str, ...], *, start_line: int, end_line: int, source: str
+) -> Iterator[CompactRecord]:
+    for index in range(start_line - 1, end_line):
+        record = compact_record(
+            physical_lines[index],
+            line=index + 1,
+            source=source,
+            previous_line=physical_lines[index - 1] if index > 0 else None,
+            next_line=physical_lines[index + 1] if index + 1 < len(physical_lines) else None,
+        )
+        if record is not None:
+            yield record
 
 
 def _validate_range(
@@ -202,7 +274,6 @@ def _validate_range(
     start_line: int,
     end_line: int,
     total_lines: int,
-    mode: Literal["compact", "full"],
 ) -> ReadSessionLinesInvalidResult | None:
     if start_line < 1:
         return _invalid("start_line", _below_one_message(start_line), _RANGE_HINT)
@@ -212,9 +283,6 @@ def _validate_range(
         return _invalid("start_line", _start_past_end_message(start_line, total_lines), _RANGE_HINT)
     if end_line > total_lines:
         return _invalid("end_line", _end_past_end_message(end_line, total_lines), _RANGE_HINT)
-    cap = _MODE_CAPS[mode]
-    if end_line - start_line + 1 > cap:
-        return _invalid("end_line", _too_broad_message(mode, cap), _too_broad_hint(cap))
     return None
 
 
@@ -255,7 +323,9 @@ def _find_session(
 
 
 def _invalid(field: str, message: str, hint: str) -> ReadSessionLinesInvalidResult:
-    return ReadSessionLinesInvalidResult("invalid", (SessionReadError(field, message, hint),))
+    return ReadSessionLinesInvalidResult(
+        "invalid", (SessionReadError(field, message[:1024], hint),)
+    )
 
 
 def _unknown_project_message(project_key: str) -> str:
@@ -286,15 +356,8 @@ def _end_past_end_message(end_line: int, total_lines: int) -> str:
     return f"end_line {end_line} is past the session's last line {total_lines}"
 
 
-def _too_broad_message(mode: str, cap: int) -> str:
-    return f"line range is too broad for {mode} mode; at most {cap} lines may be read at once"
-
-
-def _too_broad_hint(cap: int) -> str:
-    return f"split the read into a narrower range of at most {cap} lines"
-
-
 _UNKNOWN_PROJECT_HINT = "use the project_key from the prepared workspace"
 _UNKNOWN_SESSION_HINT = "use a session_ref listed in sessions.index.jsonl"
 _MISSING_SESSION_FILE_HINT = "ensure the prepared workspace still contains the copied session file"
 _RANGE_HINT = "request a 1-based line range contained by the session"
+_CURSOR_HINT = "reuse next_cursor with the same project, session, range, and mode"

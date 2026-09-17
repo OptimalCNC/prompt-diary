@@ -16,7 +16,7 @@ from prompt_diary.generate.evidence_extraction.session_reader import (
 from tests.support.evidence_extraction import build_evidence_chain
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
     from prompt_diary.agent import AgentConfig
 
@@ -27,7 +27,7 @@ _SESSION_REF_RE = re.compile(r"^- Session reference: (.+)$", re.MULTILINE)
 
 @dataclass
 class EvidenceWritingAgentRunner:
-    """One per-session fake conversation that writes evidence via the real API."""
+    """One assignment conversation that writes evidence via the real API."""
 
     config: AgentConfig
     processed: list[tuple[str, str]]
@@ -37,6 +37,7 @@ class EvidenceWritingAgentRunner:
     prompts: list[str] = field(default_factory=list)
     project_key: str | None = None
     session_ref: str | None = None
+    target_turn: dict[str, Any] | None = None
 
     async def turn(
         self,
@@ -47,7 +48,8 @@ class EvidenceWritingAgentRunner:
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
         self.prompts.append(prompt)
-        target_turn = _last_json_block(prompt)
+        target_turn = _last_json_block(prompt, self.target_turn)
+        self.target_turn = target_turn
         turn_ref = cast("str", target_turn["turn_ref"])
         self.project_key = _parse_first(_PROJECT_KEY_RE, prompt) or self.project_key
         self.session_ref = _parse_first(_SESSION_REF_RE, prompt) or self.session_ref
@@ -70,7 +72,7 @@ class EvidenceWritingAgentRunner:
 
 @dataclass
 class EvidenceWritingAgentSessionFactory:
-    """Mints per-session evidence-writing fake runners off a shared record."""
+    """Mints assignment evidence-writing fake runners off a shared record."""
 
     fail_turns: frozenset[str] = frozenset()
     raise_once_turns: frozenset[str] = frozenset()
@@ -130,6 +132,7 @@ class EvidenceReadingWritingAgentRunner:
     prompts: list[str] = field(default_factory=list)
     project_key: str | None = None
     session_ref: str | None = None
+    target_turn: dict[str, Any] | None = None
 
     async def turn(
         self,
@@ -140,15 +143,18 @@ class EvidenceReadingWritingAgentRunner:
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
         self.prompts.append(prompt)
-        target_turn = _last_json_block(prompt)
+        target_turn = _last_json_block(prompt, self.target_turn)
+        self.target_turn = target_turn
         turn_ref = cast("str", target_turn["turn_ref"])
         self.project_key = _parse_first(_PROJECT_KEY_RE, prompt) or self.project_key
         self.session_ref = _parse_first(_SESSION_REF_RE, prompt) or self.session_ref
         project_key = _require(self.project_key, "project_key")
         session_ref = _require(self.session_ref, "session_ref")
-        compact = self._read_assigned_turn(project_key, session_ref, target_turn)
-        self.reads.append(RecordedRead(session_ref=session_ref, turn_ref=turn_ref, result=compact))
-        span = _span_from_records(compact)
+        pages = tuple(self.read_assigned_turn(project_key, session_ref, target_turn))
+        self.reads.extend(
+            RecordedRead(session_ref=session_ref, turn_ref=turn_ref, result=page) for page in pages
+        )
+        span = _span_from_records(pages)
         write_evidence(
             workspace_path=self.config.working_directory,
             project_key=project_key,
@@ -158,27 +164,31 @@ class EvidenceReadingWritingAgentRunner:
         self.processed.append((session_ref, turn_ref))
         return AgentTurnResult(assistant_text=f"read and wrote {turn_ref}", events=())
 
-    def _read_assigned_turn(
+    def read_assigned_turn(
         self, project_key: str, session_ref: str, target_turn: dict[str, Any]
-    ) -> ReadSessionLinesCompactResult:
-        result = read_session_lines(
-            workspace_path=self.config.working_directory,
-            project_key=project_key,
-            session_ref=session_ref,
-            start_line=int(target_turn["turn_start_line"]),
-            end_line=int(target_turn["turn_end_line"]),
-            mode="compact",
-        )
-        if not isinstance(result, ReadSessionLinesCompactResult):
-            # AssertionError (not TypeError): a faithful agent's read of the assigned turn must
-            # return an ok compact result; anything else is a broken integration the test catches.
-            raise AssertionError(_read_not_ok_message(session_ref, result))  # noqa: TRY004
-        return result
+    ) -> Iterator[ReadSessionLinesCompactResult]:
+        cursor = None
+        while True:
+            result = read_session_lines(
+                workspace_path=self.config.working_directory,
+                project_key=project_key,
+                session_ref=session_ref,
+                start_line=int(target_turn["turn_start_line"]),
+                end_line=int(target_turn["turn_end_line"]),
+                mode="compact",
+                cursor=cursor,
+            )
+            if not isinstance(result, ReadSessionLinesCompactResult):
+                raise AssertionError(_read_not_ok_message(session_ref, result))  # noqa: TRY004
+            yield result
+            cursor = result.next_cursor
+            if cursor is None:
+                return
 
 
 @dataclass
 class EvidenceReadingWritingAgentSessionFactory:
-    """Mints per-session reading+writing fake runners off shared read and processed records."""
+    """Mints assignment reading+writing fake runners off shared read and processed records."""
 
     entered: int = 0
     exited: int = 0
@@ -207,16 +217,20 @@ class EvidenceReadingWritingAgentSessionFactory:
         return new_runner
 
 
-def _span_from_records(compact: ReadSessionLinesCompactResult) -> tuple[int, int]:
-    lines = [record.line for record in compact.records]
+def _span_from_records(pages: tuple[ReadSessionLinesCompactResult, ...]) -> tuple[int, int]:
+    assert pages
+    assert pages[-1].next_cursor is None, "assigned read has not exhausted its cursor"
+    lines = [record.line for page in pages for record in page.records]
     if not lines:
         raise AssertionError(_empty_read_message())
     return min(lines), max(lines)
 
 
-def _last_json_block(prompt: str) -> dict[str, Any]:
+def _last_json_block(prompt: str, previous: dict[str, Any] | None = None) -> dict[str, Any]:
     blocks = _JSON_BLOCK_RE.findall(prompt)
     if not blocks:
+        if previous is not None:
+            return previous
         raise AssertionError(_no_json_block_message())
     raw: object = json.loads(blocks[-1])
     return cast("dict[str, Any]", raw)

@@ -522,12 +522,11 @@ def test_read_session_lines_mcp_compact_success_returns_compact_records(
     assert result == read_result_to_dict(
         call_read_session_lines(workspace_path=workspace, start_line=4, end_line=6)
     )
-    assert result["status"] == "ok"
-    assert result["mode"] == "compact"
+    assert set(result) == {"records", "next_cursor"}
     records = result["records"]
     assert [record["line"] for record in records] == [4, 5, 6]
-    assert records[0]["record_type"] == "response_item:function_call"
-    assert all("raw_sha256" in record for record in records)
+    assert records[0]["kind"] == "tool_call"
+    assert all("raw_sha256" not in record for record in records)
 
 
 def test_read_session_lines_mcp_full_success_returns_raw_lines(
@@ -555,7 +554,8 @@ def test_read_session_lines_mcp_full_success_returns_raw_lines(
     assert result == read_result_to_dict(
         call_read_session_lines(workspace_path=workspace, start_line=6, end_line=6, mode="full")
     )
-    assert result["mode"] == "full"
+    assert set(result) == {"records", "next_cursor"}
+    assert set(result["records"][0]) == {"line", "raw_line"}
     assert result["records"][0]["raw_line"].startswith('{"payload"')
 
 
@@ -602,7 +602,7 @@ def test_read_session_lines_uses_workspace_env_var(
 
     result = mcp_server.read_session_lines(READER_PROJECT_KEY, READER_SESSION_REF, 6, 6)
 
-    assert read_result_to_dict(result)["status"] == "ok"
+    assert read_result_to_dict(result)["records"][0]["line"] == 6
 
 
 async def _call_mcp_tool(

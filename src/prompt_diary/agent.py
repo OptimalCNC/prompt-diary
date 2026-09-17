@@ -24,6 +24,7 @@ class AgentConfig:
     base_instructions: str | None = None
     developer_instructions: str | None = None
     personality: str | None = None
+    mcp_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

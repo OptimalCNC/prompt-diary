@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from prompt_diary.agent import AgentConfig
 from prompt_diary.errors import PromptDiaryError
@@ -13,6 +13,7 @@ from prompt_diary.generate.agent_retry import (
     AgentRetryPolicy,
     run_agent_turn_with_resume,
 )
+from prompt_diary.generate.agent_settings import AgentSettings, load_agent_settings
 from prompt_diary.generate.evidence_extraction.completeness import (
     inspect_evidence_card_for_session,
 )
@@ -21,13 +22,17 @@ from prompt_diary.generate.project_synthesis.cards import (
     committed_turn_keys,
     load_committed_chains,
 )
-from prompt_diary.generate.project_synthesis.completeness import inspect_project_synthesis
+from prompt_diary.generate.project_synthesis.completeness import (
+    ProjectSynthesisCheckpoint,
+    inspect_project_synthesis,
+)
 from prompt_diary.generate.project_synthesis.inputs import build_project_synthesis_inputs
 from prompt_diary.generate.project_synthesis.model import (
     TurnReference,
     new_project_synthesis_envelope,
 )
 from prompt_diary.generate.prompts import (
+    project_synthesizer_instructions,
     project_synthesizer_next_prompt,
     project_synthesizer_prompt,
 )
@@ -43,22 +48,12 @@ if TYPE_CHECKING:
     from prompt_diary.progress.reporter import ProgressReporter
 
 
-DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT = "medium"
-"""Per-thread Codex reasoning effort for project synthesis.
-
-Grouping evidence chains into work items needs more judgment than evidence extraction but is not
-deep problem solving, so the synthesis thread pins a mid-level effort instead of inheriting the
-user's global Codex setting. It is a per-thread (``AgentConfig``) value; override it by
-constructing the runner with ``reasoning_effort``.
-"""
-
-
 @dataclass(frozen=True)
 class ProjectSynthesisRunner:
     """Drive an agent to group one project's evidence chains into work items."""
 
     agent_factory: AgentSessionFactory
-    reasoning_effort: str | None = DEFAULT_PROJECT_SYNTHESIS_REASONING_EFFORT
+    settings: AgentSettings = field(default_factory=lambda: load_agent_settings().project_synthesis)
     retry_policy: AgentRetryPolicy = field(default_factory=AgentRetryPolicy)
 
     async def run(
@@ -77,16 +72,22 @@ class ProjectSynthesisRunner:
         if evidence_errors:
             return TaskResult(task_id=task.task_id, status="failed", errors=evidence_errors)
 
+        checkpoint: ProjectSynthesisCheckpoint | None = None
         if output_path.exists():
             inspection = inspect_project_synthesis(
                 workspace_path=workspace_path, project_key=project_key
             )
             if inspection.complete:
                 return TaskResult(task_id=task.task_id, status="success")
-            output_path.unlink()
+            if isinstance(inspection, ProjectSynthesisCheckpoint):
+                checkpoint = inspection
+            else:
+                output_path.unlink()
 
         inputs = build_project_synthesis_inputs(
-            workspace_path=workspace_path, project_key=project_key
+            workspace_path=workspace_path,
+            project_key=project_key,
+            covered_turns=checkpoint.covered_keys if checkpoint is not None else frozenset(),
         )
 
         universe = _indexed_turn_universe(project)
@@ -98,15 +99,19 @@ class ProjectSynthesisRunner:
         runner = await self.agent_factory.runner(
             AgentConfig(
                 working_directory=workspace_path,
+                model=self.settings.model,
                 approval_mode="auto_review",
                 sandbox="workspace-write",
-                reasoning_effort=self.reasoning_effort,
+                reasoning_effort=self.settings.reasoning_effort,
+                base_instructions=project_synthesizer_instructions(),
+                mcp_tools=("write_work_item",),
             )
         )
         initial_prompt = project_synthesizer_prompt(
             project_key=inputs.project_key,
             project_json=inputs.project_json,
             evidence_chains=inputs.evidence_chains,
+            committed_work_items=_render_checkpoint(checkpoint),
         )
         retry = await run_agent_turn_with_resume(
             runner=runner,
@@ -114,12 +119,11 @@ class ProjectSynthesisRunner:
             resume_prompt=lambda: project_synthesizer_next_prompt(
                 project_key=project_key,
                 uncovered_turns=_render_uncovered(
-                    _uncovered_turns(output_path, universe), committed
+                    _uncovered_turns(workspace_path, project_key, universe), committed
                 ),
             ),
             inspect_artifacts=lambda: _project_artifact_status(
                 workspace_path=workspace_path,
-                output_path=output_path,
                 project_key=project_key,
                 universe=universe,
             ),
@@ -128,7 +132,6 @@ class ProjectSynthesisRunner:
             retry_policy=self.retry_policy,
         )
         if not retry.ok:
-            _discard_envelope(output_path)
             return TaskResult(
                 task_id=task.task_id,
                 status="failed",
@@ -174,21 +177,28 @@ def _incomplete_evidence_errors(workspace_path: Path, project: PreparedProject) 
 
 
 def _uncovered_turns(
-    output_path: Path, universe: tuple[TurnReference, ...]
+    workspace_path: Path, project_key: str, universe: tuple[TurnReference, ...]
 ) -> tuple[TurnReference, ...]:
-    covered = _covered_keys(output_path)
-    return tuple(ref for ref in universe if (ref.session_ref, ref.turn_ref) not in covered)
+    inspection = inspect_project_synthesis(workspace_path=workspace_path, project_key=project_key)
+    return (
+        inspection.uncovered_turns
+        if isinstance(inspection, ProjectSynthesisCheckpoint)
+        else universe
+    )
 
 
 def _project_artifact_status(
     *,
     workspace_path: Path,
-    output_path: Path,
     project_key: str,
     universe: tuple[TurnReference, ...],
 ) -> AgentArtifactStatus[int]:
-    uncovered_count = len(_uncovered_turns(output_path, universe))
     inspection = inspect_project_synthesis(workspace_path=workspace_path, project_key=project_key)
+    uncovered_count = (
+        len(inspection.uncovered_turns)
+        if isinstance(inspection, ProjectSynthesisCheckpoint)
+        else len(universe)
+    )
     return AgentArtifactStatus(
         complete=inspection.complete,
         progress_marker=uncovered_count,
@@ -206,22 +216,14 @@ def _render_uncovered(
     return "\n".join(lines)
 
 
-def _covered_keys(output_path: Path) -> frozenset[tuple[str, str]]:
-    if not output_path.exists():
-        return frozenset()
-    raw: object = json.loads(output_path.read_text(encoding="utf-8"))
-    envelope = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
-    items = envelope.get("work_items")
-    rows = cast("list[Any]", items) if isinstance(items, list) else []
-    dict_rows = [cast("dict[str, Any]", row) for row in rows if isinstance(row, dict)]
-    keys: set[tuple[str, str]] = set()
-    for row in dict_rows:
-        covered = row.get("covered_turns")
-        for ref in cast("list[Any]", covered) if isinstance(covered, list) else []:
-            if isinstance(ref, dict):
-                mapping = cast("dict[str, Any]", ref)
-                keys.add((_as_str(mapping.get("session_ref")), _as_str(mapping.get("turn_ref"))))
-    return frozenset(keys)
+def _render_checkpoint(checkpoint: ProjectSynthesisCheckpoint | None) -> str:
+    if checkpoint is None or not checkpoint.work_items:
+        return ""
+    return "\n".join(
+        f"- {item.work_item_ref}: "
+        + ", ".join(f"{ref.session_ref}/{ref.turn_ref}" for ref in item.covered_turns)
+        for item in checkpoint.work_items
+    )
 
 
 def _write_empty_envelope(output_path: Path, project_key: str, project_label: str) -> None:
@@ -235,15 +237,6 @@ def _write_empty_envelope(output_path: Path, project_key: str, project_label: st
         + "\n",
         encoding="utf-8",
     )
-
-
-def _discard_envelope(output_path: Path) -> None:
-    if output_path.exists():
-        output_path.unlink()
-
-
-def _as_str(value: object) -> str:
-    return value if isinstance(value, str) else ""
 
 
 def _missing_scope_message(task_id: str) -> str:

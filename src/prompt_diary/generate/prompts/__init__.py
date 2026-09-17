@@ -169,22 +169,10 @@ def _format_enum_values(values: tuple[PromptEnumValue, ...]) -> str:
     return "\n".join(f"- `{item.value}`: {item.description}." for item in values)
 
 
-def evidence_extractor_prompt(
-    *,
-    project_key: str,
-    project_json: str,
-    session_ref: str,
-    session_index_record: str,
-    target_turn: str,
-) -> str:
-    """Return the evidence extractor prompt with substituted workspace values."""
+def evidence_extractor_instructions() -> str:
+    """Return the stable evidence-extraction contract."""
     return _render(
         "evidence-extractor.md",
-        project_key=project_key,
-        project_json=project_json,
-        session_ref=session_ref,
-        session_index_record=session_index_record,
-        target_turn=target_turn,
         check_type_descriptions=_format_enum_values(EVIDENCE_CHECK_TYPES),
         materiality_descriptions=_format_enum_values(EVIDENCE_MATERIALITY_VALUES),
         outcome_category_descriptions=_format_enum_values(EVIDENCE_OUTCOME_CATEGORIES),
@@ -193,27 +181,47 @@ def evidence_extractor_prompt(
     )
 
 
-def evidence_extractor_next_turn_prompt(
+def evidence_extractor_prompt(
     *,
-    write_evidence_result: str,
+    project_key: str,
+    project_json: str,
+    session_ref: str,
+    session_index_record: str,
     target_turn: str,
 ) -> str:
-    """Return the evidence extractor follow-up prompt for the next assigned turn."""
+    """Return one extraction assignment without repeating its stable contract."""
     return _render(
-        "evidence-extractor-next-turn.md",
-        write_evidence_result=write_evidence_result,
+        "evidence-extractor-input.md",
+        project_key=project_key,
+        project_json=project_json,
+        session_ref=session_ref,
+        session_index_record=session_index_record,
         target_turn=target_turn,
     )
 
 
-def project_synthesizer_prompt(*, project_key: str, project_json: str, evidence_chains: str) -> str:
-    """Return the project synthesizer prompt with substituted workspace values."""
+def project_synthesizer_instructions() -> str:
+    """Return the stable project-synthesis contract."""
     return _render(
         "project-synthesizer.md",
+        work_item_kind_descriptions=_format_enum_values(PROJECT_WORK_ITEM_KINDS),
+    )
+
+
+def project_synthesizer_prompt(
+    *,
+    project_key: str,
+    project_json: str,
+    evidence_chains: str,
+    committed_work_items: str = "",
+) -> str:
+    """Return project-synthesis inputs without repeating the stable contract."""
+    return _render(
+        "project-synthesizer-input.md",
         project_key=project_key,
         project_json=project_json,
         evidence_chains=evidence_chains,
-        work_item_kind_descriptions=_format_enum_values(PROJECT_WORK_ITEM_KINDS),
+        committed_work_items=committed_work_items,
     )
 
 
@@ -226,36 +234,60 @@ def project_synthesizer_next_prompt(*, project_key: str, uncovered_turns: str) -
     )
 
 
+def project_summary_instructions() -> str:
+    """Return the stable project-summary contract."""
+    return _load("project-summary.md")
+
+
 def project_summary_prompt(*, project_key: str, project_json: str, work_items: str) -> str:
-    """Return the per-project summary prompt with substituted workspace values."""
+    """Return one project's summary inputs."""
     return _render(
-        "project-summary.md",
+        "project-summary-input.md",
         project_key=project_key,
         project_json=project_json,
         work_items=work_items,
     )
 
 
+def report_title_instructions() -> str:
+    """Return the stable report-title contract."""
+    return _load("report-title.md")
+
+
 def report_title_prompt(*, context: str) -> str:
-    """Return the whole-report title prompt with substituted workspace values."""
-    return _render("report-title.md", context=context)
+    """Return the report-title inputs."""
+    return _render("report-title-input.md", context=context)
 
 
-def engagement_prompt(*, work_items: str, source_user_messages: str) -> str:
-    """Return the engagement prompt with substituted workspace values."""
+def engagement_instructions() -> str:
+    """Return the stable engagement-assessment contract."""
     return _render(
         "engagement.md",
-        work_items=work_items,
-        source_user_messages=source_user_messages,
         dimension_descriptions=_format_enum_values(ENGAGEMENT_DIMENSIONS),
     )
 
 
-def team_learning_prompt(*, work_items: str, source_user_messages: str) -> str:
-    """Return the team-learning prompt with substituted workspace values."""
+def engagement_prompt(*, work_items: str, source_user_messages: str) -> str:
+    """Return the engagement-assessment inputs."""
     return _render(
-        "team-learning.md",
+        "engagement-input.md",
         work_items=work_items,
         source_user_messages=source_user_messages,
+    )
+
+
+def team_learning_instructions() -> str:
+    """Return the stable team-learning contract."""
+    return _render(
+        "team-learning.md",
         pattern_kind_descriptions=_format_enum_values(TEAM_LEARNING_PATTERN_KINDS),
+    )
+
+
+def team_learning_prompt(*, work_items: str, source_user_messages: str) -> str:
+    """Return the team-learning inputs."""
+    return _render(
+        "team-learning-input.md",
+        work_items=work_items,
+        source_user_messages=source_user_messages,
     )

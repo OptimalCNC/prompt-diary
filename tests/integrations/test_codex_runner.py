@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from contextlib import suppress
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
@@ -17,14 +17,8 @@ from prompt_diary.integrations.codex_runner import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncGenerator, Mapping
     from pathlib import Path
-
-
-@dataclass
-class FakeTurnResult:
-    final_response: str | None
-    items: list[object]
 
 
 class FakeRootItem:
@@ -47,10 +41,12 @@ class FakeCodexConfig:
         codex_bin: str | None,
         config_overrides: tuple[str, ...],
         env: dict[str, str] | None,
+        client_name: str,
     ) -> None:
         self.codex_bin = codex_bin
         self.config_overrides = config_overrides
         self.env = env
+        self.client_name = client_name
 
 
 class FakeSandbox:
@@ -64,27 +60,87 @@ class FakeThread:
         self.release = asyncio.Event()
         self.block = False
         self.delay_seconds = 0.0
+        self.handles: list[FakeTurnHandle] = []
+        self.interrupt_requested = asyncio.Event()
+        self.auto_complete_interrupt = True
+        self.start_release = asyncio.Event()
+        self.block_start = False
+        self.terminal_status = "completed"
+        self.stream_error: Exception | None = None
+        self.interrupt_error: Exception | None = None
 
-    async def run(
+    async def turn(
         self,
         prompt: str,
         *,
         output_schema: Mapping[str, object] | None = None,
-    ) -> FakeTurnResult:
+    ) -> FakeTurnHandle:
         self.run_calls.append({"prompt": prompt, "output_schema": output_schema})
+        handle = FakeTurnHandle(self, prompt, f"turn-{len(self.run_calls)}")
+        self.handles.append(handle)
         self.started.set()
-        if self.block:
-            await self.release.wait()
-        if self.delay_seconds:
-            await asyncio.sleep(self.delay_seconds)
-        return FakeTurnResult(
-            final_response=f"response to {prompt}",
-            items=[
-                {"type": "agent_message", "text": "hello"},
+        if self.block_start:
+            await self.start_release.wait()
+        return handle
+
+
+class FakeTurnHandle:
+    def __init__(self, thread: FakeThread, prompt: str, turn_id: str) -> None:
+        self.id = turn_id
+        self.thread = thread
+        self.prompt = prompt
+        self.interrupted = False
+        self.terminal_read = False
+        self.stream_closed = False
+        self.interrupt_count = 0
+
+    async def stream(self) -> AsyncGenerator[object, None]:
+        try:
+            if self.thread.block:
+                await self.thread.release.wait()
+            if self.thread.delay_seconds:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        self.thread.interrupt_requested.wait(), self.thread.delay_seconds
+                    )
+            if self.thread.stream_error is not None:
+                raise self.thread.stream_error
+            items = [
+                {
+                    "type": "agentMessage",
+                    "text": f"response to {self.prompt}",
+                    "phase": "final_answer",
+                },
                 FakeRootItem({"kind": "tool", "summary": "called tool"}),
                 FakeModelItem(),
-            ],
-        )
+            ]
+            for item in items:
+                yield {"method": "item/completed", "payload": {"turn_id": self.id, "item": item}}
+            self.terminal_read = True
+            yield {
+                "method": "turn/completed",
+                "payload": {
+                    "turn": {
+                        "id": self.id,
+                        "status": (
+                            "interrupted" if self.interrupted else self.thread.terminal_status
+                        ),
+                        "error": {"message": "model failed"},
+                    }
+                },
+            }
+        finally:
+            self.stream_closed = True
+
+    async def interrupt(self) -> object:
+        self.interrupt_count += 1
+        self.thread.interrupt_requested.set()
+        if self.thread.interrupt_error is not None:
+            raise self.thread.interrupt_error
+        if self.thread.auto_complete_interrupt:
+            self.interrupted = True
+            self.thread.release.set()
+        return None
 
 
 class FakeAsyncCodex:
@@ -96,6 +152,9 @@ class FakeAsyncCodex:
         self.entered = False
         self.exited = False
         self.thread_start_calls: list[dict[str, object]] = []
+        self.close_started = asyncio.Event()
+        self.close_release = asyncio.Event()
+        self.block_close = False
         self.thread = FakeAsyncCodex.next_thread or FakeThread()
         FakeAsyncCodex.next_thread = None
         FakeAsyncCodex.instances.append(self)
@@ -111,7 +170,13 @@ class FakeAsyncCodex:
         traceback: object,
     ) -> None:
         del exc_type, exc, traceback
+        self.close_started.set()
+        if self.block_close:
+            await self.close_release.wait()
         self.exited = True
+        self.thread.stream_error = RuntimeError("transport closed")
+        self.thread.release.set()
+        self.thread.start_release.set()
 
     async def thread_start(
         self,
@@ -184,12 +249,13 @@ def test_backend_enter_exit_and_runner_config_pass_through(
                     base_instructions="base",
                     developer_instructions="developer",
                     personality="concise",
+                    mcp_tools=("read_session_lines", "write_evidence"),
                 ),
             )
             result = await runner.turn("Generate the report.", output_schema=output_schema)
             assert result.assistant_text == "response to Generate the report."
-            assert [event.kind for event in result.events] == ["agent_message", "tool", "model"]
-            assert result.events[0].summary == "hello"
+            assert [event.kind for event in result.events] == ["agentMessage", "tool", "model"]
+            assert result.events[0].summary == "response to Generate the report."
             assert result.events[1].metadata == {"kind": "tool", "summary": "called tool"}
             assert result.events[2].metadata["mode"] == "json"
 
@@ -204,6 +270,7 @@ def test_backend_enter_exit_and_runner_config_pass_through(
     assert app_config.codex_bin == str(codex_bin)
     assert app_config.config_overrides == ("mcp.prompt_diary={}",)
     assert app_config.env == {"PROMPT_DIARY": "1"}
+    assert app_config.client_name == "prompt_diary"
     assert fake_codex.thread_start_calls == [
         {
             "cwd": str(tmp_path),
@@ -214,7 +281,11 @@ def test_backend_enter_exit_and_runner_config_pass_through(
             "base_instructions": "base",
             "developer_instructions": "developer",
             "personality": "concise",
-            "config": {"model_reasoning_effort": "low"},
+            "config": {
+                "model_reasoning_effort": "low",
+                "features.code_mode.direct_only_tool_namespaces": ["mcp__prompt_diary"],
+                "mcp_servers.prompt_diary.enabled_tools": ["read_session_lines", "write_evidence"],
+            },
         }
     ]
     assert fake_codex.thread.run_calls == [
@@ -295,6 +366,218 @@ def test_runner_applies_asyncio_timeout(
                 await runner.turn("slow", timeout_seconds=0.01)
 
     asyncio.run(exercise())
+    assert fake_thread.handles[0].interrupt_count == 1
+    assert fake_thread.handles[0].terminal_read
+    assert fake_thread.handles[0].stream_closed
+
+
+def test_timeout_waits_for_terminal_notification_before_allowing_another_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.block = True
+    fake_thread.auto_complete_interrupt = False
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            task = asyncio.create_task(runner.turn("first", timeout_seconds=0.01))
+            await asyncio.wait_for(fake_thread.interrupt_requested.wait(), 1)
+            assert not task.done()
+            with pytest.raises(CodexRunnerError, match="cannot be called concurrently"):
+                await runner.turn("premature retry")
+            fake_thread.release.set()
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(task, 1)
+            assert fake_thread.handles[0].terminal_read
+            assert fake_thread.handles[0].stream_closed
+            assert not FakeAsyncCodex.instances[0].exited
+            await runner.turn("second")
+
+    asyncio.run(exercise())
+    assert [call["prompt"] for call in fake_thread.run_calls] == ["first", "second"]
+
+
+def test_repeated_cancellation_keeps_cleanup_alive_until_terminal_notification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.block = True
+    fake_thread.auto_complete_interrupt = False
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            task = asyncio.create_task(runner.turn("first"))
+            await fake_thread.started.wait()
+            task.cancel()
+            await asyncio.wait_for(fake_thread.interrupt_requested.wait(), 1)
+            task.cancel()
+            assert not task.done()
+            fake_thread.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+            assert fake_thread.handles[0].terminal_read
+            assert fake_thread.handles[0].interrupt_count == 1
+            await runner.turn("after cancellation")
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_startup_interrupts_the_handle_after_it_arrives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.block_start = True
+    fake_thread.block = True
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            task = asyncio.create_task(runner.turn("first"))
+            await fake_thread.started.wait()
+            task.cancel()
+            fake_thread.start_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+            assert fake_thread.handles[0].interrupt_count == 1
+            assert fake_thread.handles[0].terminal_read
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("block_start", [False, True])
+def test_uncertain_termination_closes_backend_and_disables_cached_threads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, block_start: bool
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.block_start = block_start
+    fake_thread.block = True
+    fake_thread.auto_complete_interrupt = False
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+    monkeypatch.setattr(codex_runner, "_TURN_CLEANUP_TIMEOUT_SECONDS", 0.01)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(runner.turn("stuck", timeout_seconds=0.01), 1)
+            assert FakeAsyncCodex.instances[0].exited
+            with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                await runner.turn("must not restart SDK")
+            other = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                await other.turn("new thread must not restart SDK")
+            assert len(fake_thread.run_calls) == 1
+            assert len(FakeAsyncCodex.instances[0].thread_start_calls) == 1
+        with pytest.raises(CodexRunnerError, match="backend was stopped"):
+            await backend.__aenter__()
+
+    asyncio.run(exercise())
+
+
+def test_known_failed_terminal_turn_preserves_backend_for_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.terminal_status = "failed"
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            with pytest.raises(CodexRunnerError, match="model failed"):
+                await runner.turn("failed")
+            assert not FakeAsyncCodex.instances[0].exited
+            fake_thread.terminal_status = "completed"
+            assert (await runner.turn("retry")).assistant_text == "response to retry"
+
+    asyncio.run(exercise())
+
+
+def test_stream_failure_closes_backend_without_retrying_unknown_active_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.stream_error = RuntimeError("transport failed before terminal")
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            with pytest.raises(RuntimeError, match="transport failed before terminal"):
+                await runner.turn("first")
+            assert FakeAsyncCodex.instances[0].exited
+            with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                await runner.turn("retry")
+
+    asyncio.run(exercise())
+
+
+def test_interrupt_error_can_race_a_naturally_completed_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.block = True
+    fake_thread.interrupt_error = RuntimeError("turn already completed")
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            task = asyncio.create_task(runner.turn("racing", timeout_seconds=0.01))
+            await fake_thread.interrupt_requested.wait()
+            fake_thread.release.set()
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(task, 1)
+            assert fake_thread.handles[0].terminal_read
+            assert not FakeAsyncCodex.instances[0].exited
+
+    asyncio.run(exercise())
+
+
+def test_unresponsive_transport_close_is_bounded_and_preserves_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_thread = FakeThread()
+    fake_thread.block = True
+    fake_thread.auto_complete_interrupt = False
+    FakeAsyncCodex.next_thread = fake_thread
+    _patch_sdk(monkeypatch)
+    monkeypatch.setattr(codex_runner, "_TURN_CLEANUP_TIMEOUT_SECONDS", 0.01)
+
+    async def exercise() -> None:
+        backend = await CodexBackend(CodexBackendConfig()).__aenter__()
+        fake_codex = FakeAsyncCodex.instances[0]
+        fake_codex.block_close = True
+        runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+        try:
+            with pytest.raises(TimeoutError, match="shutdown or turn cleanup") as failure:
+                await asyncio.wait_for(runner.turn("stuck", timeout_seconds=0.01), 1)
+            assert fake_codex.close_started.is_set()
+            assert not fake_thread.handles[0].stream_closed
+            with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                await runner.turn("must stay disabled")
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(backend.__aexit__(TimeoutError, failure.value, None), 1)
+            # SDK consumers must remain registered until retained shutdown really completes.
+            assert not fake_thread.handles[0].stream_closed
+        finally:
+            fake_codex.close_release.set()
+            await asyncio.wait_for(backend.__aexit__(None, None, None), 1)
+            assert fake_thread.handles[0].stream_closed
+
+    asyncio.run(exercise())
 
 
 def test_backend_reports_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -311,8 +594,8 @@ def test_backend_reports_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         asyncio.run(exercise())
 
     message = str(exc_info.value)
-    assert "uv sync --prerelease=allow" in message
-    assert "uv tool install --force --prerelease=allow prompt-diary" in message
+    assert "uv sync" in message
+    assert "uv tool install --force prompt-diary" in message
 
 
 def test_runner_requires_started_backend(tmp_path: Path) -> None:

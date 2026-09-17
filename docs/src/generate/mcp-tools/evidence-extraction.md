@@ -28,9 +28,9 @@ Neither tool accepts an arbitrary filesystem path.
 `write_evidence` additionally determines the target evidence file as
 `projects/<project_key>/evidence/<session_ref>.json`. There is at most one canonical evidence card
 file per indexed session. The tool may append multiple chains to that card, but generation must not
-create a separate flat `evidence_cards.jsonl` as the source of truth. If no chain is written for an
-indexed session, downstream synthesis treats that missing card as an evidence gap for the indexed
-session.
+create a separate flat `evidence_cards.jsonl` as the source of truth. Missing or incomplete evidence
+cards block project synthesis. Valid partial cards remain available so extraction can resume only
+their missing turns.
 
 ## `read_session_lines`
 
@@ -50,7 +50,8 @@ Input schema:
   "session_ref": "<session_ref>",
   "start_line": 23,
   "end_line": 114,
-  "mode": "compact"
+  "mode": "compact",
+  "cursor": null
 }
 ```
 
@@ -58,106 +59,116 @@ Input schema:
 warns that `"full"` returns raw JSONL lines and can be very large; use it only for a narrow range
 where exact raw content is necessary.
 
+Each response contains at most 32 KiB of canonical UTF-8 JSON text, including metadata and JSON
+escaping. Omit `cursor` (or pass null) for the first page. If `next_cursor` is non-null, pass that
+`{"line": <int>, "offset": <int>}` object back with the same project, session, range, and mode.
+Continue until `next_cursor` is null. Successful responses contain only `records` and
+`next_cursor`; the request already identifies the session, range, and mode. There is no separate
+limit on the number of requested lines. Known metadata can be omitted, so record counts and gaps
+between returned line numbers do not indicate unread evidence. An all-metadata range returns
+empty records and a null cursor.
+
 ### Compact return shape
 
-Compact mode returns bounded structured records. One record per physical line:
+Compact mode returns structured records with absolute physical line numbers. A page contains as
+many whole records as fit; a record larger than a page is returned in lossless fragments:
 
 ```json
 {
-  "status": "ok",
-  "project_key": "ReportGenerator-e6ff7eeda632",
-  "session_ref": "S0001",
-  "line_range": {"start": 23, "end": 114},
-  "mode": "compact",
   "records": [
     {
       "line": 27,
-      "record_type": "user",
-      "role": "user",
-      "content_kinds": ["tool_result"],
-      "summary": "Tool result.",
-      "text_preview": null,
-      "tool_uses": [],
+      "kind": "tool_result",
       "tool_results": [
         {
-          "kind": "file",
-          "status": null,
-          "file_path": "projects/.../evidence/S0001.json",
-          "command": null,
-          "preview": "{\"schema_version\":1,...",
-          "raw_bytes": 98099,
-          "truncated": true
+          "kind": "command",
+          "command": "pytest",
+          "exit_code": 0,
+          "preview": "12 passed"
         }
-      ],
-      "raw_bytes": 98099,
-      "raw_sha256": "<sha256>",
-      "truncated": true
+      ]
     }
-  ]
+  ],
+  "next_cursor": {"line": 28, "offset": 0}
 }
 ```
 
-Compact record fields:
+Compact record fields are sparse: absent values, empty collections, and default flags are omitted.
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `line` | int | Absolute 1-based physical line number. |
-| `record_type` | str | Source record type (`user`, `assistant`, `system`, `system:summary`, source-specific equivalents, or `unknown`). |
-| `role` | str \| null | Message role when present. |
-| `content_kinds` | list[str] | High-level content kinds present: `text`, `tool_use`, `tool_result`, `thinking`. |
-| `summary` | str | Deterministic short description of the record. |
-| `text_preview` | str \| null | Full text for user/assistant text messages; null when absent or suppressed. |
-| `tool_uses` | list | Tool invocations, each with `name` (str), `input_summary` (str), and `truncated` (bool, `true` when the tool's input was trimmed). |
-| `tool_results` | list | Tool results, each with `kind`, `status`, `file_path`, `command`, `preview`, `raw_bytes`, `truncated`. |
-| `raw_bytes` | int | UTF-8 byte length of the original physical line. |
-| `raw_sha256` | str | SHA-256 hex digest of the original physical line. |
-| `truncated` | bool | Whether any data on this record was trimmed. |
+| `kind` | str | Evidence kind, such as `user`, `assistant`, `tool_call`, `tool_result`, `terminal`, or `unknown`. |
+| `text` | str | Exact genuine message text, or an explicitly bounded fallback for other content. |
+| `tool_uses` | list | Invocations with `name`, optional `input_summary`, and `truncated` when trimmed. |
+| `tool_results` | list | Results with `kind` and available evidence: `status`, `command`, `exit_code`, `file_path`, `changes`, `name`, `preview`, `stderr`, `error`, and `truncated`. File changes carry `path`, `operation`, and available `move_path` and bounded diff/content `preview`. |
+| `truncated` | bool | Present as `true` when record text was trimmed. |
+| `duplicate_of` | int | Physical line of the canonical message for a confirmed Codex echo. |
+| `source_type` | str | Original record type for a fallback whose shape is not normalized. |
+| `unavailable` | list[str] | Unknown or unavailable content blocks requiring raw inspection if relevant. |
+
+Command exit codes preserve zero. Completion status alone does not prove command success. Modern
+Codex custom tool outputs and completed command, file-change, and MCP events are normalized before
+metadata is removed. Physical line numbers locate the unchanged copied source; per-line hashes,
+byte counts, correlation IDs, and normalization metadata are not retained in compact records.
+
+Confirmed Codex message echoes return a physical line and `duplicate_of` instead of repeated text.
+Matching requires adjacent records, identical role and complete text, the source's message/echo
+ordering, and timestamps separated by at most 100 ms in logging order. This includes known modern
+completed-message events. Repeated messages without this proof remain separate. The canonical
+line is independent of the requested range. Full mode returns both original raw records.
 
 ### Compact trimming policy
 
-Compact mode trims only:
+Compaction first normalizes evidence, then removes known scaffolding and redundant metadata:
 
-- **Tool result payloads larger than 1 KiB** — trimmed to a head preview (~320 bytes) and tail
-  preview (~160 bytes) joined by an elision marker. `raw_bytes` and `truncated: true` are always
-  reported.
-- **Assistant reasoning/thinking** — omitted entirely. The `summary` reads `"Assistant reasoning
-  omitted."` and `truncated: true` is set.
+- **Tool results larger than 1 KiB** retain a head preview (about 320 bytes) and tail preview
+  (about 160 bytes), joined by an elision marker and marked `truncated: true`. Tool inputs use
+  bounded previews too.
+- **Known metadata and source context** are omitted: token accounting, reasoning, settings,
+  environment/bootstrap instructions, and recognized lifecycle metadata. These omissions do not
+  create records or extra local audit files.
+- **Failures, interruptions, and parent-visible child results** remain observable. Unknown,
+  malformed, and unavailable content remains identifiable for a narrow full-mode read.
 
-Compact mode never trims:
-
-- Normal user messages.
-- Normal assistant text messages.
-- Tool result payloads at or below 1 KiB.
-
-Compact mode does not extract the content of Claude `attachment` records (e.g. task-notification
-subagent results); they appear as an `attachment` record with a generic summary. Use
-`mode="full"` on that specific line if the exact attachment content is needed.
+Genuine user and assistant text stays exact, including Claude string and text-block messages.
+Large genuine messages are paginated rather than shortened. Small tool results remain intact.
+Use `mode="full"` on specific lines when a trimmed result, attachment, or unknown shape leaves an
+evidence gap. Full mode reads the unchanged source copy.
 
 ### Full return shape
 
-Full mode returns verbatim raw JSONL lines. Results can be very large.
+Full mode returns verbatim raw JSONL lines within the same page budget. Large lines require
+multiple pages.
 
 ```json
 {
-  "status": "ok",
-  "project_key": "ReportGenerator-e6ff7eeda632",
-  "session_ref": "S0001",
-  "line_range": {"start": 27, "end": 27},
-  "mode": "full",
   "records": [
     {
       "line": 27,
-      "raw_line": "{...}",
-      "raw_bytes": 98099,
-      "raw_sha256": "<sha256>"
+      "raw_line": "{\"type\":\"event_msg\"}"
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
-Full record fields: `line` (int), `raw_line` (str), `raw_bytes` (int), `raw_sha256` (str).
+Full records contain only `line` (int) and `raw_line` (str).
 
-The maximum range for compact mode is 2000 lines; for full mode, 100 lines.
+In either mode, an oversized record uses this fragment shape in `records`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `line` | int | Physical line of the original source record. |
+| `record_format` | `compact_json` \| `raw_line` | The fragment reconstructs a serialized compact record or the original raw line. |
+| `offset` | int | Zero-based Unicode-character offset in that content. |
+| `total_chars` | int | Character count of the complete content. |
+| `content` | str | This page's contiguous content fragment. |
+
+Concatenate fragments of the same physical line in offset order. For `compact_json`, parse the
+completed text as JSON to recover the usual compact record; for `raw_line`, the completed text is
+the original line. A fragment is not a complete record. Pagination never changes citation line
+numbers, and the final fragment may share a page with subsequent whole records.
 
 ### Error model
 
@@ -178,7 +189,7 @@ Invalid inputs return a structured result:
 
 Error cases: unknown `project_key`, unknown `session_ref`, missing session file, `start_line < 1`,
 reversed range (`end_line < start_line`), `start_line` or `end_line` past the session's last line,
-range too broad for the requested mode.
+or a cursor outside the range or record content. Error text is also bounded by the page budget.
 
 ## `write_evidence`
 

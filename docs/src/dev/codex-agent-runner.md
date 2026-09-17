@@ -176,7 +176,7 @@ prompt on the same runner only when the artifact still needs work.
 `CodexAgentSessionFactory` wraps a `CodexBackend` in an `AsyncExitStack` and mints a fresh
 `CodexAgentRunner` per `runner()` call — each runner is lifecycle-free; only the factory is a
 managed context. The package depends on the published `openai-codex` SDK and loads it lazily; use
-`uv sync --prerelease=allow` when resolving a development environment. The adapter module is not
+`uv sync` when resolving a development environment. The adapter module is not
 exported from `prompt_diary.__init__`.
 
 ## Codex SDK Usage
@@ -293,7 +293,7 @@ tests (`tests/integrations/test_codex_runner.py`) mock the `openai_codex` SDK im
 Real integration tests for this module may spend model tokens, so they remain opt-in rather than
 part of the normal unit-test run.
 
-Run the live wrapper tests from a development checkout after `uv sync --prerelease=allow` and Codex
+Run the live wrapper tests from a development checkout after `uv sync` and Codex
 authentication:
 
 ```bash

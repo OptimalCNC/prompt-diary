@@ -21,12 +21,10 @@ console command after installation; `report` is installed as a compatibility ali
 Install Prompt Diary from PyPI as an isolated `uv` tool:
 
 ```bash
-uv tool install --prerelease=allow prompt-diary
+uv tool install prompt-diary
 ```
 
-Prompt Diary depends on the Codex Python SDK for agent-backed report generation. The current
-Codex SDK packaging uses prerelease packages, so `uv` needs explicit prerelease consent while
-resolving the tool environment.
+Prompt Diary depends on the stable Codex Python SDK for agent-backed report generation.
 
 Configure publishing if you want reports sent to Notion:
 

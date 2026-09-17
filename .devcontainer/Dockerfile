@@ -1,4 +1,4 @@
-ARG UV_VERSION=0.11.14
+ARG UV_VERSION=0.12.15
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
@@ -93,8 +93,8 @@ RUN mkdir -p \
         ${CLAUDE_CONFIG_DIR} \
         ${CODEX_HOME}
 
-ENV RG_VERSION=15.1.0
-ENV GH_VERSION=2.89.0
+ENV RG_VERSION=15.2.0
+ENV GH_VERSION=2.101.0
 RUN arch="$(dpkg --print-architecture)" \
     && gh_cli_filename="gh_${GH_VERSION}_linux_${arch}.deb" \
     && rg_cli_filename="ripgrep_${RG_VERSION}-1_${arch}.deb" \

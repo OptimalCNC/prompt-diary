@@ -93,7 +93,7 @@ def test_inspect_report_summarizes_progress_by_project(tmp_path: Path) -> None:
     _write_json(
         project_dir / "project.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "project_key": "work-data-111111111111",
             "project_label": "work-data",
         },
@@ -149,7 +149,7 @@ def test_inspect_report_summarizes_progress_by_project(tmp_path: Path) -> None:
     _write_json(
         reports_root / "private" / "2026-06-05" / "audit.manifest.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "sessions": [
                 {
                     "workspace_project_key": "work-data-111111111111",
@@ -213,7 +213,7 @@ def test_inspect_report_reports_malformed_progress_artifact(tmp_path: Path) -> N
     _write_json(
         project_dir / "project.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "project_key": "work-data-111111111111",
             "project_label": "work-data",
         },
@@ -268,7 +268,7 @@ def _write_workspace(
     _write_json(
         workspace / "metadata.json",
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "report_date": report_date,
             "timezone": timezone,
             "status": "final",

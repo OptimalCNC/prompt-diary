@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from prompt_diary.generate.evidence_extraction.mcp import validate_evidence_chain_against_turn
 from prompt_diary.generate.evidence_extraction.model import (
@@ -20,11 +20,36 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class EvidenceCardInspection:
-    """Result of inspecting one session evidence-card artifact."""
+class EvidenceCardCheckpoint:
+    """Validated evidence that can be reused, including an unfinished session."""
 
-    complete: bool
-    errors: tuple[str, ...] = ()
+    committed_turn_refs: frozenset[str]
+    missing_turn_refs: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every indexed turn has valid committed evidence."""
+        return not self.missing_turn_refs
+
+    @property
+    def errors(self) -> tuple[str, ...]:
+        """Describe missing coverage to prerequisite consumers."""
+        return (_missing_turns_message(self.missing_turn_refs),) if self.missing_turn_refs else ()
+
+
+@dataclass(frozen=True)
+class InvalidEvidenceCard:
+    """An absent or invalid artifact that provides no reusable checkpoint."""
+
+    errors: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Invalid evidence never satisfies a prerequisite."""
+        return False
+
+
+EvidenceCardInspection: TypeAlias = EvidenceCardCheckpoint | InvalidEvidenceCard
 
 
 def inspect_evidence_card(
@@ -79,10 +104,9 @@ def inspect_evidence_card_for_session(
         seen.add(turn_ref)
 
     missing = tuple(turn.turn_ref for turn in session.turns if turn.turn_ref not in seen)
-    if missing:
-        errors.append(_missing_turns_message(missing))
-
-    return EvidenceCardInspection(complete=not errors, errors=tuple(errors))
+    if errors:
+        return InvalidEvidenceCard(errors=tuple(errors))
+    return EvidenceCardCheckpoint(frozenset(seen), missing)
 
 
 def _read_card(path: Path) -> dict[str, Any] | None:
@@ -138,8 +162,8 @@ def _find_session(project: PreparedProject, session_ref: str) -> IndexedSession 
     return next((item for item in project.sessions if item.session_ref == session_ref), None)
 
 
-def _incomplete(error: str) -> EvidenceCardInspection:
-    return EvidenceCardInspection(complete=False, errors=(error,))
+def _incomplete(error: str) -> InvalidEvidenceCard:
+    return InvalidEvidenceCard(errors=(error,))
 
 
 def _as_list(value: object) -> list[Any]:

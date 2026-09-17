@@ -112,9 +112,8 @@ def test_prepare_workflow_assigns_row_local_turn_refs_for_multi_turn_sessions(
     ] == [("T0001", 2, 5), ("T0002", 6, 8), ("T0003", 9, 10)]
 
 
-def test_prepare_workflow_copies_subagents_as_parent_session_context(tmp_path: Path) -> None:
+def test_prepare_workflow_keeps_parent_results_without_copying_children(tmp_path: Path) -> None:
     fixture = _prepare_fixture("prepare-subagents")
-
     result = _prepare_workflow(
         date=TARGET_DATE,
         today=False,
@@ -125,97 +124,20 @@ def test_prepare_workflow_copies_subagents_as_parent_session_context(tmp_path: P
         now=TARGET_NOW,
     )
 
-    assert result.created
-    assert result.project_count == 1
     assert result.session_count == 2
     project_dir = _single_directory(result.workspace_path / "projects")
     rows = _load_jsonl(project_dir / "sessions.index.jsonl")
-    rows_by_source = _rows_by_source(rows)
-
-    codex_row = rows_by_source["codex"]
-    assert codex_row["source_session_id"] == "codex-parent"
-    assert codex_row["target_start_line"] == 3
-    assert codex_row["target_end_line"] == 8
-    assert codex_row["subagent_path"] == "sessions/codex/subagents/codex-parent"
-    codex_turns = cast("list[JsonObject]", codex_row["turns"])
-    assert codex_turns == [
-        {
-            "turn_ref": "T0001",
-            "turn_start_line": 3,
-            "turn_end_line": 8,
-            "target_subagents": [
-                {
-                    "agent_role": "explorer",
-                    "association": "spawned_or_returned_in_target_span",
-                    "parent_result_line": 7,
-                    "parent_spawn_line": 4,
-                    "session_file": "rollout-2026-05-12T08-17-39-codex-child.jsonl",
-                    "source_session_id": "codex-child",
-                }
-            ],
-        }
-    ]
-    assert "target_subagents" not in codex_row
-
-    claude_row = rows_by_source["claude-code"]
-    assert claude_row["source_session_id"] == "00000000-0000-4000-8000-00000000c001"
-    assert claude_row["target_start_line"] == 2
-    assert claude_row["target_end_line"] == 6
-    assert (
-        claude_row["subagent_path"]
-        == "sessions/claude-code/subagents/00000000-0000-4000-8000-00000000c001"
-    )
-    claude_turns = cast("list[JsonObject]", claude_row["turns"])
-    assert claude_turns == [
-        {
-            "turn_ref": "T0001",
-            "turn_start_line": 2,
-            "turn_end_line": 6,
-            "target_subagents": [
-                {
-                    "agent_role": "Explore",
-                    "association": "spawned_or_returned_in_target_span",
-                    "parent_result_line": 5,
-                    "parent_spawn_line": 3,
-                    "session_file": "agent-a000000000000001.jsonl",
-                    "source_session_id": "a000000000000001",
-                }
-            ],
-        }
-    ]
-    assert "target_subagents" not in claude_row
-
-    codex_subagents = cast("list[JsonObject]", codex_turns[0]["target_subagents"])
-    claude_subagents = cast("list[JsonObject]", claude_turns[0]["target_subagents"])
-    copied_codex_subagent = (
-        project_dir
-        / str(codex_row["subagent_path"])
-        / str(
-            codex_subagents[0]["session_file"],
-        )
-    )
-    copied_claude_subagent = (
-        project_dir
-        / str(claude_row["subagent_path"])
-        / str(
-            claude_subagents[0]["session_file"],
-        )
-    )
-    assert copied_codex_subagent.read_text(encoding="utf-8") == (
-        fixture.codex_root / "2026" / "05" / "12" / "rollout-2026-05-12T08-17-39-codex-child.jsonl"
-    ).read_text(encoding="utf-8")
-    assert copied_claude_subagent.read_text(encoding="utf-8") == (
-        fixture.claude_root
-        / "-fake-ReportGenerator"
-        / "00000000-0000-4000-8000-00000000c001"
-        / "subagents"
-        / "agent-a000000000000001.jsonl"
-    ).read_text(encoding="utf-8")
-
-    assert not (
-        project_dir / "sessions" / "codex" / "rollout-2026-05-12T08-17-39-codex-child.jsonl"
-    ).exists()
-    assert not (project_dir / "sessions" / "claude-code" / "agent-a000000000000001.jsonl").exists()
+    sources = {spec.source: spec.root for spec in fixture.source_specs}
+    assert len(list((project_dir / "sessions").rglob("*.jsonl"))) == 2
+    assert not list((project_dir / "sessions").rglob("subagents"))
+    for row in rows:
+        assert "subagent_path" not in row
+        turns = cast("list[JsonObject]", row["turns"])
+        assert all("target_subagents" not in turn for turn in turns)
+        copied = project_dir / str(row["session_path"])
+        original = next(sources[str(row["source"])].rglob(copied.name))
+        # Parent-visible tool results and completion notifications retain their original lines.
+        assert copied.read_bytes() == original.read_bytes()
 
 
 def test_prepare_workflow_reuses_existing_workspace_counts_projects_and_sessions(
@@ -312,7 +234,6 @@ def test_prepare_workflow_handles_payload_timestamp_turn_context_cwd_and_end_bou
             "turn_ref": "T0001",
             "turn_start_line": 3,
             "turn_end_line": 3,
-            "target_subagents": [],
         }
     ]
     assert not (project_dir / "sessions" / "codex" / "end-boundary-only.jsonl").exists()
@@ -346,7 +267,6 @@ def test_prepare_workflow_indexes_cross_day_agent_reactions_by_human_trigger(
             "turn_ref": "T0001",
             "turn_start_line": 4,
             "turn_end_line": 13,
-            "target_subagents": [],
         }
     ]
     copied_session = may18_project / str(may18_row["session_path"])
@@ -380,7 +300,6 @@ def test_prepare_workflow_indexes_cross_day_agent_reactions_by_human_trigger(
             "turn_ref": "T0001",
             "turn_start_line": 16,
             "turn_end_line": 18,
-            "target_subagents": [],
         }
     ]
 
@@ -501,7 +420,7 @@ def _assert_realistic_workspace(
     fixture: PrepareFixture,
 ) -> None:
     metadata = _load_json(workspace_path / "metadata.json")
-    assert metadata["schema_version"] == 2
+    assert metadata["schema_version"] == 3
     assert metadata["report_date"] == TARGET_DATE
     assert metadata["timezone"] == TARGET_TIMEZONE
     assert metadata["report_window_utc"] == {
@@ -511,7 +430,7 @@ def _assert_realistic_workspace(
 
     project_dir = _single_directory(workspace_path / "projects")
     project_json = _load_json(project_dir / "project.json")
-    assert project_json["schema_version"] == 2
+    assert project_json["schema_version"] == 3
     assert project_json["project_label"] == "ReportGenerator"
 
     rows_by_source = _rows_by_source(_load_jsonl(project_dir / "sessions.index.jsonl"))
@@ -524,7 +443,6 @@ def _assert_realistic_workspace(
             "turn_ref": "T0001",
             "turn_start_line": 4,
             "turn_end_line": 6,
-            "target_subagents": [],
         }
     ]
     assert rows_by_source["claude-code"]["source_session_id"] == (
@@ -537,7 +455,6 @@ def _assert_realistic_workspace(
             "turn_ref": "T0001",
             "turn_start_line": 3,
             "turn_end_line": 5,
-            "target_subagents": [],
         }
     ]
 

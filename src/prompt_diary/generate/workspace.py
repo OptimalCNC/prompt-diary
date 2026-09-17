@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
 
 from prompt_diary.errors import PromptDiaryError
+from prompt_diary.models import WORKSPACE_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from prompt_diary.models import JsonObject
@@ -68,6 +69,8 @@ def load_prepared_workspace(workspace_path: Path) -> PreparedWorkspace:
     """Parse prepared workspace indexes into typed generation planning inputs."""
     metadata_path = workspace_path / "metadata.json"
     metadata = _load_json_object(metadata_path)
+    if metadata.get("schema_version") != WORKSPACE_SCHEMA_VERSION:
+        raise PromptDiaryError(_unsupported_schema_message(metadata_path))
     return PreparedWorkspace(
         workspace_path=workspace_path,
         report_date=_required_string(metadata, "report_date", path=metadata_path),
@@ -371,6 +374,13 @@ def _duplicate_turn_ref_message(path: Path, line_number: int, turn_ref: str) -> 
 
 def _missing_json_file_message(path: Path) -> str:
     return f"required JSON file is missing: {path}"
+
+
+def _unsupported_schema_message(path: Path) -> str:
+    return (
+        f"Unsupported prepared workspace schema at {path}. "
+        "Run prompt-diary prepare --force for this report date and timezone to rebuild it."
+    )
 
 
 def _invalid_json_message(path: Path, message: str) -> str:

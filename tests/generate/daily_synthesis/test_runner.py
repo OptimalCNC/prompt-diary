@@ -19,6 +19,7 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_retry import AgentRetryPolicy
+from prompt_diary.generate.agent_settings import AgentSettings, DailySynthesisAgentSettings
 from prompt_diary.generate.daily_synthesis.runner import DailySynthesisRunner
 from prompt_diary.generate.pipeline import (
     TaskSpec,
@@ -171,7 +172,7 @@ def test_runner_discards_unsound_existing_project_summary_citations(
     result = _run(factory, workspace)
 
     assert result.status == "success"
-    assert any("write_project_summary" in prompt for prompt in factory.prompts)
+    assert any(runner.config.mcp_tools == ("write_project_summary",) for runner in factory.runners)
 
 
 def test_runner_skips_engagement_but_runs_missing_team_learning(tmp_path: Path) -> None:
@@ -186,7 +187,7 @@ def test_runner_skips_engagement_but_runs_missing_team_learning(tmp_path: Path) 
 
     assert result.status == "success"
     assert len(factory.runners) == 1
-    assert "write_team_learning" in factory.prompts[0]
+    assert factory.runners[0].config.mcp_tools == ("write_team_learning",)
 
 
 def test_runner_regenerates_invalid_existing_slot(tmp_path: Path) -> None:
@@ -201,7 +202,7 @@ def test_runner_regenerates_invalid_existing_slot(tmp_path: Path) -> None:
 
     assert result.status == "success"
     assert len(factory.runners) == 1
-    assert "write_engagement" in factory.prompts[0]
+    assert factory.runners[0].config.mcp_tools == ("write_engagement",)
     assert load_daily_report(workspace)["engagement_assessment"] is not None
 
 
@@ -218,18 +219,18 @@ def test_runner_discards_daily_slots_when_project_work_items_change(tmp_path: Pa
 
     assert result.status == "success"
     assert len(factory.runners) == 4
-    assert any("write_project_summary" in prompt for prompt in factory.prompts)
-    assert any("write_report_title" in prompt for prompt in factory.prompts)
-    assert any("write_engagement" in prompt for prompt in factory.prompts)
-    assert any("write_team_learning" in prompt for prompt in factory.prompts)
+    assert any(runner.config.mcp_tools == ("write_project_summary",) for runner in factory.runners)
+    assert any(runner.config.mcp_tools == ("write_report_title",) for runner in factory.runners)
+    assert any(runner.config.mcp_tools == ("write_engagement",) for runner in factory.runners)
+    assert any(runner.config.mcp_tools == ("write_team_learning",) for runner in factory.runners)
 
 
 def _summary_pass_project_keys(factory: DailySynthesisAgentSessionFactory) -> list[str]:
     keys: list[str] = []
-    for prompt in factory.prompts:
-        if "write_project_summary" not in prompt:
+    for runner in factory.runners:
+        if runner.config.mcp_tools != ("write_project_summary",):
             continue
-        match = re.search(r"^- Project key: (.+)$", prompt, re.MULTILINE)
+        match = re.search(r"^- Project key: (.+)$", runner.prompts[0], re.MULTILINE)
         assert match is not None
         keys.append(match.group(1).strip())
     return keys
@@ -266,6 +267,12 @@ def test_runner_two_projects_fills_both_summaries(tmp_path: Path) -> None:
     assert report["report_title"] is not None
     assert report["engagement_assessment"] is not None
     assert report["team_learning"] is not None
+    first, second = factory.runners[:2]
+    assert first.config.base_instructions == second.config.base_instructions
+    for key, runner in zip((TWO_PROJECTS_KEY_A, TWO_PROJECTS_KEY_B), (first, second), strict=True):
+        assert runner.config.base_instructions is not None
+        assert key not in runner.config.base_instructions
+        assert key in runner.prompts[0]
 
 
 def test_runner_report_title_prompt_uses_summary_context(tmp_path: Path) -> None:
@@ -274,7 +281,11 @@ def test_runner_report_title_prompt_uses_summary_context(tmp_path: Path) -> None
 
     _run(factory, workspace)
 
-    title_prompts = [prompt for prompt in factory.prompts if "write_report_title" in prompt]
+    title_prompts = [
+        runner.prompts[0]
+        for runner in factory.runners
+        if runner.config.mcp_tools == ("write_report_title",)
+    ]
     assert len(title_prompts) == 1
     prompt = title_prompts[0]
     assert f"Summary of {PROJECT_KEY} for the day." in prompt
@@ -290,6 +301,19 @@ def test_runner_uses_a_fresh_conversation_per_pass(tmp_path: Path) -> None:
 
     # Each pass is its own agent conversation, each running exactly one turn.
     assert [len(runner.prompts) for runner in factory.runners] == [1, 1, 1, 1]
+    writers = (
+        "write_project_summary",
+        "write_report_title",
+        "write_engagement",
+        "write_team_learning",
+    )
+    for runner, writer in zip(factory.runners, writers, strict=True):
+        assert runner.config.mcp_tools == (writer,)
+        instructions = runner.config.base_instructions
+        assert instructions is not None
+        assert writer in instructions
+        assert "## Role" not in runner.prompts[0]
+        assert PROJECT_KEY not in instructions
 
 
 def test_runner_resumes_failed_pass_on_same_runner(tmp_path: Path) -> None:
@@ -306,19 +330,56 @@ def test_runner_resumes_failed_pass_on_same_runner(tmp_path: Path) -> None:
     assert report["engagement_assessment"] is not None
 
 
-def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
+def test_daily_retry_reminder_does_not_repeat_source_messages(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    envelope_path = workspace / "projects" / PROJECT_KEY / "project-synthesis.json"
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    sentinel = "DAILY_SOURCE_SENTINEL" * 1000
+    envelope["source_user_messages"][0]["messages"] = [sentinel]
+    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory(
+        fail_once_passes=frozenset({"engagement", "team_learning"})
+    )
+
+    assert _run(factory, workspace).status == "success"
+
+    for runner in factory.runners[2:]:
+        initial, retry = runner.prompts
+        assert sentinel in initial
+        assert "DAILY_SOURCE_SENTINEL" not in retry
+        assert runner.config.base_instructions is not None
+        assert "DAILY_SOURCE_SENTINEL" not in runner.config.base_instructions
+        assert "write_" in retry
+
+
+def test_runner_uses_packaged_settings_for_each_pass(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
 
     _run(factory, workspace)
 
-    assert factory.runners[0].config.reasoning_effort == "medium"
+    assert [
+        (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
+    ] == [
+        ("gpt-5.6-terra", "low"),
+        ("gpt-5.6-terra", "low"),
+        ("gpt-6-astra", "medium"),
+        ("gpt-6-astra", "medium"),
+    ]
 
 
-def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+def test_runner_selects_independent_settings_for_each_pass(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     factory = DailySynthesisAgentSessionFactory()
-    runner = DailySynthesisRunner(agent_factory=factory, reasoning_effort="high")
+    runner = DailySynthesisRunner(
+        agent_factory=factory,
+        settings=DailySynthesisAgentSettings(
+            project_summary=AgentSettings(model="summary-model", reasoning_effort="low"),
+            report_title=AgentSettings(model="title-model", reasoning_effort="medium"),
+            engagement=AgentSettings(model="engagement-model", reasoning_effort="high"),
+            team_learning=AgentSettings(model="learning-model", reasoning_effort="xhigh"),
+        ),
+    )
 
     async def run() -> None:
         async with factory:
@@ -326,7 +387,18 @@ def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
 
     asyncio.run(run())
 
-    assert factory.runners[0].config.reasoning_effort == "high"
+    expected = {
+        "write_project_summary": ("summary-model", "low"),
+        "write_report_title": ("title-model", "medium"),
+        "write_engagement": ("engagement-model", "high"),
+        "write_team_learning": ("learning-model", "xhigh"),
+    }
+    for tool_name, settings in expected.items():
+        configs = [
+            agent.config for agent in factory.runners if agent.config.mcp_tools == (tool_name,)
+        ]
+        assert len(configs) == 1
+        assert (configs[0].model, configs[0].reasoning_effort) == settings
 
 
 # --- pass failures -------------------------------------------------------------------------------

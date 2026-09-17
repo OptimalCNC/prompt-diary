@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from prompt_diary.generate.project_synthesis.cards import (
     committed_turn_keys,
@@ -14,6 +14,7 @@ from prompt_diary.generate.project_synthesis.mcp import validate_work_item_again
 from prompt_diary.generate.project_synthesis.model import (
     InvalidWorkItem,
     TurnReference,
+    WorkItem,
     parse_work_item,
 )
 from prompt_diary.generate.workspace import load_prepared_workspace
@@ -25,11 +26,45 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class ProjectSynthesisInspection:
-    """Result of inspecting one project synthesis artifact."""
+class ProjectSynthesisCheckpoint:
+    """Validated work items and their remaining indexed coverage."""
 
-    complete: bool
-    errors: tuple[str, ...] = ()
+    work_items: tuple[WorkItem, ...]
+    uncovered_turns: tuple[TurnReference, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether the validated work items cover the project."""
+        return not self.uncovered_turns
+
+    @property
+    def errors(self) -> tuple[str, ...]:
+        """Describe missing coverage to prerequisite consumers."""
+        return (_missing_turns_message(self.uncovered_turns),) if self.uncovered_turns else ()
+
+    @property
+    def covered_keys(self) -> frozenset[tuple[str, str]]:
+        """Return coverage proved by the validated work items."""
+        return frozenset(
+            (ref.session_ref, ref.turn_ref)
+            for item in self.work_items
+            for ref in item.covered_turns
+        )
+
+
+@dataclass(frozen=True)
+class InvalidProjectSynthesis:
+    """An absent or invalid envelope with no reusable checkpoint."""
+
+    errors: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Invalid synthesis never satisfies a prerequisite."""
+        return False
+
+
+ProjectSynthesisInspection: TypeAlias = ProjectSynthesisCheckpoint | InvalidProjectSynthesis
 
 
 def inspect_project_synthesis(
@@ -67,6 +102,7 @@ def inspect_project_synthesis_envelope(
     work_items = _as_list(envelope.get("work_items"))
     covered: set[tuple[str, str]] = set()
     existing_refs: set[str] = set()
+    validated_items: list[WorkItem] = []
 
     for index, raw_item in enumerate(work_items):
         if not isinstance(raw_item, dict):
@@ -87,12 +123,12 @@ def inspect_project_synthesis_envelope(
         errors.extend(error.message for error in validation_errors)
         existing_refs.add(item.work_item_ref)
         covered.update((ref.session_ref, ref.turn_ref) for ref in item.covered_turns)
+        validated_items.append(item)
 
     missing = tuple(ref for ref in universe if (ref.session_ref, ref.turn_ref) not in covered)
-    if missing:
-        errors.append(_missing_turns_message(missing))
-
-    return ProjectSynthesisInspection(complete=not errors, errors=tuple(errors))
+    if errors:
+        return InvalidProjectSynthesis(errors=tuple(errors))
+    return ProjectSynthesisCheckpoint(tuple(validated_items), missing)
 
 
 def _read_envelope(path: Path) -> dict[str, Any] | None:
@@ -128,8 +164,8 @@ def _indexed_turn_universe(project: PreparedProject) -> tuple[TurnReference, ...
     )
 
 
-def _incomplete(error: str) -> ProjectSynthesisInspection:
-    return ProjectSynthesisInspection(complete=False, errors=(error,))
+def _incomplete(error: str) -> InvalidProjectSynthesis:
+    return InvalidProjectSynthesis(errors=(error,))
 
 
 def _as_list(value: object) -> list[Any]:

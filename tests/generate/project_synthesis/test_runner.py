@@ -8,6 +8,7 @@ import pytest
 
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.agent_retry import AgentRetryPolicy
+from prompt_diary.generate.agent_settings import AgentSettings
 from prompt_diary.generate.pipeline import (
     TaskSpec,
     project_synthesis_artifact,
@@ -52,19 +53,23 @@ def _run(factory: GroupingAgentSessionFactory, workspace: Path) -> TaskResult:
     return asyncio.run(run())
 
 
-def test_runner_uses_medium_reasoning_effort_by_default(tmp_path: Path) -> None:
+def test_runner_uses_packaged_agent_settings(tmp_path: Path) -> None:
     workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
 
     _run(factory, workspace)
 
+    assert factory.runners[0].config.model == "gpt-5.6-sol"
     assert factory.runners[0].config.reasoning_effort == "medium"
 
 
-def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
+def test_runner_passes_agent_settings_to_conversation(tmp_path: Path) -> None:
     workspace = copy_complete_project_workspace(tmp_path)
     factory = GroupingAgentSessionFactory()
-    runner = ProjectSynthesisRunner(agent_factory=factory, reasoning_effort="high")
+    runner = ProjectSynthesisRunner(
+        agent_factory=factory,
+        settings=AgentSettings(model="project-model", reasoning_effort="high"),
+    )
 
     async def run() -> None:
         async with factory:
@@ -72,6 +77,7 @@ def test_runner_reasoning_effort_is_overridable(tmp_path: Path) -> None:
 
     asyncio.run(run())
 
+    assert factory.runners[0].config.model == "project-model"
     assert factory.runners[0].config.reasoning_effort == "high"
 
 
@@ -83,6 +89,13 @@ def test_runner_covers_every_turn_and_writes_envelope(tmp_path: Path) -> None:
 
     assert result.status == "success"
     assert len(factory.runners) == 1
+    runner = factory.runners[0]
+    assert runner.config.mcp_tools == ("write_work_item",)
+    assert runner.config.base_instructions is not None
+    assert "## Work Item Shape" in runner.config.base_instructions
+    assert "## Work Item Shape" not in runner.prompts[0]
+    assert PROJECT_KEY not in runner.config.base_instructions
+    assert PROJECT_KEY in runner.prompts[0]
     envelope = load_project_synthesis(workspace)
     covered = {
         (ref["session_ref"], ref["turn_ref"])
@@ -169,7 +182,29 @@ def test_runner_fails_when_a_turn_is_left_uncovered(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert any("agent made no progress" in error for error in result.errors)
     assert len(factory.runners[0].prompts) == 4  # main turn + three no-progress continuations
-    assert not synthesis_path(workspace).exists()
+    assert synthesis_path(workspace).exists()
+    assert len(load_project_synthesis(workspace)["work_items"]) == 1
+
+
+def test_runner_resumes_committed_work_items_after_failure(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
+    failing = GroupingAgentSessionFactory(
+        cover_gaps=False, fail_continuation=True, first_turn_session_limit=1
+    )
+    assert _run(failing, workspace).status == "failed"
+    original = load_project_synthesis(workspace)
+    recovered = GroupingAgentSessionFactory()
+
+    assert _run(recovered, workspace).status == "success"
+
+    envelope = load_project_synthesis(workspace)
+    assert envelope["work_items"][0] == original["work_items"][0]
+    assert envelope["source_user_messages"] == original["source_user_messages"]
+    assert recovered.processed == ["W0002"]
+    prompt = recovered.runners[0].prompts[0]
+    assert "W0001: S0001/T0001, S0001/T0002" in prompt
+    assert "**S0001/T0001**" not in prompt
+    assert "**S0002/T0001**" in prompt
 
 
 def test_runner_recovers_uncovered_turn_via_single_continuation(tmp_path: Path) -> None:
