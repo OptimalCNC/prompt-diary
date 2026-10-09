@@ -149,6 +149,8 @@ def test_language_factory_writes_agents_and_merges_developer_instructions(
             await factory.runner(
                 AgentConfig(
                     working_directory=tmp_path,
+                    model="selected-model",
+                    reasoning_effort="high",
                     base_instructions="Stable phase contract.",
                     developer_instructions="Phase-specific instruction.",
                     mcp_tools=("write_evidence",),
@@ -160,6 +162,8 @@ def test_language_factory_writes_agents_and_merges_developer_instructions(
     assert inner.entered == 1
     assert inner.exited == 1
     assert inner.saw_agents_before_runner is True
+    assert inner.configs[0].model == "selected-model"
+    assert inner.configs[0].reasoning_effort == "high"
     assert inner.configs[0].base_instructions == "Stable phase contract."
     assert inner.configs[0].mcp_tools == ("write_evidence",)
     merged = inner.configs[0].developer_instructions

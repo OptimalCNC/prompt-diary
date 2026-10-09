@@ -23,11 +23,18 @@ from openai_codex.generated.v2_all import (
 from openai_codex.models import JsonObject, Notification
 
 from prompt_diary.agent import AgentConfig
+from prompt_diary.generate.agent_retry import (
+    AgentArtifactStatus,
+    AgentRetryPolicy,
+    run_agent_turn_with_resume,
+)
+from prompt_diary.generate.agent_settings import AgentSettings, load_agent_settings
 from prompt_diary.integrations.codex_runner import (
     CodexAgentRunner,
     CodexBackend,
     CodexBackendConfig,
 )
+from tests.support.codex import SDK_PROBE_SETTINGS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +52,7 @@ class _ObservedRouter(MessageRouter):
         self.loop = loop
         self.monkeypatch = monkeypatch
         self.consumer_started = asyncio.Event()
+        self.consumer_started_turns: asyncio.Queue[str] = asyncio.Queue()
         self.waiting: set[str] = set()
         self.consumed_terminal: list[str] = []
         self.closed: list[str] = []
@@ -56,10 +64,15 @@ class _ObservedRouter(MessageRouter):
         assert subscription is not None
         next_notification = subscription.next
         close = subscription.close
+        first_read = True
 
         def observed_next() -> Notification:
+            nonlocal first_read
             self.waiting.add(turn_id)
             self.loop.call_soon_threadsafe(self.consumer_started.set)
+            if first_read:
+                first_read = False
+                self.loop.call_soon_threadsafe(self.consumer_started_turns.put_nowait, turn_id)
             try:
                 notification = next_notification()
                 if isinstance(notification.payload, TurnCompletedNotification):
@@ -89,14 +102,45 @@ class _MemoryTransport(CodexClient):
         self.loop = loop
         self.interrupt_received = asyncio.Event()
         self.requests: list[str] = []
+        self.payloads: list[JsonObject] = []
         self.close_calls = 0
 
     def _write_message(self, payload: JsonObject) -> None:
         method = payload["method"]
         assert isinstance(method, str)
         self.requests.append(method)
+        self.payloads.append(payload)
         params = payload["params"]
         assert isinstance(params, dict)
+        if method == "thread/start":
+            self.router.route_response(
+                {
+                    "id": payload["id"],
+                    "result": {
+                        "model": params["model"],
+                        "modelProvider": "openai",
+                        "cwd": params["cwd"],
+                        "approvalPolicy": params["approvalPolicy"],
+                        "approvalsReviewer": params["approvalsReviewer"],
+                        "sandbox": {"type": "workspaceWrite"},
+                        "thread": {
+                            "id": "thread-1",
+                            "sessionId": "thread-1",
+                            "cliVersion": "0.162.0",
+                            "createdAt": 0,
+                            "updatedAt": 0,
+                            "cwd": params["cwd"],
+                            "ephemeral": False,
+                            "modelProvider": "openai",
+                            "preview": "",
+                            "source": "appServer",
+                            "status": {"type": "idle"},
+                            "turns": [],
+                        },
+                    },
+                }
+            )
+            return
         assert params["threadId"] == "thread-1"
         result: JsonObject = {}
         if method == "turn/start":
@@ -119,7 +163,7 @@ class _MemoryTransport(CodexClient):
             )
         )
 
-    def complete_followup(self) -> None:
+    def complete_turn(self, turn_id: str) -> None:
         items = [
             ThreadItem(
                 root=AgentMessageThreadItem(
@@ -139,7 +183,7 @@ class _MemoryTransport(CodexClient):
                 Notification(
                     method="item/completed",
                     payload=ItemCompletedNotification(
-                        completed_at_ms=0, thread_id="thread-1", turn_id="turn-2", item=item
+                        completed_at_ms=0, thread_id="thread-1", turn_id=turn_id, item=item
                     ),
                 )
             )
@@ -148,7 +192,7 @@ class _MemoryTransport(CodexClient):
                 method="turn/completed",
                 payload=TurnCompletedNotification(
                     thread_id="thread-1",
-                    turn=Turn(id="turn-2", items=items, status=TurnStatus.completed),
+                    turn=Turn(id=turn_id, items=items, status=TurnStatus.completed),
                 ),
             )
         )
@@ -205,7 +249,7 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
                 transport.router.consumer_started.clear()
                 task = asyncio.create_task(runner.turn("Follow-up task.", timeout_seconds=2))
                 await asyncio.wait_for(transport.router.consumer_started.wait(), timeout=2)
-                transport.complete_followup()
+                transport.complete_turn("turn-2")
                 result = await asyncio.wait_for(asyncio.shield(task), timeout=2)
 
                 assert result.assistant_text == "Final answer."
@@ -224,5 +268,125 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
             transport.router.release_waiters()
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=5))
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected_model", "expected_effort"),
+    [
+        pytest.param(
+            load_agent_settings().evidence_extraction,
+            "gpt-6.1-sol",
+            "medium",
+            id="evidence_extraction",
+        ),
+        pytest.param(
+            load_agent_settings().project_synthesis,
+            "gpt-6.1-sol",
+            "high",
+            id="project_synthesis",
+        ),
+        pytest.param(
+            load_agent_settings().daily_synthesis.project_summary,
+            "gpt-6.1-sol",
+            "low",
+            id="project_summary",
+        ),
+        pytest.param(
+            load_agent_settings().daily_synthesis.report_title,
+            "gpt-6-luna",
+            "low",
+            id="report_title",
+        ),
+        pytest.param(
+            load_agent_settings().daily_synthesis.engagement,
+            "gpt-6.1-sol",
+            "high",
+            id="engagement",
+        ),
+        pytest.param(
+            load_agent_settings().daily_synthesis.team_learning,
+            "gpt-6.1-sol",
+            "high",
+            id="team_learning",
+        ),
+        pytest.param(SDK_PROBE_SETTINGS, "gpt-6-luna", "low", id="sdk_probe"),
+    ],
+)
+def test_assignment_model_and_effort_reach_real_sdk_and_survive_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: AgentSettings,
+    expected_model: str,
+    expected_effort: str,
+) -> None:
+    async def exercise() -> None:
+        transport = _MemoryTransport(asyncio.get_running_loop(), monkeypatch)
+        client = AsyncCodexClient()
+        monkeypatch.setattr(client, "_sync", transport)
+        codex = AsyncCodex()
+        monkeypatch.setattr(codex, "_client", client)
+        monkeypatch.setattr(codex, "_initialized", True)
+
+        def context_factory(*, config: object) -> AsyncCodex:
+            del config
+            return codex
+
+        monkeypatch.setattr(openai_codex, "AsyncCodex", context_factory)
+        operation: asyncio.Task[object] | None = None
+        try:
+            async with CodexBackend(CodexBackendConfig()) as backend:
+                runner = CodexAgentRunner(
+                    backend,
+                    AgentConfig(
+                        working_directory=tmp_path,
+                        model=settings.model,
+                        reasoning_effort=settings.reasoning_effort,
+                        approval_mode="auto_review",
+                        sandbox="workspace-write",
+                    ),
+                )
+                operation = asyncio.create_task(
+                    run_agent_turn_with_resume(
+                        runner=runner,
+                        initial_prompt="Initial assignment.",
+                        resume_prompt=lambda: "Finish the same assignment.",
+                        inspect_artifacts=lambda: AgentArtifactStatus(
+                            complete=transport.requests.count("turn/start") == 2,
+                            progress_marker=False,
+                        ),
+                        progress_made=lambda _before, _after: False,
+                        action="while testing model selection",
+                        retry_policy=AgentRetryPolicy(initial_backoff_seconds=0),
+                    )
+                )
+                for turn_id in ("turn-1", "turn-2"):
+                    assert (
+                        await asyncio.wait_for(
+                            transport.router.consumer_started_turns.get(), timeout=2
+                        )
+                        == turn_id
+                    )
+                    transport.complete_turn(turn_id)
+                result = await asyncio.wait_for(operation, timeout=2)
+                assert result.ok
+                assert result.attempts == 2
+
+            assert transport.requests == ["thread/start", "turn/start", "turn/start"]
+            params = transport.payloads[0]["params"]
+            assert isinstance(params, dict)
+            assert params["model"] == expected_model
+            assert params["config"] == {"model_reasoning_effort": expected_effort}
+            for payload in transport.payloads[1:]:
+                turn_params = payload["params"]
+                assert isinstance(turn_params, dict)
+                assert turn_params["threadId"] == "thread-1"
+                assert "model" not in turn_params
+                assert "effort" not in turn_params
+        finally:
+            transport.router.release_waiters()
+            if operation is not None:
+                await asyncio.gather(operation, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=5))

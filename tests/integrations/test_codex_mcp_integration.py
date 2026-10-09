@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from prompt_diary.agent import AgentConfig
+from prompt_diary.generate.agent_settings import load_agent_settings
 from prompt_diary.generate.evidence_extraction.inputs import build_session_extraction_inputs
 from prompt_diary.generate.prompts import evidence_extractor_instructions, evidence_extractor_prompt
 from prompt_diary.integrations.codex_runner import (
@@ -16,6 +17,7 @@ from prompt_diary.integrations.codex_runner import (
     CodexBackendConfig,
 )
 from prompt_diary.mcp.codex_config import prompt_diary_mcp_overrides
+from tests.support.codex import SDK_PROBE_SETTINGS
 from tests.support.evidence_extraction import (
     PROJECT_KEY as EVIDENCE_PROJECT_KEY,
 )
@@ -56,6 +58,8 @@ def test_codex_runner_live_replies_pong() -> None:
                 backend,
                 AgentConfig(
                     working_directory=Path.cwd(),
+                    model=SDK_PROBE_SETTINGS.model,
+                    reasoning_effort=SDK_PROBE_SETTINGS.reasoning_effort,
                     approval_mode="deny_all",
                     sandbox="workspace-write",
                 ),
@@ -83,6 +87,8 @@ def test_codex_runner_live_approved_prompt_diary_mcp_tool_under_auto_review(
                 backend,
                 AgentConfig(
                     working_directory=tmp_path,
+                    model=SDK_PROBE_SETTINGS.model,
+                    reasoning_effort=SDK_PROBE_SETTINGS.reasoning_effort,
                     approval_mode="auto_review",
                     sandbox="workspace-write",
                 ),
@@ -115,6 +121,8 @@ def test_codex_runner_live_approved_read_session_lines_under_auto_review(
                 backend,
                 AgentConfig(
                     working_directory=tmp_path,
+                    model=SDK_PROBE_SETTINGS.model,
+                    reasoning_effort=SDK_PROBE_SETTINGS.reasoning_effort,
                     approval_mode="auto_review",
                     sandbox="workspace-write",
                 ),
@@ -205,6 +213,7 @@ def test_codex_runner_live_evidence_prompt_reads_only_via_read_session_lines(
         session_index_record=inputs.session_index_record,
         target_turn=inputs.turns[0].target_turn_json,
     )
+    settings = load_agent_settings().evidence_extraction
 
     async def exercise() -> AgentTurnResult:
         async with CodexBackend(
@@ -217,6 +226,8 @@ def test_codex_runner_live_evidence_prompt_reads_only_via_read_session_lines(
                 backend,
                 AgentConfig(
                     working_directory=workspace,
+                    model=settings.model,
+                    reasoning_effort=settings.reasoning_effort,
                     approval_mode="auto_review",
                     sandbox="workspace-write",
                     base_instructions=evidence_extractor_instructions(),

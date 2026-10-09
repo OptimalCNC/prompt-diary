@@ -383,8 +383,8 @@ def test_runner_uses_packaged_agent_settings(tmp_path: Path) -> None:
     assert [
         (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
     ] == [
-        ("gpt-5.6-terra", "medium"),
-        ("gpt-5.6-terra", "medium"),
+        ("gpt-6.1-sol", "medium"),
+        ("gpt-6.1-sol", "medium"),
     ]
 
 

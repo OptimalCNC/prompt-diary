@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 import pytest
 
 import prompt_diary.integrations.codex_runner as codex_runner
+import tests.integrations.test_codex_mcp_integration as live_codex_tests
 from prompt_diary.agent import AgentConfig, AgentSessionFactory, AgentTurnEvent, AgentTurnResult
 from prompt_diary.integrations.codex_runner import (
     CodexAgentRunner,
@@ -17,7 +18,7 @@ from prompt_diary.integrations.codex_runner import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping
+    from collections.abc import AsyncGenerator, Callable, Mapping
     from pathlib import Path
 
 
@@ -211,6 +212,81 @@ class FakeSdkModule:
     CodexConfig = FakeCodexConfig
     AsyncCodex = FakeAsyncCodex
     Sandbox = FakeSandbox
+
+
+@pytest.mark.parametrize(
+    ("probe", "uses_workspace", "reply", "expected_model", "expected_effort"),
+    [
+        pytest.param(
+            live_codex_tests.test_codex_runner_live_replies_pong,
+            False,
+            "PONG",
+            "gpt-6-luna",
+            "low",
+            id="pong",
+        ),
+        pytest.param(
+            live_codex_tests.test_codex_runner_live_approved_prompt_diary_mcp_tool_under_auto_review,
+            True,
+            "MCP_OK",
+            "gpt-6-luna",
+            "low",
+            id="ping",
+        ),
+        pytest.param(
+            live_codex_tests.test_codex_runner_live_approved_read_session_lines_under_auto_review,
+            True,
+            "READ_OK",
+            "gpt-6-luna",
+            "low",
+            id="session_reader",
+        ),
+        pytest.param(
+            live_codex_tests.test_codex_runner_live_evidence_prompt_reads_only_via_read_session_lines,
+            True,
+            "",
+            "gpt-6.1-sol",
+            "medium",
+            id="evidence_compliance",
+        ),
+    ],
+)
+def test_live_codex_probes_select_explicit_model_and_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    probe: Callable[..., None],
+    *,
+    uses_workspace: bool,
+    reply: str,
+    expected_model: str,
+    expected_effort: str,
+) -> None:
+    _patch_sdk(monkeypatch)
+    configs: list[AgentConfig] = []
+
+    async def recorded_turn(
+        self: CodexAgentRunner,
+        prompt: str,
+        *,
+        timeout_seconds: float = 600.0,
+        output_schema: Mapping[str, object] | None = None,
+    ) -> AgentTurnResult:
+        del prompt, timeout_seconds, output_schema
+        configs.append(self.config)
+        return AgentTurnResult(
+            assistant_text=reply,
+            events=(AgentTurnEvent(kind="mcpToolCall", summary="read_session_lines", metadata={}),),
+        )
+
+    monkeypatch.setattr(CodexAgentRunner, "turn", recorded_turn)
+    if uses_workspace:
+        probe(tmp_path)
+    else:
+        probe()
+
+    assert [(config.model, config.reasoning_effort) for config in configs] == [
+        (expected_model, expected_effort)
+    ]
 
 
 def test_turn_result_contracts_accept_structured_events(tmp_path: Path) -> None:
@@ -638,11 +714,12 @@ def test_codex_session_factory_satisfies_agent_session_factory() -> None:
 
 def _patch_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeAsyncCodex.instances = []
+    import_module = codex_runner.importlib.import_module
 
     def fake_import_module(name: str) -> object:
         if name == "openai_codex":
             return FakeSdkModule()
-        raise ModuleNotFoundError(name)
+        return import_module(name)
 
     monkeypatch.setattr(
         codex_runner.importlib,
