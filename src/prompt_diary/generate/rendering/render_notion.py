@@ -1,51 +1,18 @@
-"""Serialize the abstract layout to a Notion page payload (``report.notion.json``).
+"""Render a project-first, evidenced daily report as native Notion blocks.
 
-Notion is a second presentation engine for the daily report, beside Markdown. :func:`render_notion`
-walks the :mod:`~prompt_diary.generate.rendering.layout` tree and serializes each block into
-Notion block objects per the doc's Block→Notion mapping; :func:`render_notion_artifact` reads the
-finalized ``daily-report.json``, builds the layout, renders it, and atomically writes the page
-payload to ``report.notion.json`` at the workspace root. A separate publisher
-(:mod:`~prompt_diary.generate.rendering.notion_publish`) pushes that payload to Notion.
-The source-of-truth structure is documented in ``docs/src/generate/rendering.md#abstract-layout``;
-update that section with any reader-facing layout change made here.
+Project summaries stay visible for scanning the day's work; each work item folds its human
+direction, agent response, results, limits, and original messages into one native toggle.
+Engagement and team learning each keep their reading and qualifications together, followed by
+headings and supporting paragraphs. Spacing and typography establish hierarchy; routine content
+does not need a highlighted container. Evidence remains in a collapsed appendix with citations.
 
-Like the Markdown renderer it only reads model strings carried by the layout blocks and synthesizes
-no prose of its own. The injection-safety story is *structural and simpler than Markdown's*: every
-model-derived string is placed only into a rich-text ``text.content`` field (plain text, no
-``link``, default annotations). Notion stores ``content`` as literal text and never parses
-Markdown/HTML inside it, so a session-derived string carrying ``</details>``, ``# heading``,
-``[x](url)``, or a code span renders verbatim and cannot forge structure. There is therefore no
-escaping pass: the one invariant is that model text never populates a ``text.link.url`` (or any
-other interpreted field), and this renderer emits no link anywhere. Citation runs may carry
-renderer-owned target metadata for the publisher to turn into native Notion inline links after the
-target page IDs are known.
+The Notion-local layout preserves semantic fields that the shared prose layout combines. Rendering
+introduces only navigation labels, never new claims. Model strings enter literal ``text.content``
+fields only; annotations and link-target metadata are renderer-owned. The publisher resolves those
+citation targets and batches the shallow block tree into requests.
 
-Mapping (the "best Notion" choices, not 1:1 with Markdown):
-
-- ``Section`` → ``heading_2``; its children follow as sibling blocks.
-- ``Group`` as a direct section child (a project, or an engagement / team-learning dimension) →
-  ``heading_3``.
-- ``Group`` as a list item (a work item) → a native ``toggle`` (label + disposition / confidence),
-  its blocks nested inside — a collapsible record, the idiomatic Notion form for a titled cluster in
-  a list. Position decides this, like the Markdown renderer's special-casing of a group in a list.
-- ``Prose`` → a ``paragraph`` (standalone) or a ``bulleted_list_item`` / ``numbered_list_item``
-  (in a list); its trailing confidence tags and inline citation metadata ride in the same rich-text
-  array.
-- ``ListBlock`` → a run of list-item blocks (prose items) or toggle blocks (group items).
-- ``Toggle`` → a colored label callout followed by its children. Native toggles are reserved for
-  work-item ``Group`` list items so the published page stays shallow and fast to append. Inside a
-  work-item toggle, section groups are separated by divider blocks and outcome lists get the same
-  label treatment as the context and user-message sections.
-- ``Callout`` tone ``quote`` (a verbatim user message) → a ``quote`` block; tone ``limit`` → a
-  ``callout`` block with a warning icon.
-- ``Empty`` → a ``bulleted_list_item`` carrying the section's fallback text.
-
-Notion content limits are honored in the emitted payload: each ``text.content`` is split into
-≤2000-character runs, and each block's rich-text array is capped at ≤100 runs (a longer single
-string is truncated with a fixed marker — see ``_cap_runs`` — because the publisher can split the
-block *tree* across requests but not one block's rich-text array). The request-shaping limits (≤100
-children / ≤1000 blocks per request and the ~2-level nesting depth per create call) are the
-publisher's concern, since they constrain API requests, not the block tree this module builds.
+Rich text is split into at most 2000 characters per run and capped at 100 runs per block, with a
+fixed truncation marker for oversized content. Request limits belong to the publisher.
 """
 
 from __future__ import annotations
@@ -68,10 +35,17 @@ from prompt_diary.generate.rendering.layout import (
     Group,
     ListBlock,
     Prose,
+    Section,
     Tag,
     Toggle,
-    build_layout,
     load_evidence_appendix,
+)
+from prompt_diary.generate.rendering.notion_layout import (
+    DirectionProse,
+    PracticeProse,
+    ResultList,
+    build_notion_layout,
+    with_notion_project_labels,
 )
 
 if TYPE_CHECKING:
@@ -89,10 +63,8 @@ __all__ = [
 _REPORT_NAME = "daily-report.json"
 _OUTPUT_NAME = "report.notion.json"
 
-# A Section is the top-level region (the page title owns the page itself); a Group nested directly
-# in a section deepens to heading_3. Notion has no heading past heading_3 in this mapping — deeper
-# titled clusters (work items) become toggles, not headings — so the level is capped here.
-_SECTION_HEADING_LEVEL = 2
+# Sections own the top heading level; projects deepen once, and work items become toggles.
+_SECTION_HEADING_LEVEL = 1
 _MAX_HEADING_LEVEL = 3
 
 # Notion caps a rich-text ``content`` string at 2000 characters; a longer model string splits into
@@ -108,17 +80,9 @@ LINK_TARGET_METADATA_KEY = "_prompt_diary_link_target"
 EVIDENCE_TARGET_METADATA_KEY = "_prompt_diary_evidence_target"
 EVIDENCE_APPENDIX_METADATA_KEY = "_prompt_diary_evidence_appendix"
 
-# The limit callout's icon — a warning sign, written as escapes so the source carries no literal
-# emoji (U+26A0 warning sign + U+FE0F emoji-presentation selector).
-_LIMIT_ICON = "\u26a0\ufe0f"
-
 _MINOR_ACTIVITY_LABEL = "Minor activity"
-_SECTION_LABEL_COLORS = {
-    WORK_ITEM_CONTEXT_LABEL: "blue_background",
-    WORK_ITEM_USER_MESSAGES_LABEL: "purple_background",
-    WORK_ITEM_OUTCOMES_LABEL: "green_background",
-    _MINOR_ACTIVITY_LABEL: "gray_background",
-}
+# Role colors aid scanning; only the short labels carry color, leaving the narrative neutral.
+_ROLE_LABEL_COLORS = {"Human direction": "blue", "Agent response": "purple"}
 
 
 @dataclass(frozen=True)
@@ -137,14 +101,14 @@ class NotionPagePayload:
 
 def render_notion_artifact(*, workspace_path: Path) -> Path:
     """Render ``daily-report.json`` to ``report.notion.json`` and return the written path."""
-    report = _load_json(workspace_path / _REPORT_NAME)
+    report = with_notion_project_labels(_load_json(workspace_path / _REPORT_NAME))
     evidence_chains = load_evidence_appendix(workspace_path=workspace_path, report=report)
-    payload = render_notion(build_layout(report, evidence_chains=evidence_chains))
+    payload = render_notion(build_notion_layout(report, evidence_chains=evidence_chains))
     return _write_atomic(workspace_path / _OUTPUT_NAME, _payload_json(payload))
 
 
 def render_notion(document: Document) -> NotionPagePayload:
-    """Serialize a layout :class:`Document` to a Notion page payload."""
+    """Serialize a document, with semantic roles supplied by :func:`build_notion_layout`."""
     children: list[dict[str, Any]] = []
     for section in document.children:
         if section.title == EVIDENCE_APPENDIX_TITLE:
@@ -152,15 +116,95 @@ def render_notion(document: Document) -> NotionPagePayload:
                 _evidence_appendix_toggle(_render_blocks(section.children, heading_level=2))
             )
         else:
-            children.extend(
-                _render_container(
-                    section.title, (), section.children, heading_level=_SECTION_HEADING_LEVEL
-                )
-            )
+            children.append(_heading(_SECTION_HEADING_LEVEL, section.title, ()))
+            if section.title == "Work by Project":
+                for child in section.children:
+                    children.extend(_render_project(child))
+            elif section.title in {"Engagement Assessment", "Team Learning"}:
+                children.extend(_render_reading(section))
+            else:
+                children.extend(_render_blocks(section.children, heading_level=2))
     return NotionPagePayload(
         title=document.title,
         properties=dict(document.properties),
         children=children,
+    )
+
+
+def _render_project(block: Block) -> list[dict[str, Any]]:
+    if not isinstance(block, Group):
+        return _render_one(block, heading_level=2)
+    children = [_heading(2, block.label, ())]
+    for child in block.children:
+        if isinstance(child, Prose):
+            children.append(_paragraph(child, separate_metadata=True))
+        else:
+            children.extend(_render_one(child, heading_level=3))
+    return children
+
+
+def _render_reading(section: Section) -> list[dict[str, Any]]:
+    """Keep each assessment's qualifications with its lead, and group supporting observations."""
+    limits = [child for child in section.children if isinstance(child, Callout)]
+    blocks: list[dict[str, Any]] = []
+    for child in section.children:
+        if isinstance(child, Prose):
+            blocks.append(_paragraph(child, separate_metadata=True))
+            blocks.extend(
+                _labeled_paragraph("Reading limits\n", limit.text, muted=True) for limit in limits
+            )
+        elif isinstance(child, Group):
+            blocks.append(_heading(2, child.label, ()))
+            practices = [
+                item
+                for entry in child.children
+                if isinstance(entry, ListBlock)
+                for item in entry.items
+                if isinstance(item, PracticeProse)
+            ]
+            if practices:
+                for practice in practices:
+                    blocks.extend(_render_practice(practice))
+            else:
+                blocks.extend(_render_blocks(child.children, heading_level=3))
+        elif not isinstance(child, Callout):
+            blocks.extend(_render_one(child, heading_level=2))
+    return blocks
+
+
+def _render_practice(practice: PracticeProse) -> list[dict[str, Any]]:
+    children = [
+        _block("paragraph", {"rich_text": _label_rich_text(practice.text, practice.tags)}),
+        _labeled_paragraph("Why it matters", practice.rationale),
+        _labeled_paragraph("Recurrence", practice.recurrence, muted=True),
+    ]
+    if practice.citation is not None:
+        children.append(
+            _block(
+                "paragraph",
+                {
+                    "rich_text": [
+                        *_text_runs("Evidence  ", annotations={"bold": True, "color": "gray"}),
+                        *_citation_runs(practice.citation),
+                    ]
+                },
+            )
+        )
+    return children
+
+
+def _labeled_paragraph(label: str, text: str, *, muted: bool = False) -> dict[str, Any]:
+    return _block(
+        "paragraph",
+        {
+            "rich_text": [
+                *_text_runs(
+                    f"{label}  ",
+                    annotations={"bold": True, "color": _ROLE_LABEL_COLORS.get(label, "gray")},
+                ),
+                *_text_runs(text, annotations={"color": "gray"} if muted else None),
+            ]
+        },
     )
 
 
@@ -184,15 +228,27 @@ def _render_blocks(children: tuple[Block, ...], *, heading_level: int) -> list[d
 
 def _render_one(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
     if isinstance(block, Group):
-        # A Group reached here is a direct section child (a project or a dimension), so it renders
-        # as a heading; a work-item Group is a list item, handled by ``_render_list`` as a toggle.
+        # Evidence project groups render as headings; work groups become toggles in lists,
+        # while assessment groups are handled by ``_render_reading``.
         tags, body = _split_tags(block)
         return _render_container(block.label, tags, body, heading_level=heading_level)
+    if isinstance(block, DirectionProse):
+        return [_labeled_paragraph(block.role, block.text)]
     if isinstance(block, Prose):
         return [_paragraph(block)]
     if isinstance(block, ListBlock):
         return _render_list(block, heading_level=heading_level)
     if isinstance(block, Toggle):
+        if block.label == _MINOR_ACTIVITY_LABEL:
+            return [
+                _section_label(block.label, muted=True),
+                *[
+                    item
+                    for child in block.children
+                    if isinstance(child, ListBlock)
+                    for item in _render_list(child, heading_level=heading_level, minor=True)
+                ],
+            ]
         return [
             _section_label(block.label),
             *_render_blocks(block.children, heading_level=heading_level),
@@ -207,7 +263,9 @@ def _render_one(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
     return []  # pragma: no cover
 
 
-def _render_list(block: ListBlock, *, heading_level: int) -> list[dict[str, Any]]:
+def _render_list(
+    block: ListBlock, *, heading_level: int, minor: bool = False
+) -> list[dict[str, Any]]:
     """Serialize a list: prose items become list-item blocks, group items become toggles.
 
     A list of *leaves* (Prose — outcomes, observations, synthesized judgments) renders as bulleted /
@@ -223,7 +281,14 @@ def _render_list(block: ListBlock, *, heading_level: int) -> list[dict[str, Any]
         if isinstance(item, Group):
             tags, body = _split_tags(item)
             children = _render_work_item_body(body, heading_level=heading_level + 1)
-            blocks.append(_toggle(_label_rich_text(item.label, tags), children))
+            # The collapsed reading path needs task names; repeated metadata belongs in details.
+            metadata = _tag_runs(tags, separator="")
+            if metadata:
+                children.insert(0, _block("paragraph", {"rich_text": metadata}))
+            toggle = _toggle(_text_runs(item.label), children)
+            if minor:
+                toggle["toggle"]["color"] = "gray"
+            blocks.append(toggle)
         elif isinstance(item, Prose):
             blocks.append(_list_item_block(_list_item_type(block.style), _prose_rich_text(item)))
     return blocks
@@ -233,31 +298,23 @@ def _render_work_item_body(
     children: tuple[Block, ...], *, heading_level: int
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
-    previous_was_limit = False
+    messages: list[dict[str, Any]] = []
     for child in children:
-        rendered = _render_work_item_body_block(child, heading_level=heading_level)
-        if not rendered:
-            continue
-        current_is_limit = isinstance(child, Callout) and child.tone == "limit"
-        if blocks and not (previous_was_limit and current_is_limit):
-            blocks.append(_divider())
-        blocks.extend(rendered)
-        previous_was_limit = current_is_limit
-    return blocks
-
-
-def _render_work_item_body_block(block: Block, *, heading_level: int) -> list[dict[str, Any]]:
-    if isinstance(block, Toggle):
-        return [
-            _section_label(block.label),
-            *_render_blocks(block.children, heading_level=heading_level),
-        ]
-    if isinstance(block, ListBlock):
-        return [
-            _section_label(WORK_ITEM_OUTCOMES_LABEL),
-            *_render_list(block, heading_level=heading_level),
-        ]
-    return _render_one(block, heading_level=heading_level)
+        if isinstance(child, Toggle) and child.label == WORK_ITEM_USER_MESSAGES_LABEL:
+            messages = [
+                _section_label("Original user messages", muted=True),
+                *_render_blocks(child.children, heading_level=heading_level),
+            ]
+        elif isinstance(child, Toggle) and child.label == WORK_ITEM_CONTEXT_LABEL:
+            blocks.extend(_render_blocks(child.children, heading_level=heading_level))
+        elif isinstance(child, ListBlock):
+            if child.items:
+                label = child.label if isinstance(child, ResultList) else WORK_ITEM_OUTCOMES_LABEL
+                blocks.append(_section_label(label))
+                blocks.extend(_render_list(child, heading_level=heading_level))
+        else:
+            blocks.extend(_render_one(child, heading_level=heading_level))
+    return [*blocks, *messages]
 
 
 def _split_tags(group: Group) -> tuple[tuple[Tag, ...], tuple[Block, ...]]:
@@ -271,22 +328,17 @@ def _heading(level: int, title: str, tags: tuple[Tag, ...]) -> dict[str, Any]:
     return _block(key, {"rich_text": _label_rich_text(title, tags)})
 
 
-def _paragraph(prose: Prose) -> dict[str, Any]:
-    return _block("paragraph", {"rich_text": _prose_rich_text(prose)})
-
-
-def _section_label(label: str) -> dict[str, Any]:
+def _paragraph(prose: Prose, *, separate_metadata: bool = False) -> dict[str, Any]:
     return _block(
-        "callout",
-        {
-            "rich_text": _text_runs(label),
-            "color": _SECTION_LABEL_COLORS.get(label, "gray_background"),
-        },
+        "paragraph", {"rich_text": _prose_rich_text(prose, separate_metadata=separate_metadata)}
     )
 
 
-def _divider() -> dict[str, Any]:
-    return _block("divider", {})
+def _section_label(label: str, *, muted: bool = False) -> dict[str, Any]:
+    annotations: dict[str, str | bool] = {"bold": True}
+    if muted:
+        annotations["color"] = "gray"
+    return _block("paragraph", {"rich_text": _text_runs(label, annotations=annotations)})
 
 
 def _toggle(rich_text: list[dict[str, Any]], children: list[dict[str, Any]]) -> dict[str, Any]:
@@ -324,10 +376,10 @@ def _evidence_chain_entry(block: EvidenceChainEntry) -> dict[str, Any]:
 
 
 def _callout(block: Callout) -> dict[str, Any]:
-    # A verbatim user message renders as a quote; a limit / caveat as a callout with a warning icon.
+    # The shared layout's limit tone describes qualifications, not warning severity.
     if block.tone == "quote":
         return _block("quote", {"rich_text": _text_runs(block.text)})
-    return _block("callout", {"rich_text": _text_runs(block.text), "icon": {"emoji": _LIMIT_ICON}})
+    return _labeled_paragraph("Limits", block.text)
 
 
 def _list_item_block(item_type: str, rich_text: list[dict[str, Any]]) -> dict[str, Any]:
@@ -357,23 +409,42 @@ def _cap_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [*runs[: _MAX_RUNS_PER_BLOCK - 1], _text(_TRUNCATION_MARKER)]
 
 
-def _prose_rich_text(prose: Prose) -> list[dict[str, Any]]:
-    # text runs, then the inline confidence tag(s), then the citation placeholder runs. The citation
-    # gets a leading space run because Notion does not insert whitespace between runs.
+def _prose_rich_text(prose: Prose, *, separate_metadata: bool = False) -> list[dict[str, Any]]:
+    # Summaries give sources their own line; short outcome bullets keep their references inline.
     runs = _text_runs(prose.text)
-    if prose.tags:
-        runs.append(_text(" · " + " · ".join(tag.value for tag in prose.tags)))
+    metadata = _tag_runs(prose.tags, separator="" if separate_metadata else " · ")
     if prose.citation is not None:
-        runs.append(_text(" "))
-        runs.extend(_citation_runs(prose.citation))
-    return runs
+        if metadata or not separate_metadata:
+            metadata.append(_text(" "))
+        metadata.extend(_citation_runs(prose.citation))
+    if metadata and separate_metadata:
+        runs.append(_text("\n"))
+    return [*runs, *metadata]
 
 
 def _label_rich_text(label: str, tags: tuple[Tag, ...]) -> list[dict[str, Any]]:
-    # A heading / toggle label: the text, then any tags as a ``— value · value`` suffix run.
-    runs = _text_runs(label)
-    if tags:
-        runs.append(_text(" — " + " · ".join(tag.value for tag in tags)))
+    # Keep the title prominent; recorded state is metadata, not a latest-status verdict.
+    return [
+        *_text_runs(label, annotations={"bold": True}),
+        *_tag_runs(tags, separator=" — "),
+    ]
+
+
+def _tag_runs(tags: tuple[Tag, ...], *, separator: str) -> list[dict[str, Any]]:
+    runs: list[dict[str, Any]] = []
+    for tag in tags:
+        if not tag.value:
+            continue
+        if runs or separator:
+            runs.append(_text(" · " if runs else separator, annotations={"color": "gray"}))
+        label = (
+            f"{tag.value} confidence"
+            if tag.scale == "confidence"
+            else f"Recorded state: {tag.value}"
+            if tag.scale == "disposition"
+            else tag.value
+        )
+        runs.extend(_text_runs(label, annotations={"color": "gray"}))
     return runs
 
 
@@ -381,7 +452,7 @@ def _citation_runs(citation: Citation) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     for index, ref in enumerate(citation.refs):
         if index:
-            runs.append(_text("; "))
+            runs.append(_text("; ", annotations={"color": "gray"}))
         target = _mapping(ref.get("target")) if _ref_str(ref, "anchor") else {}
         runs.extend(_citation_text_runs(_ref_text(ref), link_target=target or None))
     return runs
@@ -403,22 +474,27 @@ def _ref_str(ref: dict[str, Any], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _text(content: str) -> dict[str, Any]:
-    # A plain rich-text run. No ``link`` and no annotations: model content is literal, never markup.
-    return {"type": "text", "text": {"content": content}}
+def _text(content: str, *, annotations: dict[str, str | bool] | None = None) -> dict[str, Any]:
+    # Annotations are renderer-owned; model content stays literal, never markup or a link.
+    run: dict[str, Any] = {"type": "text", "text": {"content": content}}
+    if annotations is not None:
+        run["annotations"] = annotations
+    return run
 
 
 def _citation_text(content: str, *, link_target: dict[str, Any] | None = None) -> dict[str, Any]:
     # A citation placeholder. It stays plain text in the artifact; the publisher may replace
     # metadata-targeted runs with native Notion page mentions once target page IDs are known.
-    run = _text(content)
+    run = _text(content, annotations={"color": "gray"})
     if link_target is not None:
         run[LINK_TARGET_METADATA_KEY] = link_target
     return run
 
 
-def _text_runs(content: str) -> list[dict[str, Any]]:
-    return [_text(chunk) for chunk in _chunks(content)]
+def _text_runs(
+    content: str, *, annotations: dict[str, str | bool] | None = None
+) -> list[dict[str, Any]]:
+    return [_text(chunk, annotations=annotations) for chunk in _chunks(content)]
 
 
 def _citation_text_runs(

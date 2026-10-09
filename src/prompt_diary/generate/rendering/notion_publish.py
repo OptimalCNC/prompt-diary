@@ -24,10 +24,10 @@ names:
 - other property types — including Notion-managed ``created_time`` / ``last_edited_time`` (the
   recommended type for a creation timestamp, which Notion auto-fills with time) — are left alone.
 
-Report metadata that has no column — status, window, overall confidence — would otherwise be lost,
-so it is rendered into a **status-colored banner callout prepended to the page body** (final green,
-partial yellow), immediately followed by a **table of contents** for navigation. (The report date is
-already in the title and a date column, so it is not repeated in the banner.)
+Report metadata that has no column — status, window, overall confidence — is preserved in a quiet
+paragraph prepended to the page body. Only an explicitly partial report receives a warning callout.
+A folded **table of contents** follows for navigation. The report date is already in a date column,
+so it is not repeated in the metadata.
 
 Request shaping honors Notion's limits without the caller thinking about them: when the body fits
 Notion's create-page limits, the page is created with its body in the same request. Otherwise, the
@@ -72,12 +72,8 @@ _MAX_CHILDREN_PER_REQUEST = 100
 # round trips, but batches still need to stay below the request-wide element cap.
 _MAX_BLOCK_ELEMENTS_PER_REQUEST = 1000
 
-# The metadata banner's icon — a clipboard, written as an escape so the source carries no literal
-# emoji (U+1F4CB clipboard).
-_BANNER_ICON = "\U0001f4cb"
-
-# Banner background color by report status (Notion callout colors); the fallback is neutral gray.
-_STATUS_COLORS = {"final": "green_background", "partial": "yellow_background"}
+# A partial report needs a visible warning (U+26A0 warning sign + U+FE0F presentation selector).
+_PARTIAL_ICON = "\u26a0\ufe0f"
 
 
 class NotionClientProtocol(Protocol):
@@ -285,36 +281,39 @@ def _title_property_name(schema: dict[str, Any]) -> str:
 
 
 def _banner_block(properties: dict[str, str]) -> dict[str, Any]:
-    # Surface the metadata that has no database column (status / window / overall confidence) in a
-    # banner at the top of the page body, so the report stays self-describing against any schema.
-    # The callout is colored by status so an incomplete (partial) report stands out at a glance.
-    text = (
-        f"Status: {properties.get('status', '')} · "
-        f"Window: {properties.get('window', '')} · "
-        f"Overall confidence: {properties.get('overall_confidence', '')}"
-    )
-    return {
-        "object": "block",
-        "type": "callout",
-        "callout": {
-            "rich_text": [_text_run(text)],
-            "icon": {"emoji": _BANNER_ICON},
-            "color": _status_color(properties.get("status", "")),
-        },
+    # Keep routine metadata quiet; an incomplete report merits the exceptional warning callout.
+    body: dict[str, Any] = {
+        "rich_text": [
+            {**_text_run("Status:"), "annotations": {"bold": True}},
+            _text_run(f" {properties.get('status', '')} · "),
+            {**_text_run("Overall confidence:"), "annotations": {"bold": True}},
+            _text_run(f" {properties.get('overall_confidence', '')}\n"),
+            {**_text_run("Window:"), "annotations": {"bold": True}},
+            _text_run(f" {properties.get('window', '')}"),
+        ],
+        "color": "gray",
     }
-
-
-def _status_color(status: str) -> str:
-    # final → green, partial → yellow (caution), anything else → neutral gray.
-    return _STATUS_COLORS.get(status, "gray_background")
+    if properties.get("status") == "partial":
+        body.update(icon={"emoji": _PARTIAL_ICON}, color="yellow_background")
+        return {"object": "block", "type": "callout", "callout": body}
+    return {"object": "block", "type": "paragraph", "paragraph": body}
 
 
 def _table_of_contents_block() -> dict[str, Any]:
-    # A native Notion ToC auto-links the report's headings for quick navigation at the top.
+    # Keep navigation folded so the opening project summaries remain the main reading path.
     return {
         "object": "block",
-        "type": "table_of_contents",
-        "table_of_contents": {"color": "default"},
+        "type": "toggle",
+        "toggle": {
+            "rich_text": [{"type": "text", "text": {"content": "Contents"}}],
+            "children": [
+                {
+                    "object": "block",
+                    "type": "table_of_contents",
+                    "table_of_contents": {"color": "default"},
+                }
+            ],
+        },
     }
 
 
@@ -647,7 +646,10 @@ def _public_rich_text_run(
         return public
     if link_mode == "url":
         return _url_link_run(public, link.url)
-    return _block_mention_run(link.block_id)
+    mention = _block_mention_run(link.block_id)
+    if "annotations" in public:
+        mention["annotations"] = public["annotations"]
+    return mention
 
 
 def _block_mention_run(block_id: str) -> dict[str, Any]:

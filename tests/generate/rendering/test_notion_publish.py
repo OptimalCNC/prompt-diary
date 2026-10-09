@@ -2,7 +2,7 @@
 
 The publisher pushes a rendered ``report.notion.json`` payload into a Notion database as a new row.
 These tests pin the schema-driven property mapping (title by type, date column ← report date, a
-reporter into its text column, others left alone), the status-colored banner and table of contents
+reporter into its text column, others left alone), the quiet metadata and folded table of contents
 prepended to the body, the always-create-new behaviour (one create, never an
 edit/delete), and the request shaping that keeps every append within Notion's
 ≤100 top-level children / ≤1000 block-elements / two-level nesting limits while still uploading an
@@ -376,51 +376,77 @@ def test_publish_raises_when_database_has_no_title_property() -> None:
 # --- metadata banner ---------------------------------------------------------------------------
 
 
-def test_publish_prepends_a_metadata_banner_callout() -> None:
+def test_publish_prepends_a_quiet_metadata_paragraph() -> None:
     client = _FakeNotionClient(_schema())
 
     publish_report(client=client, database_id="db", payload=_payload([]))
 
     first_block = _published_body(client)[0]
-    assert first_block["type"] == "callout"
-    text = "".join(run["text"]["content"] for run in first_block["callout"]["rich_text"])
+    assert first_block["type"] == "paragraph"
+    assert first_block["paragraph"]["color"] == "gray"
+    runs = first_block["paragraph"]["rich_text"]
+    text = "".join(run["text"]["content"] for run in runs)
     # Columns the database lacks (status / window / overall confidence) survive in the body.
-    assert "Status: final" in text
-    assert "Window: 2026-05-28, Asia/Shanghai" in text
-    assert "Overall confidence: medium" in text
+    assert text.splitlines() == [
+        "Status: final · Overall confidence: medium",
+        "Window: 2026-05-28, Asia/Shanghai",
+    ]
+    assert [run["text"]["content"] for run in runs if run.get("annotations", {}).get("bold")] == [
+        "Status:",
+        "Overall confidence:",
+        "Window:",
+    ]
 
 
-def test_publish_colors_the_banner_by_status() -> None:
-    final_client = _FakeNotionClient(_schema())
-    publish_report(client=final_client, database_id="db", payload=_payload([]))
-    final_banner = _published_body(final_client)[0]
-    assert final_banner["callout"]["color"] == "green_background"
+@pytest.mark.parametrize("status", ["final", "partial", "draft", None])
+def test_publish_reserves_the_metadata_warning_for_explicitly_partial_reports(
+    status: str | None,
+) -> None:
+    client = _FakeNotionClient(_schema())
+    properties = {"report_date": "2026-05-28"}
+    if status is not None:
+        properties["status"] = status
 
-    partial_client = _FakeNotionClient(_schema())
-    partial = NotionPagePayload(
-        title="t", properties={"report_date": "2026-05-28", "status": "partial"}, children=[]
+    publish_report(
+        client=client,
+        database_id="db",
+        payload=NotionPagePayload(title="t", properties=properties, children=[]),
     )
-    publish_report(client=partial_client, database_id="db", payload=partial)
-    partial_banner = _published_body(partial_client)[0]
-    assert partial_banner["callout"]["color"] == "yellow_background"
 
-    other_client = _FakeNotionClient(_schema())
-    other = NotionPagePayload(
-        title="t", properties={"report_date": "2026-05-28", "status": "draft"}, children=[]
-    )
-    publish_report(client=other_client, database_id="db", payload=other)
-    other_banner = _published_body(other_client)[0]
-    assert other_banner["callout"]["color"] == "gray_background"  # neutral fallback
+    body = _published_body(client)
+    metadata = body[0]
+    if status == "partial":
+        assert metadata["type"] == "callout"
+        assert metadata["callout"]["color"] == "yellow_background"
+        assert metadata["callout"]["icon"] == {"emoji": "⚠️"}
+        assert sum(block["type"] == "callout" for block in _iter_request_blocks(body)) == 1
+    else:
+        assert metadata["type"] == "paragraph"
+        assert metadata["paragraph"]["color"] == "gray"
+        assert "icon" not in metadata["paragraph"]
+        assert all(block["type"] != "callout" for block in _iter_request_blocks(body))
+    assert len(body) == 2
+    assert [call[0] for call in client.calls] == ["retrieve", "create"]
 
 
-def test_publish_inserts_a_table_of_contents_after_the_banner() -> None:
+def test_publish_inserts_folded_contents_after_the_banner_without_an_extra_request() -> None:
     client = _FakeNotionClient(_schema())
 
     publish_report(client=client, database_id="db", payload=_payload([_para("body")]))
 
     body = _published_body(client)
-    assert body[0]["type"] == "callout"  # banner first
-    assert body[1]["type"] == "table_of_contents"  # then a navigable table of contents
+    assert body[0]["type"] == "paragraph"  # quiet metadata first
+    assert body[1] == _toggle(
+        "Contents",
+        [
+            {
+                "object": "block",
+                "type": "table_of_contents",
+                "table_of_contents": {"color": "default"},
+            }
+        ],
+    )
+    assert [call[0] for call in client.calls] == ["retrieve", "create"]
 
 
 # --- always create new, never edit -------------------------------------------------------------
@@ -456,7 +482,7 @@ def test_publish_creates_page_with_body_when_request_fits() -> None:
     publish_report(client=client, database_id="db", payload=_payload([_para("body")]))
 
     body = _created_body(client)
-    assert [block["type"] for block in body] == ["callout", "table_of_contents", "paragraph"]
+    assert [block["type"] for block in body] == ["paragraph", "toggle", "paragraph"]
     assert _appends(client) == []
 
 
@@ -471,6 +497,7 @@ def test_publish_uses_two_level_requests_without_losing_deep_child_ids() -> None
     # The outer toggle's child still needs its own descendants, so the outer request is stripped to
     # keep the inner toggle's id available from a first-level append result.
     page_blocks = appends[0][1]
+    assert page_blocks[1]["toggle"]["children"][0]["type"] == "table_of_contents"
     outer = page_blocks[2]
     assert "children" not in outer["toggle"]
     # The inner toggle's child is a leaf, so it is safe to inline in the second append request.
@@ -480,12 +507,21 @@ def test_publish_uses_two_level_requests_without_losing_deep_child_ids() -> None
     assert len(appends) == 2
 
 
-def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix() -> None:
+@pytest.mark.parametrize("annotations", [None, {"color": "gray", "italic": True}])
+@pytest.mark.parametrize("status", ["final", "partial"])
+def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix(
+    annotations: dict[str, Any] | None,
+    status: str,
+) -> None:
     client = _FakeNotionClient(_schema())
     target = _internal_link_target()
     claim = _para("Main claim ")
-    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+    citation = _linked_run("S0001/T0001", target)
+    if annotations is not None:
+        citation["annotations"] = annotations
+    claim["paragraph"]["rich_text"].append(citation)
     payload = _payload([claim, _evidence_appendix(target)])
+    payload.properties["status"] = status
 
     publish_report(client=client, database_id="db", payload=payload)
 
@@ -497,10 +533,11 @@ def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix()
     assert appends[0][0] == "page-1"
     assert appends[0][2] is None
     assert [block["type"] for block in appends[0][1]] == [
-        "callout",
-        "table_of_contents",
+        "callout" if status == "partial" else "paragraph",
+        "toggle",
         "heading_1",
     ]
+    assert appends[0][1][1]["toggle"]["children"][0]["type"] == "table_of_contents"
     assert "children" not in appends[0][1][2]["heading_1"]
     assert appends[1][0] == "blk-4"
     assert [block["type"] for block in appends[1][1]] == ["heading_2", "toggle"]
@@ -509,10 +546,13 @@ def test_publish_linked_citations_anchor_first_and_insert_main_before_appendix()
     start_body = appends[2][1]
     assert [block["type"] for block in start_body] == ["paragraph"]
     linked = next(run for run in _all_request_runs(start_body) if run["type"] == "mention")
-    assert linked == {
+    expected_mention: dict[str, Any] = {
         "type": "mention",
         "mention": {"type": "page", "page": {"id": "blk-6"}},
     }
+    if annotations is not None:
+        expected_mention["annotations"] = annotations
+    assert linked == expected_mention
     for _, children, _ in appends:
         for block in _iter_request_blocks(children):
             assert "_prompt_diary_evidence_appendix" not in block
@@ -612,9 +652,14 @@ def test_publish_linked_citations_fall_back_when_native_block_mention_is_rejecte
     target = _internal_link_target()
     missing_target = {"project_key": "k", "session_ref": "S0002", "turn_ref": "T0001"}
     claim = _para("Main claim ")
-    claim["paragraph"]["rich_text"].append(_linked_run("S0001/T0001", target))
+    annotations = {"color": "gray", "italic": True}
+    claim["paragraph"]["rich_text"].append(
+        {**_linked_run("S0001/T0001", target), "annotations": annotations}
+    )
     claim["paragraph"]["rich_text"].append(_run("; "))
-    claim["paragraph"]["rich_text"].append(_linked_run("S0002/T0001", missing_target))
+    claim["paragraph"]["rich_text"].append(
+        {**_linked_run("S0002/T0001", missing_target), "annotations": annotations}
+    )
 
     result = publish_report(
         client=client,
@@ -629,10 +674,12 @@ def test_publish_linked_citations_fall_back_when_native_block_mention_is_rejecte
         run for run in _all_request_runs(fallback_body) if run["text"]["content"] == "S0001/T0001"
     )
     assert citation["text"]["link"] == {"url": "https://notion.so/page-1#blk-6"}
+    assert citation["annotations"] == annotations
     missing = next(
         run for run in _all_request_runs(fallback_body) if run["text"]["content"] == "S0002/T0001"
     )
     assert "link" not in missing["text"]
+    assert missing["annotations"] == annotations
 
 
 def test_publish_linked_citations_fall_back_when_after_insert_is_rejected() -> None:
@@ -744,7 +791,9 @@ def test_publish_linked_citations_warn_when_evidence_toggle_result_lacks_id() ->
                 after_block_id=after_block_id,
             )
             for child, result in zip(children, response["results"], strict=True):
-                if child["type"] == "toggle":
+                if child["type"] == "toggle" and child["toggle"]["rich_text"] == [
+                    _run("S0001/T0001")
+                ]:
                     result.pop("id", None)
             return response
 
@@ -776,7 +825,10 @@ def test_publish_inlines_leaf_children_in_their_parent_append() -> None:
 
     appends = _appends(client)
     appended_parent = next(
-        block for _, children in appends for block in children if block["type"] == "toggle"
+        block
+        for _, children in appends
+        for block in children
+        if block["type"] == "toggle" and block["toggle"]["rich_text"] == [_run("Parent")]
     )
     assert appended_parent["type"] == "toggle"
     assert appended_parent["toggle"]["children"] == [_para("leaf one"), _para("leaf two")]
@@ -828,6 +880,22 @@ def test_publish_workspace_report_publishes_the_rendered_artifact(tmp_path: Path
     assert create[2]["Name"]["title"][0]["text"]["content"] == "Evidence Tools and QA Strategy"
     # The real report is deep and wide; every request still respects Notion's request-shape limits.
     _assert_published_request_limits(client)
+    # Presentation must not add round trips or lose styling when citations become native mentions.
+    assert [call[0] for call in client.calls] == [
+        "retrieve",
+        "create",
+        "append",
+        "append",
+        "append",
+    ]
+    mentions = [
+        run
+        for _, children in _appends(client)
+        for run in _all_request_runs(children)
+        if run["type"] == "mention"
+    ]
+    assert mentions
+    assert all(run["annotations"]["color"] == "gray" for run in mentions)
     # A known model claim from the basic fixture reached the appended blocks.
     assert "Three-layer QA strategy delivered." in _appended_text(client)
 

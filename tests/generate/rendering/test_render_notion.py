@@ -1,12 +1,10 @@
 """Tests for the deterministic Notion rendering of ``daily-report.json`` to ``report.notion.json``.
 
-``render_notion_artifact`` reads the finalized model, builds the abstract layout, serializes it per
-the doc's Block→Notion mapping, and writes the page payload (title, metadata properties, body block
-children) to ``report.notion.json``. These tests pin the title/properties, the heading_2 sections,
-the project heading_3, the work-item ``toggle`` (the idiomatic Notion form for a titled cluster),
-the colored nested work-item subsection labels, the quote vs. callout split, the structured
-citations, the three Empty fallbacks, and the two invariants that make Notion rendering faithful and
-safe:
+``render_notion_artifact`` reads the finalized model, preserves semantic roles in the Notion layout,
+and writes the page payload (title, metadata properties, body block children) to
+``report.notion.json``. These tests pin visible project headings and summaries, collapsed work-item
+details, assessment and practice structure, citations, the three Empty fallbacks,
+and the two invariants that make Notion rendering faithful and safe:
 
 - **No new claims** — every claim-bearing string the renderer emits is sourced verbatim from the
   model (asserted by finding each model string in the rendered ``text.content``).
@@ -19,7 +17,6 @@ safe:
 from __future__ import annotations
 
 import json
-from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from prompt_diary.generate.rendering.layout import (
@@ -30,8 +27,9 @@ from prompt_diary.generate.rendering.layout import (
     Prose,
     Section,
     Tag,
-    build_layout,
+    Toggle,
 )
+from prompt_diary.generate.rendering.notion_layout import build_notion_layout
 from prompt_diary.generate.rendering.render_notion import (
     render_notion,
     render_notion_artifact,
@@ -152,34 +150,46 @@ def test_render_notion_title_and_properties(tmp_path: Path) -> None:
     }
 
 
-def test_render_notion_sections_are_heading_2(tmp_path: Path) -> None:
+def test_render_notion_sections_are_heading_1(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    assert [_plain(block) for block in children if block["type"] == "heading_2"] == [
+    assert [_plain(block) for block in children if block["type"] == "heading_1"] == [
         "Work by Project",
         "Engagement Assessment",
         "Team Learning",
+        "Evidence Chains",
     ]
 
 
-def test_render_notion_does_not_emit_executive_summary(tmp_path: Path) -> None:
+def test_render_notion_opens_with_work_by_project_without_an_extra_daily_summary(
+    tmp_path: Path,
+) -> None:
     children = _basic_children(tmp_path)
 
-    assert "Executive Summary" not in _plain_texts(children, "heading_2")
+    assert _plain(children[0]) == "Work by Project"
+    assert "Executive Summary" not in _plain_texts(children, "heading_1")
+    assert "Daily reading" not in _plain_texts(children, "heading_1")
 
 
-# --- work by project (project heading_3, work-item toggle) ------------------------------------
+# --- work by project (visible project summary, work-item toggle) -------------------------------
 
 
-def test_render_notion_project_is_heading_3_with_summary_paragraph(tmp_path: Path) -> None:
+def test_render_notion_project_is_heading_2_with_visible_summary_paragraph(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    assert "ReportGenerator" in _plain_texts(children, "heading_3")
+    assert children[1]["type"] == "heading_2"
+    assert _plain(children[1]) == "ReportGenerator"
     summary = next(
         p
-        for p in _of_type(children, "paragraph")
+        for p in children
+        if p["type"] == "paragraph"
         if "Simplified the evidence tools and designed the QA approach." in _plain(p)
     )
+    assert children[2] == summary
+    assert _plain(summary).splitlines() == [
+        "Simplified the evidence tools and designed the QA approach.",
+        "S0001/T0001; S0002/T0001",
+    ]
     # The project summary's citations are unscoped (project implied), one link-targeted run per
     # turn reference. The publisher may replace those runs with native Notion inline links, so the
     # renderer keeps them as normal text instead of inline code.
@@ -202,17 +212,25 @@ def test_render_notion_project_is_heading_3_with_summary_paragraph(tmp_path: Pat
     }
 
 
-def test_render_notion_work_item_is_a_toggle_with_tags_in_label(tmp_path: Path) -> None:
+def test_render_notion_work_item_toggle_keeps_metadata_inside_its_details(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
     toggles = _of_type(children, "toggle")
 
-    labels = [_plain(t) for t in toggles]
-    # A work item is a collapsible toggle, not a heading; its disposition + confidence ride in the
-    # label, and the title is literal (no Markdown escaping of ``chain_ref``).
-    assert "Simplify the MCP evidence tools and drop chain_ref — completed · high" in labels
+    # Task names keep the collapsed reading path concise; recorded state and confidence remain
+    # available inside the details without claiming a status that later outcomes may supersede.
+    toggle = next(t for t in toggles if _plain(t).startswith("Simplify the MCP evidence tools"))
+    assert _plain(toggle) == "Simplify the MCP evidence tools and drop chain_ref"
+    metadata = _children_of(toggle)[0]
+    assert metadata["type"] == "paragraph"
+    assert _plain(metadata) == "Recorded state: completed · high confidence"
+    runs = _rich_text(metadata)
+    status = next(run for run in runs if run["text"]["content"] == "Recorded state: completed")
+    confidence = next(run for run in runs if run["text"]["content"] == "high confidence")
+    assert status["annotations"]["color"] == "gray"
+    assert confidence["annotations"]["color"] == "gray"
 
 
-def test_render_notion_work_item_toggle_nests_distinct_section_labels(
+def test_render_notion_work_item_details_follow_the_collaboration_before_original_messages(
     tmp_path: Path,
 ) -> None:
     children = _basic_children(tmp_path)
@@ -223,42 +241,37 @@ def test_render_notion_work_item_toggle_nests_distinct_section_labels(
     )
     nested = _children_of(work_item)
 
-    # The nested work-item sections are colored label callouts, not additional toggles; dividers
-    # separate the content groups and the outcome bullet still lives inside the work-item toggle.
-    nested_toggle_labels = [_plain(t) for t in _of_type(nested, "toggle")]
-    assert "Context and Response" not in nested_toggle_labels
-    assert "User Messages" not in nested_toggle_labels
-    label_callouts = [
-        block
-        for block in nested
-        if block["type"] == "callout"
-        and _plain(block) in {"Context and Response", "User Messages", "Outcomes"}
+    assert [block["type"] for block in nested] == [
+        "paragraph",
+        "paragraph",
+        "paragraph",
+        "paragraph",
+        "bulleted_list_item",
+        "paragraph",
+        "paragraph",
+        "quote",
     ]
-    assert [_plain(block) for block in label_callouts] == [
-        "Context and Response",
-        "User Messages",
-        "Outcomes",
-    ]
-    assert [block["callout"]["color"] for block in label_callouts] == [
-        "blue_background",
-        "purple_background",
-        "green_background",
-    ]
-    label_indexes = [nested.index(block) for block in label_callouts]
-    assert all(
-        any(block["type"] == "divider" for block in nested[left + 1 : right])
-        for left, right in pairwise(label_indexes)
+    assert _plain(nested[0]) == "Recorded state: completed · high confidence"
+    assert _plain(nested[1]) == (
+        "Human direction  User asked to simplify the MCP evidence tools and remove chain_ref."
     )
-    outcome = next(
-        b
-        for b in _of_type(nested, "bulleted_list_item")
-        if "Top-level turn_ref adopted; chain_ref removed from the evidence surface." in _plain(b)
+    assert _plain(nested[2]) == (
+        "Agent response  Updated the MCP tools page, evidence contract, and extractor prompt "
+        "to a top-level turn_ref identity."
     )
-    assert nested.index(outcome) > label_indexes[-1]
+    assert _plain(nested[3]) == "Outcomes"
+    outcome = nested[4]
+    assert "Top-level turn_ref adopted; chain_ref removed from the evidence surface." in _plain(
+        outcome
+    )
+    assert _plain(nested[5]) == "Limits  Prompt-test suite not confirmed green within these turns."
+    assert _plain(nested[6]) == "Original user messages"
+    assert _plain(nested[7]) == "Please simplify the MCP evidence tools and drop chain_ref."
+    assert all(_rich_text(nested[index])[0]["annotations"]["bold"] for index in (1, 2, 3, 6))
+    assert all("children" not in block[block["type"]] for block in nested)
     assert [run["text"]["content"] for run in _citation_runs(outcome)] == ["S0001/T0001"]
     assert _code_runs(outcome) == []
-    # The outcome's own confidence renders inline as a ``· high`` run before the citation.
-    assert " · high" in _plain(outcome)
+    assert " · high confidence" in _plain(outcome)
 
 
 def test_render_notion_work_item_body_skips_non_rendering_child_without_divider(
@@ -280,8 +293,9 @@ def test_render_notion_work_item_body_skips_non_rendering_child_without_divider(
     toggle = next(t for t in _of_type(payload.children, "toggle") if "Skipped child" in _plain(t))
     nested = _children_of(toggle)
 
-    assert [block["type"] for block in nested] == ["paragraph"]
-    assert _plain(nested[0]) == "Visible body."
+    assert [block["type"] for block in nested] == ["paragraph", "paragraph"]
+    assert _plain(nested[0]) == "Recorded state: completed · high confidence"
+    assert _plain(nested[1]) == "Visible body."
 
 
 def test_render_notion_user_messages_are_verbatim_quote_blocks(tmp_path: Path) -> None:
@@ -295,25 +309,36 @@ def test_render_notion_user_messages_are_verbatim_quote_blocks(tmp_path: Path) -
     assert "Is that placeholder misleading?" in quotes
 
 
-def test_render_notion_limit_is_a_callout_with_warning_icon(tmp_path: Path) -> None:
+def test_render_notion_keeps_work_limits_readable_without_routine_warning_callouts(
+    tmp_path: Path,
+) -> None:
     children = _basic_children(tmp_path)
-    callouts = _of_type(children, "callout")
 
     limit = next(
         c
-        for c in callouts
+        for c in _of_type(children, "paragraph")
         if "Prompt-test suite not confirmed green within these turns." in _plain(c)
     )
-    assert limit["callout"]["icon"] == {"emoji": "⚠️"}
+    assert _plain(limit) == "Limits  Prompt-test suite not confirmed green within these turns."
+    assert _rich_text(limit)[0]["annotations"]["bold"] is True
+    assert _of_type(children, "callout") == []
 
 
-def test_render_notion_minor_activity_toggle_holds_work_item_toggles(tmp_path: Path) -> None:
+def test_render_notion_minor_activity_has_a_quiet_label_and_work_item_toggles(
+    tmp_path: Path,
+) -> None:
     children = _basic_children(tmp_path)
 
-    # Minor activity is a label callout; the minor work items remain work-item toggles.
-    minor = next(c for c in _of_type(children, "callout") if _plain(c) == "Minor activity")
-    assert minor["callout"]["color"] == "gray_background"
-    assert all(_plain(t) != "Minor activity" for t in _of_type(children, "toggle"))
+    minor = next(c for c in children if _plain(c) == "Minor activity")
+    assert minor["type"] == "paragraph"
+    assert _rich_text(minor)[0]["annotations"] == {"bold": True, "color": "gray"}
+    minor_items = children[children.index(minor) + 1 : children.index(minor) + 3]
+    assert [_plain(item) for item in minor_items] == [
+        "Clarify whether the placeholder wording was misleading",
+        "Indexed turn with no extractable evidence",
+    ]
+    assert all(item["type"] == "toggle" for item in minor_items)
+    assert all(item["toggle"]["color"] == "gray" for item in minor_items)
 
 
 # --- engagement + team learning ---------------------------------------------------------------
@@ -322,39 +347,80 @@ def test_render_notion_minor_activity_toggle_holds_work_item_toggles(tmp_path: P
 def test_render_notion_engagement_reading_dimension_and_limits(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    reading = next(
-        p
-        for p in _of_type(children, "paragraph")
-        if "The user framed concrete goals and approved results." in _plain(p)
-    )
-    # The lead reading carries its own confidence inline and a scoped citation.
-    assert " · medium" in _plain(reading)
+    section = next(block for block in children if _plain(block) == "Engagement Assessment")
+    start = children.index(section) + 1
+    reading, limits, direction, observation = children[start : start + 4]
+    assert reading["type"] == "paragraph"
+    # Sources and confidence remain directly below the reading, within the same paragraph.
+    assert _plain(reading).splitlines() == [
+        "The user framed concrete goals and approved results.",
+        "medium confidence ReportGenerator · S0001/T0001",
+    ]
     assert [run["text"]["content"] for run in _citation_runs(reading)] == [
         "ReportGenerator · S0001/T0001"
     ]
     assert _code_runs(reading) == []
-    assert "Direction" in _plain_texts(children, "heading_3")
-    # The standing engagement limit always renders, as a callout.
-    limits = _of_type(children, "callout")
-    assert any(
-        "interaction precision is limited to the work-item grain" in _plain(c) for c in limits
-    )
+    # Supplied and standing limits stay adjacent to the reading as quiet, visible paragraphs.
+    assert limits["type"] == "paragraph"
+    assert "Offline thinking and review are not observable." in _plain(limits)
+    assert "interaction precision is limited to the work-item grain" in _plain(limits)
+    assert all(run["annotations"]["color"] == "gray" for run in _rich_text(limits))
+    assert direction["type"] == "heading_2"
+    assert _plain(direction) == "Direction"
+    assert observation["type"] == "bulleted_list_item"
+    assert "Asked to simplify the evidence tools and drop chain_ref." in _plain(observation)
+    assert "medium confidence" in _plain(observation)
+    assert [run["text"]["content"] for run in _citation_runs(observation)] == [
+        "ReportGenerator · S0001/T0001"
+    ]
 
 
-def test_render_notion_team_learning_pattern_text(tmp_path: Path) -> None:
+def test_render_notion_team_learning_keeps_takeaway_and_limits_together(tmp_path: Path) -> None:
     children = _basic_children(tmp_path)
 
-    assert "Reuse" in _plain_texts(children, "heading_3")
-    pattern = next(
-        b
-        for b in _of_type(children, "bulleted_list_item")
-        if "A three-layer QA strategy was written down as a repeatable approach." in _plain(b)
+    section = next(block for block in children if _plain(block) == "Team Learning")
+    start = children.index(section) + 1
+    reading, limits = children[start : start + 2]
+    assert reading["type"] == "paragraph"
+    assert _plain(reading).splitlines() == [
+        "Capturing a reusable QA approach is worth promoting.",
+        "low confidence ReportGenerator · S0002/T0001",
+    ]
+    assert "Single-day evidence; recurrence cannot be confirmed." in _plain(limits)
+    assert "never a precise effort metric" in _plain(limits)
+    assert all(run["annotations"]["color"] == "gray" for run in _rich_text(limits))
+
+
+def test_render_notion_team_learning_pattern_keeps_its_supporting_fields_distinct(
+    tmp_path: Path,
+) -> None:
+    children = _basic_children(tmp_path)
+
+    category = next(block for block in children if _plain(block) == "Reuse")
+    assert category["type"] == "heading_2"
+    start = children.index(category) + 1
+    statement, rationale, recurrence, evidence = children[start : start + 4]
+    assert all(
+        block["type"] == "paragraph" for block in (statement, rationale, recurrence, evidence)
     )
-    text = _plain(pattern)
-    # statement — rationale · recurrence: ... · confidence, all lifted from the model.
-    assert "— A reusable checklist lowers the attention cost of future QA work." in text
-    assert "· recurrence: single sighting; likely to recur for future test design" in text
-    assert " · low" in text
+    assert _plain(statement) == (
+        "A three-layer QA strategy was written down as a repeatable approach. — low confidence"
+    )
+    runs = _rich_text(statement)
+    assert runs[0]["annotations"]["bold"] is True
+    assert runs[-1]["text"]["content"] == "low confidence"
+    assert runs[-1]["annotations"]["color"] == "gray"
+    assert _plain(rationale) == (
+        "Why it matters  A reusable checklist lowers the attention cost of future QA work."
+    )
+    assert _plain(recurrence) == (
+        "Recurrence  single sighting; likely to recur for future test design"
+    )
+    assert all(run["annotations"]["color"] == "gray" for run in _rich_text(recurrence))
+    assert _plain(evidence) == "Evidence  ReportGenerator · S0002/T0001"
+    assert [run["text"]["content"] for run in _citation_runs(evidence)] == [
+        "ReportGenerator · S0002/T0001"
+    ]
 
 
 # --- empty report -----------------------------------------------------------------------------
@@ -481,7 +547,7 @@ def test_render_notion_is_pure_function_of_layout(tmp_path: Path) -> None:
 
     # Two independent renders from two freshly built layouts must be byte-identical: the render
     # depends only on the layout, with no clock / fs / shared mutable state.
-    assert render_notion(build_layout(report)) == render_notion(build_layout(report))
+    assert render_notion(build_notion_layout(report)) == render_notion(build_notion_layout(report))
 
 
 # --- structural injection safety --------------------------------------------------------------
@@ -489,6 +555,16 @@ def test_render_notion_is_pure_function_of_layout(tmp_path: Path) -> None:
 # A single model string carrying a link, an image, a leading heading, and an embedded newline that
 # tries to forge a section. In Notion every one of these must land verbatim in ``text.content``.
 _INJECTION = "see [x](http://y) and ![img](z)\n# Injected\n## Injected section"
+
+
+def test_render_notion_generic_sections_preserve_literal_group_content() -> None:
+    section = Section(_INJECTION, (Toggle(_INJECTION, (Prose(_INJECTION),)),))
+
+    payload = render_notion(_doc_with_section(section))
+
+    assert _plain_texts(payload.children, "heading_1") == [_INJECTION]
+    assert _plain_texts(payload.children, "paragraph") == [_INJECTION, _INJECTION]
+    assert all("link" not in run["text"] for run in _all_runs(payload.children))
 
 
 def test_render_notion_injection_string_is_literal_content_never_a_link(tmp_path: Path) -> None:
@@ -514,8 +590,8 @@ def test_render_notion_long_content_splits_into_2000_char_runs(tmp_path: Path) -
     section = Section("Work by Project", (Group("Proj", (Prose(long_text, None),)),))
 
     payload = render_notion(_doc_with_section(section))
-    paragraph = next(p for p in _of_type(payload.children, "paragraph") if _plain(p))
-    runs = _rich_text(paragraph)
+    summary = _of_type(payload.children, "paragraph")[0]
+    runs = _rich_text(summary)
 
     expected_runs = 3  # 2000 + 2000 + 500
     assert len(runs) == expected_runs
@@ -532,23 +608,25 @@ def test_render_notion_caps_rich_text_at_100_runs_with_a_marker(tmp_path: Path) 
     section = Section("Work by Project", (Group("Proj", (Prose(huge, None),)),))
 
     payload = render_notion(_doc_with_section(section))
-    paragraph = next(p for p in _of_type(payload.children, "paragraph") if _plain(p))
-    runs = _rich_text(paragraph)
+    summary = _of_type(payload.children, "paragraph")[0]
+    runs = _rich_text(summary)
 
     assert len(runs) == 100
     assert runs[-1]["text"]["content"] == " [truncated]"
 
 
-def test_render_notion_empty_prose_renders_an_empty_rich_text_paragraph(tmp_path: Path) -> None:
+def test_render_notion_empty_project_summary_renders_an_empty_rich_text_paragraph(
+    tmp_path: Path,
+) -> None:
     del tmp_path
     # An empty model string (e.g. a gap-only project's empty summary) renders a valid paragraph with
     # an empty rich-text array, not a run with empty content.
     section = Section("Work by Project", (Group("Proj", (Prose("", None),)),))
 
     payload = render_notion(_doc_with_section(section))
-    paragraph = _of_type(payload.children, "paragraph")[0]
+    summary = _of_type(payload.children, "paragraph")[0]
 
-    assert paragraph["paragraph"]["rich_text"] == []
+    assert summary["paragraph"]["rich_text"] == []
 
 
 def test_render_notion_numbered_list_renders_numbered_items(tmp_path: Path) -> None:
@@ -612,6 +690,7 @@ def test_render_notion_citation_runs_are_plain_text_no_link(tmp_path: Path) -> N
     ]
     assert _code_runs(bullet) == []
     assert all("link" not in run["text"] for run in _rich_text(bullet))
+    assert all(run["annotations"]["color"] == "gray" for run in citations)
 
 
 def test_render_notion_long_citation_content_is_chunked_into_text_runs(tmp_path: Path) -> None:
