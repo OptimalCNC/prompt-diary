@@ -290,11 +290,7 @@ def _render_list(
         if isinstance(item, Group):
             tags, body = _split_tags(item)
             children = _render_work_item_body(body, heading_level=heading_level + 1)
-            # The collapsed reading path needs task names; repeated metadata belongs in details.
-            metadata = _tag_runs(tags, separator="")
-            if metadata:
-                children.insert(0, _block("paragraph", {"rich_text": metadata}))
-            toggle = _toggle(_text_runs(item.label), children)
+            toggle = _toggle(_label_rich_text(item.label, tags), children)
             if minor:
                 toggle["toggle"]["color"] = "gray"
             blocks.append(toggle)
