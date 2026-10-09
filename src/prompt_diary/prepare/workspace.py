@@ -27,6 +27,7 @@ from prompt_diary.models import (
     SourceSpec,
     serialize_datetime,
 )
+from prompt_diary.prepare.turn_usage import ClaudeTurnUsage, CodexTurnUsage
 from prompt_diary.progress.events import (
     PhaseFinished,
     PhaseStarted,
@@ -55,6 +56,7 @@ CLAUDE_SOURCE_ENV = "PROMPT_DIARY_CLAUDE_PROJECTS"
 
 _UNSAFE_DISPLAY_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 _REPEATED_DASHES = re.compile(r"-+")
+_MIN_TURN_OUTPUT_TOKENS = 100
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ class ParsedTurn:
     turn_ref: str
     turn_start_line: int
     turn_end_line: int
+    output_tokens: int | None
 
 
 @dataclass(frozen=True)
@@ -247,12 +250,19 @@ def prepare_workspace(
             PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs))
         )
         prepared_at_local = _timestamp_for_target(target, prepared_at)
-        parsed_sessions = _normalize_selections(
-            _selected_sessions(
-                specs,
-                target,
-                reports_root=reports_root,
-                reporter=reporter,
+        parsed_sessions = tuple(
+            session
+            for session in _normalize_selections(
+                _selected_sessions(
+                    specs,
+                    target,
+                    reports_root=reports_root,
+                    reporter=reporter,
+                )
+            )
+            if any(
+                turn.output_tokens is None or turn.output_tokens >= _MIN_TURN_OUTPUT_TOKENS
+                for turn in session.turns
             )
         )
         reporter.emit(
@@ -826,6 +836,11 @@ def _parse_session_file(
         source=spec.source,
         total_lines=len(lines),
     )
+    turns = (
+        tuple(replace(turn, output_tokens=None) for turn in turns)
+        if state.malformed_line_count or state.has_untimestamped_trigger
+        else turns
+    )
     if state.is_excluded or not turns:
         return None
 
@@ -966,18 +981,25 @@ def _build_turns(
 ) -> tuple[tuple[ParsedTurn, ...], tuple[_SourceTurn, ...]]:
     result: list[ParsedTurn] = []
     source_turns: list[_SourceTurn] = []
+    usage = CodexTurnUsage() if source == "codex" else ClaudeTurnUsage()
+    if triggers:
+        for line in lines[: triggers[0].line_number - 1]:
+            usage.observe(_json_object_from_line(line))
     for idx, trigger in enumerate(triggers):
         next_trigger = triggers[idx + 1] if idx + 1 < len(triggers) else None
         if next_trigger is not None:
             turn_end = _turn_end_before_next_trigger(lines, next_trigger.line_number, source)
         else:
             turn_end = total_lines
-        if source == "codex":
-            digest = hashlib.sha256()
-            for line in lines[trigger.line_number - 1 : turn_end]:
-                record = _json_object_from_line(line)
+        usage.start_turn()
+        digest = hashlib.sha256() if source == "codex" else None
+        for line in lines[trigger.line_number - 1 : turn_end]:
+            record = _json_object_from_line(line)
+            usage.observe(record)
+            if digest is not None:
                 digest.update(json.dumps(record, sort_keys=True, ensure_ascii=True).encode("utf-8"))
                 digest.update(b"\n")
+        if digest is not None:
             source_turns.append(
                 _SourceTurn(start_line=trigger.line_number, fingerprint=digest.hexdigest())
             )
@@ -988,6 +1010,7 @@ def _build_turns(
                 turn_ref=_turn_ref(len(result) + 1),
                 turn_start_line=trigger.line_number,
                 turn_end_line=turn_end,
+                output_tokens=usage.finish_turn(bounded=next_trigger is not None),
             )
         )
     return tuple(result), tuple(source_turns)

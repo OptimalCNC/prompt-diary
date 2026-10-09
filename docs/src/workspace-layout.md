@@ -57,6 +57,14 @@ file.
 Preparation excludes root sessions whose recorded project root resolves inside the resolved reports
 root. Those sessions are Prompt Diary's own generation side effects, not user-authored project work.
 
+After selecting the target date's human-triggered turns and removing inherited fork history,
+preparation excludes a session when every remaining turn has a known native `output_tokens` count
+below 100, including zero. A turn with at least 100 output tokens or unknown usage keeps the session.
+Codex counts use differences between cumulative `event_msg/token_count` snapshots; Claude Code
+counts sum assistant message usage once per message id. Preparation does not tokenize reply text or
+classify session content. Excluded sessions are neither copied nor indexed. Existing workspaces
+retain their prepared inputs until refreshed with `prepare --force`.
+
 Copied session files keep their source filenames. The examples above use UUID-based filenames
 because both Codex and Claude Code identify local session transcript files by session id rather
 than by report date. Only root session transcripts are copied. Delegation prompts, tool results,
