@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0007",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User requests service restoration using rollback.md and production traffic verification.",
+        "quoted_messages": [
+          {
+            "text": "Restore the service using rollback.md and verify production traffic.",
+            "citations": [
+              {
+                "lines": "2-2"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "2-2"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent drafted a rollback command sequence and stated it would run the restore. The preserved evidence has neither command results nor traffic verification and does not show whether execution continued, stopped, failed, or completed.",
+          "citations": [
+            {
+              "lines": "3-5"
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "category": "process_outcome",
+          "summary": "A rollback command sequence was drafted; actual restoration and traffic results are unavailable.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "observed_checks": [],
+      "terminal_state": {
+        "type": "interrupted",
+        "summary": "A restore was announced, but execution and final task state cannot be determined from the available evidence.",
+        "citations": [
+          {
+            "lines": "5-5"
+          }
+        ]
+      },
+      "materiality": "material"
+    }
+  ]
+}

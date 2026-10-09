@@ -13,12 +13,17 @@ remaining extracted evidence chains.
 The remaining extracted evidence chains are provided in the task input, grouped by session under
 a `#### Session <session_ref>` heading — one chain per turn, where a turn is one human trigger plus
 the agent reactions it owns. They are the extracted evidence still needing synthesis and are your
-only input, trimmed to summaries: no line citations or quoted message text, because you reference
-turns by `turn_ref` and the summaries are sufficient.
+only input. Each chain includes extracted summaries, already-redacted user messages, observed-check
+summaries, and source-derived trigger and evidence-end timestamps when available. Line citations are
+omitted because you reference turns by `turn_ref`.
 
 Each chain is labelled `<session_ref>/<turn_ref>`. `turn_ref` restarts at `T0001` in every session,
 so always pair a `turn_ref` with its `session_ref` in `covered_turns` and `evidence_refs` — never use
 a bare `turn_ref`.
+
+Session references and input grouping do not establish chronology across sessions. Use the supplied
+source timestamps to understand ordering; `unknown` timestamps supply no ordering evidence. Time
+order alone does not prove that a later request replaces an earlier requirement or that work completed.
 
 Work only from these chains. Do not read session transcripts, the session index, or any other file —
 everything you need is here, and `write_work_item` accounts for coverage.
@@ -77,6 +82,41 @@ throwaway question, into one `no_material_work_item` for the project.
 
 ## Work Item Shape
 
+Before writing a material work item, judge its overall state across all the relevant turns:
+
+1. Reconstruct the user's goal and how the delivery scope changed during the discussion.
+2. Establish the final effective scope: include user additions and remove requirements the user
+   explicitly narrowed, replaced, deferred, or accepted as outside this delivery. Discussed options
+   and an agent's unilateral reduction do not change the scope. User acceptance must be supported
+   by evidence rather than assumed from silence.
+3. Compare the observed results and checks with that effective scope. Partial results do not prove
+   completion; a completed design or deployment prompt can fulfill a request that ended at that
+   delivery, even when implementation or deployment remains outside its scope.
+4. Determine which gaps, failures, interruptions, and blockers still apply at the end of the supplied
+   evidence. A historical interruption followed by completed delivery, or a failed check followed
+   by a verified repair, must not determine the task's final state.
+   An extracted terminal label alone does not prove that an interruption or blocker actually occurred.
+   Ground such events in the supplied trigger, action, and check details; describe a segment with no
+   visible execution as missing execution evidence unless those details establish an actual stop.
+5. Choose one `disposition`, state its effective scope and reason, and cite the turns that support
+   the scope and state judgment. Consider all effective requirements, not just the last turn or a
+   chain's `terminal_state`.
+
+The supplied evidence boundary is fixed. Do not assume work happened outside it. A turn boundary,
+missing final reply, or an evidence cutoff does not by itself prove `interrupted`, `blocked`, or
+`in_progress`: these require explicit evidence of the corresponding state. Use `unknown` when the
+cutoff leaves the final state ambiguous. Reserve `cancelled` for cancellation of the whole goal;
+dropping or deferring a requirement can still lead to `completed` under the accepted scope.
+
+For example, "investigation started, but no document was written before the next user message"
+does not establish that work stopped. A user answering a structure question, adding a requirement,
+or supplying a Skill can split continuous work into turns. If later turns deliver the result,
+describe the investigation and delivery without inventing an interruption-and-recovery episode.
+An actual stop needs event details such as an explicit abort or a user instruction to stop.
+
+Task dispositions:
+{{ disposition_descriptions }}
+
 Pass this object as the `work_item` argument to `write_work_item`:
 
 ```json
@@ -95,9 +135,13 @@ Pass this object as the `work_item` argument to `write_work_item`:
   "outcomes": [
     {"category": "<outcome_category>", "summary": "<str>", "evidence_refs": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}], "confidence": "<high|medium|low>"}
   ],
-  "terminal_states": [
-    {"type": "<terminal_type>", "summary": "<str>", "evidence_refs": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}]}
-  ],
+  "terminal_states": [],
+  "disposition": {
+    "type": "<task_disposition>",
+    "scope": "<final effective delivery requirements>",
+    "summary": "<why the evidence supports this task state under that scope>",
+    "evidence_refs": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}]
+  },
   "limits": ["<str>"],
   "confidence": "<high|medium|low>"
 }
@@ -110,8 +154,8 @@ Pass this object as the `work_item` argument to `write_work_item`:
 
 - kind: the work item's coverage disposition. Choose exactly one:
 {{ work_item_kind_descriptions | indent(2, true) }}
-  An interruption is a `terminal_states` type, not a kind; a blocker is an outcome with category
-  `blocker_outcome`, not a kind.
+  The kind accounts for coverage and materiality; the independent `disposition` describes the
+  material task's overall state.
 
 - title: a one-line name for the work item.
 
@@ -125,8 +169,16 @@ Pass this object as the `work_item` argument to `write_work_item`:
 - outcomes: consolidated, evidence-backed achievements; each cites the turns that support it. Reuse
   the `category` already on the chain outcomes you merge.
 
-- terminal_states: how the work item or its notable branches ended, such as `interrupted`, `blocked`, or
-  `failed`. Reuse the `type` already on the chain terminal states.
+- terminal_states: optional historical observations, as `{type, summary, evidence_refs}`. Leave this
+  list empty when outcomes already explain the delivery and no evidenced event is needed to explain
+  the final state or a limit. When needed, reuse the chain's `type` and describe only events supported
+  by trigger, action, and check details. Do not transfer input terminal labels just to preserve them.
+  Segments with no execution record are not interruption events; a label alone does not justify an
+  interruption, resumption, or blocker account. These observations do not determine the disposition.
+
+- disposition: required for `material_work_item` only. Include one controlled `type`, a non-empty
+  `scope`, a non-empty judgment `summary`, and non-empty `evidence_refs` supporting both the effective
+  scope and the final state. Omit this field for all other kinds.
 
 - limits: short honesty notes about what the work item did not verify or could not confirm.
 
@@ -137,7 +189,7 @@ Pass this object as the `work_item` argument to `write_work_item`:
 Required fields by kind:
 
 - All kinds: `work_item_ref`, `kind`, `title`, a non-empty `covered_turns`, and `confidence`.
-- `material_work_item`: also `trigger`, `agent_reaction`, and at least one of `outcomes` or
+- `material_work_item`: also `trigger`, `agent_reaction`, `disposition`, and at least one of `outcomes` or
   `terminal_states`.
 - `no_material_work_item`: `trigger`, `agent_reaction`, and `outcomes` may be empty.
 - `evidence_gap_item`: covers only turns that have no evidence chain; narrative fields empty;

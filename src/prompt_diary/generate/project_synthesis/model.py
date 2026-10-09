@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from prompt_diary.generate.prompts import (
     EVIDENCE_OUTCOME_CATEGORIES,
     EVIDENCE_TERMINAL_STATES,
+    PROJECT_WORK_ITEM_DISPOSITIONS,
     PROJECT_WORK_ITEM_KINDS,
 )
 
@@ -25,6 +26,11 @@ _CONFIDENCE_VALUES = frozenset({"high", "medium", "low"})
 _WORK_ITEM_KINDS = frozenset(item.value for item in PROJECT_WORK_ITEM_KINDS)
 _OUTCOME_CATEGORIES = frozenset(item.value for item in EVIDENCE_OUTCOME_CATEGORIES)
 _TERMINAL_STATES = frozenset(item.value for item in EVIDENCE_TERMINAL_STATES)
+_DISPOSITIONS = frozenset(item.value for item in PROJECT_WORK_ITEM_DISPOSITIONS)
+
+WorkItemDispositionType: TypeAlias = Literal[
+    "completed", "in_progress", "blocked", "interrupted", "failed", "cancelled", "unknown"
+]
 
 _MATERIAL = "material_work_item"
 _EVIDENCE_GAP = "evidence_gap_item"
@@ -85,6 +91,16 @@ class WorkItemTerminalState:
 
 
 @dataclass(frozen=True)
+class WorkItemDisposition:
+    """The evidenced task status relative to its final effective delivery scope."""
+
+    type: WorkItemDispositionType
+    scope: str
+    summary: str
+    evidence_refs: tuple[TurnReference, ...]
+
+
+@dataclass(frozen=True)
 class WorkItem:
     """One project-level work item parsed into a fully typed, well-formed node."""
 
@@ -96,6 +112,7 @@ class WorkItem:
     agent_reaction: AgentReactionBlock | None
     outcomes: tuple[WorkItemOutcome, ...]
     terminal_states: tuple[WorkItemTerminalState, ...]
+    disposition: WorkItemDisposition | None
     limits: tuple[str, ...]
     reason: str | None
     confidence: str
@@ -147,6 +164,13 @@ def work_item_to_json(item: WorkItem) -> dict[str, Any]:
         }
     result["outcomes"] = [_outcome_to_json(outcome) for outcome in item.outcomes]
     result["terminal_states"] = [_terminal_state_to_json(state) for state in item.terminal_states]
+    if item.disposition is not None:
+        result["disposition"] = {
+            "type": item.disposition.type,
+            "scope": item.disposition.scope,
+            "summary": item.disposition.summary,
+            "evidence_refs": [_turn_ref_to_json(ref) for ref in item.disposition.evidence_refs],
+        }
     result["limits"] = list(item.limits)
     if item.reason is not None:
         result["reason"] = item.reason
@@ -157,7 +181,7 @@ def work_item_to_json(item: WorkItem) -> dict[str, Any]:
 def new_project_synthesis_envelope(project_key: str, project_label: str) -> dict[str, Any]:
     """Return the canonical empty project-synthesis envelope skeleton."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "project_key": project_key,
         "project_label": project_label,
         "work_items": [],
@@ -186,6 +210,9 @@ def _parse_work_item(raw: dict[str, Any], errors: list[WorkItemWriteError]) -> W
         _parse_terminal_state(item, errors, path=f"{prefix}.terminal_states[{index}]")
         for index, item in enumerate(_as_list(raw.get("terminal_states")))
     )
+    disposition = _parse_disposition(
+        raw.get("disposition"), kind, errors, path=f"{prefix}.disposition"
+    )
     _check_required_by_kind(
         kind, trigger, agent_reaction, outcomes, terminal_states, errors, prefix=prefix
     )
@@ -202,6 +229,7 @@ def _parse_work_item(raw: dict[str, Any], errors: list[WorkItemWriteError]) -> W
         agent_reaction=agent_reaction,
         outcomes=outcomes,
         terminal_states=terminal_states,
+        disposition=disposition,
         limits=_parse_str_list(raw.get("limits"), errors, path=f"{prefix}.limits"),
         reason=_parse_reason(raw.get("reason"), kind, errors, path=f"{prefix}.reason"),
         confidence=_parse_enum(
@@ -294,12 +322,49 @@ def _parse_terminal_state(
     )
 
 
+def _parse_disposition(
+    raw: object, kind: str, errors: list[WorkItemWriteError], *, path: str
+) -> WorkItemDisposition | None:
+    if raw is None:
+        if kind == _MATERIAL:
+            errors.append(
+                WorkItemWriteError(path, _required_message("disposition"), _DISPOSITION_HINT)
+            )
+        return None
+    if kind != _MATERIAL:
+        errors.append(
+            WorkItemWriteError(
+                path, f"{kind} must leave disposition empty", _NON_MATERIAL_DISPOSITION_HINT
+            )
+        )
+    disposition = _as_mapping(raw)
+    parsed_type = _parse_enum(
+        disposition.get("type"),
+        _DISPOSITIONS,
+        errors,
+        path=f"{path}.type",
+        controlled="work item disposition",
+    )
+    return WorkItemDisposition(
+        type=cast("WorkItemDispositionType", parsed_type),
+        scope=_parse_summary(disposition.get("scope"), errors, path=f"{path}.scope"),
+        summary=_parse_summary(disposition.get("summary"), errors, path=f"{path}.summary"),
+        evidence_refs=_parse_turn_refs(
+            disposition.get("evidence_refs"),
+            errors,
+            path=f"{path}.evidence_refs",
+            require_non_empty=True,
+        ),
+    )
+
+
 def _parse_turn_refs(
     value: object, errors: list[WorkItemWriteError], *, path: str, require_non_empty: bool
 ) -> tuple[TurnReference, ...]:
     items = _as_list(value)
     if require_non_empty and not items:
-        errors.append(WorkItemWriteError(path, _non_empty_list_message(path), _COVERED_TURNS_HINT))
+        hint = _DISPOSITION_REFS_HINT if path.endswith(".evidence_refs") else _COVERED_TURNS_HINT
+        errors.append(WorkItemWriteError(path, _non_empty_list_message(path), hint))
     return tuple(
         _parse_turn_ref(item, errors, path=f"{path}[{index}]") for index, item in enumerate(items)
     )
@@ -477,6 +542,9 @@ def _narrative_error(kind: str, path: str, field: str) -> WorkItemWriteError:
 _SUMMARY_HINT = "provide a concise non-empty string"
 _REF_HINT = 'reference a turn as {"session_ref": "S0001", "turn_ref": "T0001"}'
 _COVERED_TURNS_HINT = "every work item must account for at least one indexed turn"
+_DISPOSITION_REFS_HINT = "cite at least one covered turn supporting the task-level judgment"
+_DISPOSITION_HINT = "judge the task across its covered turns against the final effective scope"
+_NON_MATERIAL_DISPOSITION_HINT = "only material_work_item carries a task-level disposition"
 _WORK_ITEM_REF_HINT = "assign refs as W0001, W0002, and so on"
 _MATERIAL_HINT = "material_work_item requires trigger and agent_reaction"
 _MATERIAL_RESULT_MESSAGE = "material_work_item requires at least one outcome or terminal_state"

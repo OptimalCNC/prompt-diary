@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 import prompt_diary.generate.rendering.layout as layout_module
+from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.rendering.layout import (
     Callout,
     Document,
@@ -96,6 +97,17 @@ def _callouts(blocks: tuple[Block, ...]) -> list[Callout]:
 
 
 # --- document header --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("schema_version", [None, 1, 3])
+def test_layout_rejects_reports_without_current_task_assessments(
+    tmp_path: Path, schema_version: int | None
+) -> None:
+    report = _finalized_report(tmp_path)
+    report["schema_version"] = schema_version
+
+    with pytest.raises(PromptDiaryError, match="re-run generate"):
+        build_layout(report)
 
 
 def test_layout_document_title_and_properties(tmp_path: Path) -> None:
@@ -199,6 +211,24 @@ def test_layout_work_item_context_and_user_messages_toggles(tmp_path: Path) -> N
     assert any("Please simplify the MCP evidence tools" in message.text for message in messages)
 
 
+def test_layout_task_assessment_is_cited_and_visible_before_details_and_outcomes(
+    tmp_path: Path,
+) -> None:
+    report = _finalized_report(tmp_path)
+    source = report["projects"][0]["work_items"][0]["disposition_assessment"]
+    group = _groups(_section(build_layout(report), "Work by Project"))[0]
+    item = _lists(group.children)[0].items[0]
+    assert isinstance(item, Group)
+
+    assessment = _prose(item.children)[0]
+    assert assessment.text == f"{source['scope']} — {source['summary']}"
+    assert assessment.citation is not None
+    assert [ref["scoped"] for ref in assessment.citation.refs] == [False]
+    assert [ref["turn_ref"] for ref in assessment.citation.refs] == ["T0001"]
+    assert item.children.index(assessment) < item.children.index(_toggles(item.children)[0])
+    assert item.children.index(assessment) < item.children.index(_lists(item.children)[0])
+
+
 def test_layout_work_item_outcomes_unscoped(tmp_path: Path) -> None:
     group = _groups(_section(build_layout(_finalized_report(tmp_path)), "Work by Project"))[0]
     first_item = _lists(group.children)[0].items[0]
@@ -242,7 +272,7 @@ def _no_outcome_material_report() -> dict[str, Any]:
     """
     citation = {"project_key": "k", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
@@ -259,6 +289,11 @@ def _no_outcome_material_report() -> dict[str, Any]:
                         "title": "Blocked item",
                         "kind": "material_work_item",
                         "disposition": "blocked",
+                        "disposition_assessment": {
+                            "scope": "Complete the dependency review.",
+                            "summary": "A missing dependency still prevents completing the review.",
+                            "citations": [citation],
+                        },
                         "confidence": "high",
                         "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
                         "trigger_summary": None,

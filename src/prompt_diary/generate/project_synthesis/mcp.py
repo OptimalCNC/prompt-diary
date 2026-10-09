@@ -170,6 +170,9 @@ def _validate_evidence_refs(
 
 
 def _iter_evidence_refs(item: WorkItem) -> Iterator[tuple[str, TurnReference]]:
+    if item.disposition is not None:
+        for index, ref in enumerate(item.disposition.evidence_refs):
+            yield f"work_item.disposition.evidence_refs[{index}]", ref
     if item.trigger is not None:
         for index, ref in enumerate(item.trigger.evidence_refs):
             yield f"work_item.trigger.evidence_refs[{index}]", ref
@@ -256,9 +259,12 @@ def _read_envelope(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     raw: object = json.loads(path.read_text(encoding="utf-8"))
-    # A non-object envelope (corrupted/hand-edited) is treated as absent so the next write
-    # regenerates a well-formed envelope rather than committing a malformed one.
-    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else None
+    # Non-object and obsolete envelopes are absent for writes, so accepted items always
+    # create the current contract rather than preserving invalid or outdated artifacts.
+    if not isinstance(raw, dict):
+        return None
+    envelope = cast("dict[str, Any]", raw)
+    return envelope if envelope.get("schema_version") == 2 else None
 
 
 def _write_envelope(path: Path, envelope: dict[str, Any]) -> None:

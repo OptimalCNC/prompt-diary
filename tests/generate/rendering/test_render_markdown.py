@@ -141,6 +141,21 @@ def test_render_work_item_toggles_are_collapsed_details(tmp_path: Path) -> None:
     assert "> Is that placeholder misleading?" in text
 
 
+def test_render_task_assessment_is_visible_and_links_to_its_evidence(tmp_path: Path) -> None:
+    _, text, report = _render_basic(tmp_path)
+    item = report["projects"][0]["work_items"][0]
+    assessment = item["disposition_assessment"]
+    paragraph = (
+        f"{_expected_inline(assessment['scope'])} — {_expected_inline(assessment['summary'])} "
+        "[S0001/T0001](#evidence-reportgenerator-e6ff7eeda632-s0001-t0001)"
+    )
+    body = text.split("#### Simplify the MCP evidence tools", maxsplit=1)[1]
+
+    assert paragraph in body
+    assert body.index(paragraph) < body.index("<details>")
+    assert body.index(paragraph) < body.index("- Top-level turn")
+
+
 def test_render_work_item_limit_callout_is_blockquote(tmp_path: Path) -> None:
     _, text, _ = _render_basic(tmp_path)
 
@@ -153,7 +168,7 @@ def test_render_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path)
     # claim is cited (unscoped within the project group) rather than rendering bare.
     citation = {"project_key": "k", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},
@@ -170,6 +185,11 @@ def test_render_no_outcome_material_item_terminal_claim_is_cited(tmp_path: Path)
                         "title": "Blocked item",
                         "kind": "material_work_item",
                         "disposition": "blocked",
+                        "disposition_assessment": {
+                            "scope": "Complete the dependency review.",
+                            "summary": "A missing dependency still prevents completing the review.",
+                            "citations": [citation],
+                        },
                         "confidence": "high",
                         "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
                         "trigger_summary": None,
@@ -373,6 +393,9 @@ def test_render_no_new_claims_every_outcome_and_observation_in_model(tmp_path: P
         claims.append(project["summary"]["text"])
         for item in project["work_items"]:
             claims.append(item["title"])
+            if item["disposition_assessment"] is not None:
+                assessment = item["disposition_assessment"]
+                claims += [assessment["scope"], assessment["summary"]]
             claims += [outcome["what_changed"] for outcome in item["outcomes"]]
             claims += list(item["limits"])
     engagement = report["engagement_assessment"]
@@ -607,6 +630,11 @@ def _two_project_report() -> dict[str, Any]:
                     "title": f"{label} work item",
                     "kind": "material_work_item",
                     "disposition": "completed",
+                    "disposition_assessment": {
+                        "scope": f"Complete {label} work.",
+                        "summary": outcome_text,
+                        "citations": [citation(project_key)],
+                    },
                     "confidence": "high",
                     "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
                     "trigger_summary": None,
@@ -626,7 +654,7 @@ def _two_project_report() -> dict[str, Any]:
         }
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "s", "end": "e", "timezone": "Asia/Shanghai"},

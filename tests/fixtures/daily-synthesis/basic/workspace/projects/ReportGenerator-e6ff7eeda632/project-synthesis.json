@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator",
   "work_items": [
@@ -7,6 +7,17 @@
       "work_item_ref": "W0001",
       "kind": "material_work_item",
       "title": "Simplify the MCP evidence tools and drop chain_ref",
+      "disposition": {
+        "type": "completed",
+        "scope": "User asked to simplify the MCP evidence tools and remove chain_ref.",
+        "summary": "The requested work is complete within the effective scope.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0001"
+          }
+        ]
+      },
       "covered_turns": [
         {"session_ref": "S0001", "turn_ref": "T0001"}
       ],
@@ -40,6 +51,17 @@
       "work_item_ref": "W0002",
       "kind": "material_work_item",
       "title": "Design the evidence-extraction QA approach",
+      "disposition": {
+        "type": "completed",
+        "scope": "User asked to design the evidence-extraction QA approach.",
+        "summary": "The requested work is complete within the effective scope.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0002",
+            "turn_ref": "T0001"
+          }
+        ]
+      },
       "covered_turns": [
         {"session_ref": "S0002", "turn_ref": "T0001"}
       ],

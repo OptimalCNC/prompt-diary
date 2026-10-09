@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0006",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User requests billing-alert implementation and email delivery verification.",
+        "quoted_messages": [
+          {
+            "text": "Implement the billing-alert feature and verify email delivery.",
+            "citations": [
+              {
+                "lines": "2-2"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "2-2"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent drafted alert thresholds and a billing-alert design, but had not implemented the notifier or verified emails.",
+          "citations": [
+            {
+              "lines": "3-5"
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "category": "document_outcome",
+          "summary": "A billing-alert design and threshold notes were produced.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "observed_checks": [],
+      "terminal_state": {
+        "type": "interrupted",
+        "summary": "Initial design exists; implementation and verification remain unfinished.",
+        "citations": [
+          {
+            "lines": "5-5"
+          }
+        ]
+      },
+      "materiality": "material"
+    },
+    {
+      "turn_ref": "T0002",
+      "trigger": {
+        "type": "user_correction",
+        "summary": "User explicitly cancels the entire billing-alert goal after partial design work.",
+        "quoted_messages": [
+          {
+            "text": "Cancel the billing-alert task entirely. We no longer want this feature; abandon its delivery.",
+            "citations": [
+              {
+                "lines": "6-6"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "6-6"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent acknowledged cancellation and stopped work on the billing-alert feature.",
+          "citations": [
+            {
+              "lines": "7-9"
+            }
+          ]
+        }
+      ],
+      "outcomes": [],
+      "observed_checks": [
+        {
+          "type": "user_feedback",
+          "summary": "User explicitly abandoned delivery of the entire billing-alert feature.",
+          "citations": [
+            {
+              "lines": "8-9"
+            }
+          ]
+        }
+      ],
+      "terminal_state": {
+        "type": "no_material",
+        "summary": "Agent acknowledged cancellation without producing further output.",
+        "citations": [
+          {
+            "lines": "9-9"
+          }
+        ]
+      },
+      "materiality": "minor"
+    }
+  ]
+}

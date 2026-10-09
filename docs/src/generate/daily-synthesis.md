@@ -62,7 +62,7 @@ evidence and cannot ground a claim.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "report_date": "2026-05-28",
   "status": "final",
   "window": {"start": "2026-05-28T00:00:00+08:00", "end": "2026-05-29T00:00:00+08:00", "timezone": "Asia/Shanghai"},
@@ -77,6 +77,11 @@ evidence and cannot ground a claim.
       "title": "…",
       "kind": "material_work_item",
       "disposition": "completed",
+      "disposition_assessment": {
+        "scope": "…",
+        "summary": "…",
+        "citations": [{"project_key": "ReportGenerator-e6ff7eeda632", "session_ref": "S0001", "turn_ref": "T0001", "lines": "2-8"}]
+      },
       "confidence": "high",
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
       "trigger_summary": "…",
@@ -108,12 +113,17 @@ Field shapes follow the [Field Provenance](#field-provenance) tables. Notes on t
   `engagement_assessment` / `team_learning` non-null when the report has any work item; an empty
   report uses deterministic `report_title.text` of `No Supported Work Evidence`, leaves the
   judgment sections `null`, and renders them as `Empty(fallback)`.
-- `disposition` is set only for `material_work_item`s (one of `completed` / `blocked` / `interrupted`
-  / `failed` / `clarification`); minor kinds (`no_material_work_item`, `evidence_gap_item`,
-  `excluded_with_reason`) carry `null` and fold into "Minor activity".
-- `terminal_states[]` carries `{summary, citations}` (citations resolved from the work item's
+- `disposition` is set only for `material_work_item`s (one of `completed` / `in_progress` / `blocked`
+  / `interrupted` / `failed` / `cancelled` / `unknown`). Its value is lifted from the upstream work
+  item's `disposition.type`, whose meanings are owned by [Project Synthesis](./project-synthesis.md).
+  `disposition_assessment` lifts that object's non-empty `scope` and `summary` and resolves its
+  non-empty `evidence_refs` into `citations`. Minor kinds (`no_material_work_item`,
+  `evidence_gap_item`, `excluded_with_reason`) carry `null` for both fields and fold into "Minor
+  activity". Neither Build nor the daily agent passes reclassify a work item from its historical
+  terminal states.
+- `terminal_states[]` preserves historical branch observations as `{summary, citations}` (citations resolved from the work item's
   `terminal_states[].evidence_refs`, like `outcomes[]`). A material work item with no `outcomes`
-  shows its terminal disposition as the visible claim in place of the outcomes, so each such terminal
+  shows its terminal observations as visible claims in place of the outcomes, so each such terminal
   state must be cited; finalize rejects a no-outcome material item whose rendered terminal claim is
   uncited.
 - `covered_turns` is lifted onto each work item so rendering can join the project-level
@@ -157,7 +167,9 @@ AI synthesis workflow.
 | terminal `summary` (no-outcome fallback claim) | `terminal_states[].summary` | lift |
 | `confidence` | `work_items[].confidence`, `outcomes[].confidence` | lift |
 | `User messages` | `source_user_messages` (tool-populated) | lift |
-| `disposition` | `terminal_states` + `outcomes` | derive |
+| `disposition` | `work_items[].disposition.type` | lift |
+| `disposition_assessment.scope` / `summary` | `work_items[].disposition.scope` / `summary` | lift |
+| `disposition_assessment.citations` | `work_items[].disposition.evidence_refs` → lines via the session index | resolve |
 | ordering · material/Minor split | `kind` + sort rule | derive |
 | `Citation` | `outcomes[]` / `terminal_states[]` `evidence_refs` → lines via the session index | resolve |
 | project `summary` | the project's work items | **synthesize** |
@@ -222,7 +234,10 @@ Notion (rendering consumes the model afterwards — see [Rendering](./rendering.
 
 1. **Build (code).** Assemble every deterministic field from `project-synthesis.json` and the evidence
    cards, with no AI: the header (`report_date` / `status` / `window`), all of **Work by Project**
-   except the project `summary`. If there is no reportable work, seed the deterministic
+   except the project `summary`. Lift each material work item's assessed disposition and scope,
+   preserving its explanation and resolving its evidence references. Only current-version project
+   synthesis artifacts with valid assessments are accepted; missing assessments require regeneration
+   from the existing evidence. If there is no reportable work, seed the deterministic
    `report_title` value `No Supported Work Evidence`.
 2. **Synthesize (agent passes).** Fill the remaining `synthesize` fields through the validating tools
    below.

@@ -44,6 +44,12 @@ Input schema:
     "covered_turns": [
       {"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}
     ],
+    "disposition": {
+      "type": "completed|in_progress|blocked|interrupted|failed|cancelled|unknown",
+      "scope": "<non-empty final effective user-approved scope>",
+      "summary": "<non-empty explanation of the task state>",
+      "evidence_refs": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}]
+    },
     "trigger": {
       "summary": "<string>",
       "evidence_refs": [{"session_ref": "<session_ref>", "turn_ref": "<turn_ref>"}]
@@ -74,7 +80,7 @@ Input schema:
 Write behavior:
 
 - **First write.** If `project-synthesis.json` does not exist, the tool creates the envelope from
-  `projects/<project_key>/project.json` (`schema_version`, `project_key`, `project_label`, empty
+  `projects/<project_key>/project.json` (`schema_version: 2`, `project_key`, `project_label`, empty
   `work_items`) and populates `source_user_messages` once: it reads every
   `projects/<project_key>/evidence/<session_ref>.json` card and copies the `text` of each chain's
   `trigger.quoted_messages` verbatim into a `messages` string list, one entry per indexed turn that
@@ -82,7 +88,10 @@ Write behavior:
   phase, so all cards exist and this is a single deterministic population. The tool then appends the
   submitted work item.
 - **Subsequent writes.** The tool validates the existing envelope and appends the work item; it does
-  not re-populate `source_user_messages`.
+  not re-populate `source_user_messages`. An envelope with an incompatible schema version is treated
+  as absent: an accepted write creates a current-version envelope and replaces the obsolete artifact.
+  No assessment is inferred for its old items. The generation runner separately rejects reuse of an
+  obsolete artifact and regenerates work items from the existing evidence cards.
 - `source_user_messages` is messages-only (verbatim user-message text, no line citations) — the tool
   does not re-redact (the extractor already redacted secrets). Its shape and rules are in
   [Project Synthesis](../project-synthesis.md#envelope).
@@ -120,6 +129,9 @@ committed.
   [required fields per kind](../project-synthesis.md#required-fields-per-kind) hold. An
   `evidence_gap_item` or `excluded_with_reason` carries no narrative — `trigger`, `agent_reaction`,
   `outcomes`, and `terminal_states` must be empty or absent.
+- `material_work_item` requires a `disposition` object with a controlled task-level `type`, non-empty
+  `scope` and `summary`, and at least one `evidence_refs` entry. Other kinds omit `disposition` or
+  submit `null`; a populated assessment on a non-material item is rejected.
 - `work_item_ref` matches `W%04d` and is unique within the envelope.
 - Every `covered_turns[*]` resolves to a real indexed turn in `sessions.index.jsonl`. An
   `evidence_gap_item` covers only turns that have no committed evidence chain; every other kind
@@ -127,12 +139,18 @@ committed.
 - **Coverage exclusivity.** A turn already covered by a committed work item cannot be covered again,
   so every indexed turn ends in exactly one work item across all calls.
 - Each `evidence_refs` turn is one of this item's `covered_turns` and has a committed evidence chain;
-  a turn with no chain cannot be cited.
+  a turn with no chain cannot be cited. This applies to disposition references as well as trigger,
+  outcome, and historical terminal-state references.
 - `outcomes[*].category` is one of the controlled outcome categories and `terminal_states[*].type`
   is one of the controlled terminal-state types — reuse only, no new values. `confidence` is one of
   `high`, `medium`, or `low`.
 - `excluded_with_reason` requires a non-empty `reason`. Required summaries are non-empty, and the
   work item contains no secrets, credentials, or unnecessary absolute paths.
+
+The tool parses these guarantees into the typed work-item model. It preserves the submitted task
+assessment rather than inferring it from `outcomes` or `terminal_states`; deciding whether all related
+turns support the final scope and state is the synthesis agent's responsibility under the
+[Project Synthesis](../project-synthesis.md) contract.
 
 ## Code Placement
 
@@ -140,4 +158,4 @@ Per [MCP Tools](./index.md): the transport-independent API — validation, envel
 `source_user_messages` population — lives in `src/prompt_diary/generate/project_synthesis/`; the MCP
 adapter lives in `src/prompt_diary/mcp/`. Validation reuses the enums in
 `src/prompt_diary/generate/prompts/__init__.py` (`PROJECT_WORK_ITEM_KINDS`,
-`EVIDENCE_OUTCOME_CATEGORIES`, `EVIDENCE_TERMINAL_STATES`).
+`PROJECT_WORK_ITEM_DISPOSITIONS`, `EVIDENCE_OUTCOME_CATEGORIES`, `EVIDENCE_TERMINAL_STATES`).

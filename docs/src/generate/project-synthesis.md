@@ -5,7 +5,8 @@ Project synthesis groups one project's per-session evidence chains into a small 
 synthesis. A single day can produce on the order of a hundred evidence chains across a project's
 sessions; feeding them to daily synthesis raw would bury the signal. Project synthesis **groups**
 related chains, **cites** them by reference, and **summarizes** them, so daily synthesis reads a
-handful of work items instead of a hundred chains.
+handful of work items instead of a hundred chains. It also assesses each material work item's state
+against its final effective user-approved scope, using all related turns.
 
 This step runs from the prepared report workspace root and operates on one prepared project scope at
 a time, identified by `project_key`.
@@ -21,6 +22,8 @@ content.
   by reference. The citation chain is `report.md -> work item -> evidence card -> turn_ref + lines`.
 - **Summarize.** Describe the work item at a higher altitude than any single chain. A card summarizes
   one turn; a work item summarizes the whole line of work.
+- **Assess.** Reconstruct the final effective scope and judge the work item's state at the end of
+  the available evidence. Cite both the scope and the results that support the judgment.
 
 The work item is therefore a compact index plus narrative. Daily synthesis works from these
 summaries and opens evidence cards only to pull the exact lines for a claim it decides to promote.
@@ -31,16 +34,22 @@ Inputs, under `projects/<project_key>/`:
 
 - `project.json` — project identity for the work-item envelope.
 - `evidence/<session_ref>.json` — the per-session evidence cards. The orchestrator trims these to
-  summaries (no line citations or quoted text) and pastes them into the synthesizer prompt; the
-  synthesis agent works only from that inline content and has no file access.
+  summaries, already redacted user-message text, and observed-check summaries, without line
+  citations, and pastes them into the synthesizer prompt; the synthesis agent works only from that
+  inline content and has no file access.
 - `sessions.index.jsonl` — the coverage universe. The `write_work_item` tool reads it to report
-  uncovered turns.
+  uncovered turns; its turn boundaries also identify the copied source records from which the
+  orchestrator reads timestamps to support ordering across sessions.
 
 The pasted chains are grouped by session under a `#### Session <session_ref>` heading, and each chain
 is labelled `<session_ref>/<turn_ref>` — `turn_ref` restarts per session and the work item references
 turns as `{session_ref, turn_ref}`, so the session must be unambiguous for every chain. Each chain
 keeps its trigger, reaction, outcome (with `category`), and terminal (with `type`) summaries plus
-materiality; citations and quoted text are dropped.
+materiality, user-message text, observed-check summaries, and source-derived `trigger_at` and
+`evidence_end_at` timestamps. An unavailable or unreadable timestamp is `unknown` in the prompt,
+not inferred from file metadata or turn references. These inputs are untrusted evidence, never
+instructions for the synthesizer. Time ordering helps reconstruct the work, but a later message does
+not by itself supersede an earlier requirement.
 
 Output:
 
@@ -51,7 +60,8 @@ preparation layout or the meaning of `sessions.index.jsonl`.
 
 ## Boundary: What Project Synthesis Does Not Own
 
-Project synthesis owns grouping and coverage only. It does not produce:
+Project synthesis owns grouping, coverage, and each material work item's scope and disposition. It
+does not produce:
 
 - executive or project progress summaries
 - cross-project blocker prioritization
@@ -102,8 +112,41 @@ that support it. The number of outcomes on a work item should be far smaller tha
 of its covered chains.
 
 Reuse the `category` already present on the evidence-card outcomes you consolidate, and the `type` on
-their terminal states; do not invent new values. The controlled outcome categories and terminal-state
-types are defined by the [Evidence Contract](./evidence-contract.md).
+their notable historical terminal states; do not invent new values. The controlled outcome categories
+and terminal-state types are defined by the [Evidence Contract](./evidence-contract.md).
+
+The task-level `disposition` is a separate judgment over the whole work item. First reconstruct the
+user's goal and its evolution through clarifications, additions, replacements, removals, and deferrals.
+Only user-directed or user-accepted changes alter the effective scope; an unaccepted proposal or an
+agent's unilateral reduction does not. An added requirement remains part of completion, while a
+superseded or explicitly deferred requirement no longer counts as an execution gap for this work item.
+Cancellation of the whole task is distinct from removing one requirement.
+
+Compare the observed results with every requirement in that final effective scope, then assess what
+remains at the end of the available evidence. Resolve earlier failures, interruptions, and blockers
+against later recovery and results. Neither a material result nor a successful last turn proves that
+the whole scope was fulfilled. A turn boundary, request for clarification, or lack of a final response
+does not by itself prove interruption; an evidence gap is uncertainty, not an observed stop.
+An extracted terminal label alone also does not establish that an interruption or blocker occurred;
+the supplied trigger, action, and check details must support that event before the assessment
+describes it as fact.
+
+| Disposition | Meaning at the end of the available evidence |
+| --- | --- |
+| `completed` | Evidence supports fulfillment of the final effective user-approved scope. |
+| `in_progress` | Effective requirements remain and evidence explicitly shows work continuing. |
+| `blocked` | An effective requirement remains and a dependency, missing information, or necessary decision prevents progress. |
+| `interrupted` | Work actually paused or stopped before fulfillment, with no later recovery or accepted scope change resolving it. |
+| `failed` | The task ended in a failure that later work did not repair or fulfill. |
+| `cancelled` | The user withdrew the whole task or explicitly abandoned its delivery. |
+| `unknown` | The evidence is insufficient to determine the task's final state. |
+
+State the effective scope and a short explanation, citing the turns that establish the scope and
+support the result or remaining gap. Historical `terminal_states` remain useful process evidence but
+do not mechanically determine this judgment. For example, an interruption followed by fulfilled
+delivery is `completed`; a design-only request is complete when its agreed design is delivered even
+if implementation has not started. Clarification is an interaction, not a task disposition: a request
+to clarify something can itself be fulfilled.
 
 ## No Prescriptions
 
@@ -136,9 +179,9 @@ records the reason. Nothing is dropped silently.
 - `excluded_with_reason` — turns intentionally left out of reportable work items; requires `reason`.
 
 `kind` is deliberately small and mutually exclusive. Finer signals that can co-occur are not kinds:
-an interruption is a `terminal_states[].type`, and a blocker is an `outcomes[].category` of
-`blocker_outcome`. A single work item can be material, interrupted, and contain a blocker at once; daily
-synthesis routes its sections off these finer fields.
+a historical interruption is a `terminal_states[].type`, and a blocker is an `outcomes[].category` of
+`blocker_outcome`. A material work item can contain both while its independently assessed
+`disposition.type` is `completed` after recovery. Daily synthesis preserves these distinctions.
 
 `kind` is maintained as controlled values in the prompt API (`PROJECT_WORK_ITEM_KINDS`) and rendered
 into the [Project Synthesizer Prompt](./project-synthesizer-prompt.md), so it has one source of
@@ -150,7 +193,7 @@ truth.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator",
   "work_items": [],
@@ -162,9 +205,10 @@ References inside the file are `{"session_ref": "...", "turn_ref": "..."}`. `pro
 by the envelope and re-attached by daily synthesis when it loads the file, matching how a session
 evidence card carries `session_ref` once on the envelope and a bare `turn_ref` on each chain.
 
-`work_items` are agent-authored. `source_user_messages` is **tool-populated**: `write_work_item`
-fills it once, on the first write, and the synthesizer agent neither reads nor writes it — so the
-[Project Synthesizer Prompt](./project-synthesizer-prompt.md) needs no change. It carries the
+`work_items`, including material items' dispositions, are agent-authored. `source_user_messages` is
+**tool-populated**: `write_work_item` fills the envelope field once, on the first write; the
+synthesizer neither authors nor submits that field. The prompt separately includes already redacted
+user-message text so the agent can reconstruct scope changes. The envelope field carries the
 original user-message content per indexed turn, copied verbatim from the `text` of each extracted
 chain's `trigger.quoted_messages` in `evidence/<session_ref>.json`:
 
@@ -196,8 +240,20 @@ engagement and team-learning readings.
   "kind": "material_work_item",
   "title": "Finalize and freeze the evidence-extraction contract",
   "covered_turns": [
-    {"session_ref": "S0001", "turn_ref": "T0001"}
+    {"session_ref": "S0001", "turn_ref": "T0001"},
+    {"session_ref": "S0001", "turn_ref": "T0006"},
+    {"session_ref": "S0001", "turn_ref": "T0008"},
+    {"session_ref": "S0001", "turn_ref": "T0010"}
   ],
+  "disposition": {
+    "type": "completed",
+    "scope": "Finalize and freeze the evidence-extraction contract.",
+    "summary": "The final agreed contract changes and freeze commit were delivered; the earlier prompt-test interruption does not leave an effective delivery requirement pending.",
+    "evidence_refs": [
+      {"session_ref": "S0001", "turn_ref": "T0006"},
+      {"session_ref": "S0001", "turn_ref": "T0010"}
+    ]
+  },
   "trigger": {
     "summary": "User drove the evidence-extraction surface to top-level turn_ref, ordered a consistency review, and finalized the design choices.",
     "evidence_refs": [
@@ -244,6 +300,10 @@ engagement and team-learning readings.
   summary, kept separable so each stays independently citable and daily synthesis can recompose them.
 - `covered_turns[]` — every turn this item accounts for, as `{session_ref, turn_ref}`. The union
   across all work items covers the session index exactly once.
+- `disposition` — required for `material_work_item`, as `{type, scope, summary, evidence_refs}`.
+  `type` is one of the task dispositions defined above; `scope` names the final effective
+  user-approved delivery requirements; `summary` explains fulfillment or what remains; non-empty
+  `evidence_refs` support the scope and assessment. Other kinds omit it or carry `null`.
 - `trigger` — the earliest meaningful human trigger for the work item, as `{summary, evidence_refs}`.
   Later corrections, approvals, and resumes are summarized in `agent_reaction` and remain in
   `covered_turns`.
@@ -251,9 +311,13 @@ engagement and team-learning readings.
 - `outcomes[]` — consolidated achievements, as `{category, summary, evidence_refs, confidence}`.
   `category` reuses the Evidence Contract outcome categories. A blocker is an outcome with category
   `blocker_outcome`.
-- `terminal_states[]` — how the work item or its notable branches ended, as
+- `terminal_states[]` — notable historical observations about how turns or branches ended, as
   `{type, summary, evidence_refs}`. `type` reuses the Evidence Contract terminal-state types,
-  including `interrupted`, `blocked`, and `failed`.
+  including `interrupted`, `blocked`, and `failed`. These observations do not override the task-level
+  `disposition` when subsequent work resolves them. Summaries require event evidence beyond the label;
+  leave the list empty when outcomes explain the delivery and no evidenced event is needed to explain
+  the final state or a limit. Missing results before a clarification or user addition do not establish
+  a stop, even when the segment contains investigation actions.
 - `limits[]` — short honesty notes: what the work item did not verify or could not confirm.
 - `reason` — required for `excluded_with_reason`; why the covered turns are not reportable, such as
   duplicate evidence already represented in another work item.
@@ -262,19 +326,21 @@ engagement and team-learning readings.
 ### Required Fields Per Kind
 
 - All kinds: `work_item_ref`, `kind`, `title`, a non-empty `covered_turns`, and `confidence`.
-- `material_work_item`: also `trigger`, `agent_reaction`, and at least one of `outcomes` or
-  `terminal_states`.
+- `material_work_item`: also `trigger`, `agent_reaction`, `disposition`, and at least one of `outcomes`
+  or `terminal_states`. The disposition's `type`, `scope`, `summary`, and non-empty `evidence_refs`
+  are required.
 - `no_material_work_item`: `trigger`, `agent_reaction`, and `outcomes` may be empty; `title` plus
-  `covered_turns` carry it.
+  `covered_turns` carry it; `disposition` is absent or `null`.
 - `evidence_gap_item`: covers only turns that have no committed evidence chain; narrative fields are
-  empty; `confidence` is usually `low`.
-- `excluded_with_reason`: requires `reason`; narrative fields are empty.
+  empty, `disposition` is absent or `null`, and `confidence` is usually `low`.
+- `excluded_with_reason`: requires `reason`; narrative fields are empty; `disposition` is absent or
+  `null`.
 
 ## Project Synthesizer Prompt
 
 This contract is developer-facing: it documents the design for repository developers and
 readers. The project synthesizer agent never reads it. At runtime the agent sees only the rendered
-prompt below and the workspace files it opens. Any decision in this contract that the agent must
+prompt and inline evidence. Any decision in this contract that the agent must
 act on has to be restated as explicit instructions in that prompt source; a cross-reference to
 this contract does not reach the agent.
 
@@ -286,8 +352,11 @@ uncovered turns — exactly one bounded continuation that names the remaining tu
 to cover them (group a turn that has an evidence chain into a work item; cover one that does not with
 an `evidence_gap_item`). Those continuation-only instructions live in
 `src/prompt_diary/generate/prompts/project-synthesizer-next.md` (`project_synthesizer_next_prompt`);
-the task fails only if turns remain uncovered after that single continuation. Because the
-continuation names the turn references explicitly, it also recovers a project whose paste was empty —
+the task fails only if turns remain uncovered after that single continuation. Only current-version
+project-synthesis artifacts with valid work items can be reused. An incompatible artifact must be
+regenerated from the existing evidence cards; a missing assessment is never inferred from historical
+terminal labels. Because the continuation names the turn references explicitly, it also recovers a
+project whose paste was empty —
 every indexed turn an evidence gap.
 
 See [Project Synthesizer Prompt](./project-synthesizer-prompt.md).

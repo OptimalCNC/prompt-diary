@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0008",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User requests search implementation and integration verification.",
+        "quoted_messages": [
+          {
+            "text": "Build search.py and verify the search integration tests.",
+            "citations": [
+              {
+                "lines": "2-2"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "2-2"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent added partial search.py code, then the user explicitly interrupted execution. No later resume or scope adjustment appears in the evidence.",
+          "citations": [
+            {
+              "lines": "3-5"
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "category": "code_outcome",
+          "summary": "A partial search implementation was added; integration verification remains undone.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "observed_checks": [
+        {
+          "type": "command_output",
+          "summary": "The session records a user interrupt before the test command ran.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "terminal_state": {
+        "type": "interrupted",
+        "summary": "Work explicitly stopped before required implementation and testing finished.",
+        "citations": [
+          {
+            "lines": "5-5"
+          }
+        ]
+      },
+      "materiality": "material"
+    }
+  ]
+}

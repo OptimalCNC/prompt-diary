@@ -39,6 +39,10 @@ def test_build_project_summary_inputs_renders_work_items(tmp_path: Path) -> None
     assert "material_work_item" in inputs.work_items
     # The passes are told to account for a work item's limits, so they must be rendered.
     assert "Prompt-test suite not confirmed green within these turns." in inputs.work_items
+    assert "disposition: completed" in inputs.work_items
+    assert "effective scope:" in inputs.work_items
+    assert "disposition assessment:" in inputs.work_items
+    assert "disposition evidence: S0001/T0001" in inputs.work_items
 
 
 def test_build_report_inputs_labels_each_item_and_message_with_project(tmp_path: Path) -> None:
@@ -48,6 +52,9 @@ def test_build_report_inputs_labels_each_item_and_message_with_project(tmp_path:
 
     assert f"{PROJECT_KEY} · W0001" in inputs.work_items
     assert "Prompt-test suite not confirmed green within these turns." in inputs.work_items
+    assert "disposition: completed" in inputs.work_items
+    assert "effective scope:" in inputs.work_items
+    assert "disposition assessment:" in inputs.work_items
     assert f"{PROJECT_KEY} · S0001/T0001" in inputs.source_user_messages
     assert "simplify" in inputs.source_user_messages.lower()
 
@@ -78,6 +85,9 @@ def test_build_report_title_inputs_uses_project_summaries_not_user_messages(
     assert f"project: {PROJECT_KEY}" in inputs.context
     assert "summary: Simplified the evidence tools and designed the QA approach." in inputs.context
     assert "title: Simplify the MCP evidence tools and drop chain_ref" in inputs.context
+    assert "disposition: completed" in inputs.context
+    assert "effective scope:" in inputs.context
+    assert "disposition assessment:" in inputs.context
     assert "cite: " in inputs.context
     assert "Please simplify the MCP evidence tools" not in inputs.context
 
@@ -103,7 +113,7 @@ def test_build_report_title_inputs_renders_terminal_states_when_outcomes_absent(
 
     inputs = build_report_title_inputs(workspace_path=workspace)
 
-    assert "terminal states:" in inputs.context
+    assert "process terminal states (not task disposition):" in inputs.context
     assert "- Blocked on Notion schema access." in inputs.context
     assert "limits:" in inputs.context
     assert "- Needs database confirmation." in inputs.context
@@ -132,4 +142,15 @@ def test_build_report_inputs_raises_on_corrupt_envelope(tmp_path: Path) -> None:
     workspace = copy_corrupt_daily_workspace(tmp_path)
 
     with pytest.raises(PromptDiaryError):
+        build_report_inputs(workspace_path=workspace)
+
+
+def test_build_report_inputs_rejects_legacy_project_synthesis(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    path = workspace / "projects" / PROJECT_KEY / "project-synthesis.json"
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    envelope["schema_version"] = 1
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    with pytest.raises(PromptDiaryError, match="re-run project synthesis"):
         build_report_inputs(workspace_path=workspace)

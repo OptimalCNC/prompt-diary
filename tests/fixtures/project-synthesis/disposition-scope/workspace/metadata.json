@@ -1,0 +1,15 @@
+{
+  "schema_version": 3,
+  "report_date": "2026-10-08",
+  "timezone": "Asia/Shanghai",
+  "status": "final",
+  "prepared_at": "2026-10-09T09:00:00+08:00",
+  "report_window_local": {
+    "start": "2026-10-08T00:00:00+08:00",
+    "end": "2026-10-09T00:00:00+08:00"
+  },
+  "report_window_utc": {
+    "start": "2026-10-07T16:00:00Z",
+    "end": "2026-10-08T16:00:00Z"
+  }
+}

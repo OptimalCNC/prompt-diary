@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator",
   "work_items": [
@@ -7,6 +7,17 @@
       "work_item_ref": "W0001",
       "kind": "material_work_item",
       "title": "Failed attempt",
+      "disposition": {
+        "type": "failed",
+        "scope": "Trigger W0001.",
+        "summary": "The attempt ended in an unrecovered failure.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0001"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
       "trigger": {"summary": "Trigger W0001.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0001"}]},
       "agent_reaction": {"summary": "Reaction W0001.", "main_actions": ["try"]},
@@ -21,6 +32,17 @@
       "work_item_ref": "W0002",
       "kind": "material_work_item",
       "title": "Blocked attempt",
+      "disposition": {
+        "type": "blocked",
+        "scope": "Trigger W0002.",
+        "summary": "A missing dependency prevents the remaining work.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0002"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0002"}],
       "trigger": {"summary": "Trigger W0002.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0002"}]},
       "agent_reaction": {"summary": "Reaction W0002.", "main_actions": ["try"]},
@@ -35,6 +57,17 @@
       "work_item_ref": "W0003",
       "kind": "material_work_item",
       "title": "Interrupted attempt",
+      "disposition": {
+        "type": "interrupted",
+        "scope": "Trigger W0003.",
+        "summary": "The attempt stopped before completion and was not resumed.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0003"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0003"}],
       "trigger": {"summary": "Trigger W0003.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0003"}]},
       "agent_reaction": {"summary": "Reaction W0003.", "main_actions": ["try"]},
@@ -48,13 +81,24 @@
     {
       "work_item_ref": "W0004",
       "kind": "material_work_item",
-      "title": "Clarification only",
+      "title": "Execution continues after clarification",
+      "disposition": {
+        "type": "in_progress",
+        "scope": "Trigger W0004.",
+        "summary": "The approach is clarified and execution is explicitly continuing.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0004"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0004"}],
       "trigger": {"summary": "Trigger W0004.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0004"}]},
       "agent_reaction": {"summary": "Reaction W0004.", "main_actions": ["discuss"]},
       "outcomes": [],
       "terminal_states": [
-        {"type": "clarification_only", "summary": "W0004 clarification terminal.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0004"}]}
+        {"type": "other", "summary": "W0004 execution is continuing after clarification.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0004"}]}
       ],
       "limits": [],
       "confidence": "medium"
@@ -63,6 +107,17 @@
       "work_item_ref": "W0005",
       "kind": "material_work_item",
       "title": "Completed via material_result without outcomes",
+      "disposition": {
+        "type": "completed",
+        "scope": "Trigger W0005.",
+        "summary": "The requested work is complete within the effective scope.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0005"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0005"}],
       "trigger": {"summary": "Trigger W0005.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0005"}]},
       "agent_reaction": {"summary": "Reaction W0005.", "main_actions": ["ship"]},
@@ -77,6 +132,17 @@
       "work_item_ref": "W0006",
       "kind": "material_work_item",
       "title": "Completed via outcomes with other terminal",
+      "disposition": {
+        "type": "completed",
+        "scope": "Trigger W0006.",
+        "summary": "The requested work is complete within the effective scope.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0006"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0006"}],
       "trigger": {"summary": "Trigger W0006.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0006"}]},
       "agent_reaction": {"summary": "Reaction W0006.", "main_actions": ["ship"]},
@@ -93,6 +159,17 @@
       "work_item_ref": "W0007",
       "kind": "material_work_item",
       "title": "No-material terminal without outcomes",
+      "disposition": {
+        "type": "unknown",
+        "scope": "Trigger W0007.",
+        "summary": "The available evidence does not establish the final task state.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0007"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0007"}],
       "trigger": {"summary": "Trigger W0007.", "evidence_refs": [{"session_ref": "S0001", "turn_ref": "T0007"}]},
       "agent_reaction": {"summary": "Reaction W0007.", "main_actions": ["discuss"]},
@@ -106,7 +183,18 @@
     {
       "work_item_ref": "W0008",
       "kind": "material_work_item",
-      "title": "Failed wins over blocked",
+      "title": "Completed after failure and dependency recovery",
+      "disposition": {
+        "type": "completed",
+        "scope": "Trigger W0008.",
+        "summary": "The requested work is complete within the effective scope.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0002",
+            "turn_ref": "T0001"
+          }
+        ]
+      },
       "covered_turns": [{"session_ref": "S0002", "turn_ref": "T0001"}],
       "trigger": {"summary": "Trigger W0008.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]},
       "agent_reaction": {"summary": "Reaction W0008.", "main_actions": ["try"]},
@@ -115,7 +203,8 @@
       ],
       "terminal_states": [
         {"type": "failed", "summary": "W0008 failed terminal.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]},
-        {"type": "blocked", "summary": "W0008 blocked terminal.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]}
+        {"type": "blocked", "summary": "W0008 blocked terminal.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]},
+        {"type": "material_result", "summary": "The failure and dependency were resolved, and the requested work was completed.", "evidence_refs": [{"session_ref": "S0002", "turn_ref": "T0001"}]}
       ],
       "limits": [],
       "confidence": "high"

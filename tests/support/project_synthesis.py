@@ -53,6 +53,12 @@ def valid_material_work_item() -> dict[str, Any]:
                 "evidence_refs": [turn_ref("S0001", "T0002")],
             }
         ],
+        "disposition": {
+            "type": "completed",
+            "scope": "Finalize and commit the evidence-extraction contract.",
+            "summary": "The requested contract revision was frozen in a checkpoint commit.",
+            "evidence_refs": [turn_ref("S0001", "T0001"), turn_ref("S0001", "T0002")],
+        },
         "limits": ["Prompt-test suite not confirmed green within these turns."],
         "confidence": "high",
     }

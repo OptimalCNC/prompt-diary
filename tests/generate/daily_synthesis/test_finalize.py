@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from tests.support.daily_synthesis import (
     PROJECT_KEY,
     build_daily_report_via_api,
@@ -52,6 +54,11 @@ def _material_item(*, confidence: str, outcome_confidences: list[str]) -> dict[s
         "title": "x",
         "kind": "material_work_item",
         "disposition": "completed",
+        "disposition_assessment": {
+            "scope": "Deliver the requested result.",
+            "summary": "The requested result was delivered.",
+            "citations": [_citation()],
+        },
         "confidence": confidence,
         "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
         "trigger_summary": "t",
@@ -76,6 +83,11 @@ def _no_outcome_material_item(*, terminal_citations: list[dict[str, str]]) -> di
         "title": "Blocked, no material outcome",
         "kind": "material_work_item",
         "disposition": "blocked",
+        "disposition_assessment": {
+            "scope": "Complete the requested dependency check.",
+            "summary": "The check cannot proceed without the missing dependency.",
+            "citations": [_citation()],
+        },
         "confidence": "high",
         "covered_turns": [{"session_ref": "S0001", "turn_ref": "T0001"}],
         "trigger_summary": "t",
@@ -90,7 +102,7 @@ def _no_outcome_material_item(*, terminal_citations: list[dict[str, str]]) -> di
 
 def _report_with_items(work_items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "a", "end": "b", "timezone": "Asia/Shanghai"},
@@ -202,6 +214,7 @@ def test_finalize_ignores_non_material_confidences(tmp_path: Path) -> None:
         "title": "minor",
         "kind": "no_material_work_item",
         "disposition": None,
+        "disposition_assessment": None,
         "confidence": "high",
         "covered_turns": [],
         "trigger_summary": None,
@@ -476,6 +489,79 @@ def _invalid_paths(tmp_path: Path, mutate: Any) -> list[str]:
     return [error["path"] for error in payload["errors"]]
 
 
+def test_finalize_rejects_legacy_daily_schema(tmp_path: Path) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        report["schema_version"] = 1
+
+    assert "schema_version" in _invalid_paths(tmp_path, mutate)
+
+
+def test_finalize_rejects_missing_task_assessment(tmp_path: Path) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        report["projects"][0]["work_items"][0].pop("disposition_assessment")
+
+    assert "projects[0].work_items[0].disposition_assessment" in _invalid_paths(tmp_path, mutate)
+
+
+@pytest.mark.parametrize("field_name", ["scope", "summary"])
+def test_finalize_rejects_empty_task_assessment_text(tmp_path: Path, field_name: str) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        report["projects"][0]["work_items"][0]["disposition_assessment"][field_name] = "  "
+
+    assert f"projects[0].work_items[0].disposition_assessment.{field_name}" in _invalid_paths(
+        tmp_path, mutate
+    )
+
+
+def test_finalize_rejects_uncited_task_assessment(tmp_path: Path) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        report["projects"][0]["work_items"][0]["disposition_assessment"]["citations"] = []
+
+    assert "projects[0].work_items[0].disposition_assessment.citations" in _invalid_paths(
+        tmp_path, mutate
+    )
+
+
+def test_finalize_rejects_invalid_task_disposition(tmp_path: Path) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        report["projects"][0]["work_items"][0]["disposition"] = "clarification"
+
+    assert "projects[0].work_items[0].disposition" in _invalid_paths(tmp_path, mutate)
+
+
+@pytest.mark.parametrize(
+    "citation_update",
+    [
+        {"session_ref": "S0002", "turn_ref": "T0001", "lines": "2-6"},
+        {"project_key": "Other-000000000000"},
+        {"lines": "1-999"},
+    ],
+)
+def test_finalize_rejects_out_of_scope_or_tampered_task_assessment_citation(
+    tmp_path: Path, citation_update: dict[str, str]
+) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        assessment = report["projects"][0]["work_items"][0]["disposition_assessment"]
+        assessment["citations"][0].update(citation_update)
+
+    assert "projects[0].work_items[0].disposition_assessment.citations[0]" in _invalid_paths(
+        tmp_path, mutate
+    )
+
+
+@pytest.mark.parametrize("field_name", ["disposition", "disposition_assessment"])
+def test_finalize_rejects_task_status_on_non_material_item(tmp_path: Path, field_name: str) -> None:
+    def mutate(report: dict[str, Any]) -> None:
+        material = report["projects"][0]["work_items"][0]
+        minor = {**material, "kind": "no_material_work_item", "work_item_ref": "W0002"}
+        minor["disposition"] = None
+        minor["disposition_assessment"] = None
+        minor[field_name] = material[field_name]
+        report["projects"][0]["work_items"].append(minor)
+
+    assert f"projects[0].work_items[1].{field_name}" in _invalid_paths(tmp_path, mutate)
+
+
 def test_finalize_rejects_summary_with_empty_text(tmp_path: Path) -> None:
     def mutate(report: dict[str, Any]) -> None:
         report["projects"][0]["summary"]["text"] = "  "
@@ -560,7 +646,7 @@ def test_finalize_empty_report_does_not_require_judgment_slots(tmp_path: Path) -
     # A project with zero work items in an otherwise empty report is not required to have a summary.
     workspace = empty_daily_workspace(tmp_path)
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": "2026-05-28",
         "status": "final",
         "window": {"start": "a", "end": "b", "timezone": "Asia/Shanghai"},

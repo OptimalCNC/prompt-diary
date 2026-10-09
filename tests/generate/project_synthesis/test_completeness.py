@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from prompt_diary.generate.project_synthesis.completeness import (
+    InvalidProjectSynthesis,
     ProjectSynthesisCheckpoint,
     inspect_project_synthesis,
 )
@@ -11,6 +12,7 @@ from prompt_diary.generate.project_synthesis.mcp import write_work_item
 from tests.support.project_synthesis import (
     PROJECT_KEY,
     copy_complete_project_workspace,
+    load_project_synthesis,
     synthesis_path,
     valid_material_work_item,
     valid_no_material_work_item,
@@ -42,7 +44,7 @@ def test_inspector_reports_malformed_json_envelope(tmp_path: Path) -> None:
     inspection = inspect_project_synthesis(workspace_path=workspace, project_key=PROJECT_KEY)
 
     assert not inspection.complete
-    assert "schema_version must be 1" in inspection.errors
+    assert "schema_version must be 2" in inspection.errors
     assert "work_items must be a list" in inspection.errors
 
 
@@ -62,7 +64,7 @@ def test_inspector_reports_envelope_shape_errors(tmp_path: Path) -> None:
     inspection = inspect_project_synthesis(workspace_path=workspace, project_key=PROJECT_KEY)
 
     assert not inspection.complete
-    assert "schema_version must be 1" in inspection.errors
+    assert "schema_version must be 2" in inspection.errors
     assert f"project_key must be {PROJECT_KEY!r}" in inspection.errors
     assert "project_label must be 'ReportGenerator'" in inspection.errors
     assert "work_items must be a list" in inspection.errors
@@ -74,7 +76,7 @@ def test_inspector_reports_non_object_work_item(tmp_path: Path) -> None:
     _write_envelope(
         workspace,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "project_key": PROJECT_KEY,
             "project_label": "ReportGenerator",
             "work_items": ["not-an-object"],
@@ -116,6 +118,42 @@ def test_valid_checkpoint_distinguishes_missing_coverage_from_corruption(tmp_pat
     assert isinstance(complete, ProjectSynthesisCheckpoint)
     assert complete.complete
     assert complete.errors == ()
+
+
+def test_obsolete_synthesis_is_not_a_reusable_checkpoint(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
+    write_work_item(
+        workspace_path=workspace, project_key=PROJECT_KEY, work_item=valid_material_work_item()
+    )
+    envelope = load_project_synthesis(workspace)
+    envelope["schema_version"] = 1
+    _write_envelope(workspace, envelope)
+
+    inspection = inspect_project_synthesis(workspace_path=workspace, project_key=PROJECT_KEY)
+
+    assert isinstance(inspection, InvalidProjectSynthesis)
+    assert "schema_version must be 2" in inspection.errors
+
+
+def test_material_without_disposition_invalidates_checkpoint(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
+    item = valid_material_work_item()
+    del item["disposition"]
+    _write_envelope(
+        workspace,
+        {
+            "schema_version": 2,
+            "project_key": PROJECT_KEY,
+            "project_label": "ReportGenerator",
+            "work_items": [item],
+            "source_user_messages": [],
+        },
+    )
+
+    inspection = inspect_project_synthesis(workspace_path=workspace, project_key=PROJECT_KEY)
+
+    assert isinstance(inspection, InvalidProjectSynthesis)
+    assert "material_work_item requires disposition" in inspection.errors
 
 
 def _write_envelope(workspace: Path, envelope: dict[str, Any]) -> None:

@@ -119,6 +119,21 @@ def test_runner_reuses_completed_daily_slots(tmp_path: Path) -> None:
     assert load_daily_report(workspace) == report_before
 
 
+def test_runner_regenerates_all_synthesized_slots_from_legacy_daily_report(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    assert _run(DailySynthesisAgentSessionFactory(), workspace).status == "success"
+    report = load_daily_report(workspace)
+    report["schema_version"] = 1
+    daily_report_path(workspace).write_text(json.dumps(report), encoding="utf-8")
+    factory = DailySynthesisAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 4
+    assert load_daily_report(workspace)["schema_version"] == 2
+
+
 def test_runner_ignores_malformed_existing_daily_report(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     daily_report_path(workspace).write_text("{", encoding="utf-8")
@@ -133,7 +148,7 @@ def test_runner_ignores_malformed_existing_daily_report(tmp_path: Path) -> None:
 def test_runner_handles_existing_report_missing_project_entry(tmp_path: Path) -> None:
     workspace = copy_basic_daily_workspace(tmp_path)
     daily_report_path(workspace).write_text(
-        json.dumps({"schema_version": 1, "projects": []}, indent=2) + "\n",
+        json.dumps({"schema_version": 2, "projects": []}, indent=2) + "\n",
         encoding="utf-8",
     )
     factory = DailySynthesisAgentSessionFactory()

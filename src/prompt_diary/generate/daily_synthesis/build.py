@@ -10,7 +10,7 @@ title pass. The assembled report is written to the workspace root and returned.
 
 Every claim-bearing field is lifted verbatim from a validated upstream work item or resolved
 through the session index, so a built report cannot drift from its evidence: the work-item view
-copies summaries as-is, dispositions are derived from the work item's terminal states and outcomes,
+copies summaries and task disposition assessments as-is,
 and citations are the work item's ``evidence_refs`` resolved to their indexed-turn line ranges.
 """
 
@@ -26,7 +26,6 @@ from prompt_diary.generate.daily_synthesis.model import (
     CONFIDENCE_RANK,
     REPORTABLE_WORK_ITEM_KINDS,
     InvalidDailyReportInput,
-    derive_disposition,
     parse_engagement,
     parse_project_summary,
     parse_report_title,
@@ -74,7 +73,7 @@ def build_daily_report(*, workspace_path: Path) -> dict[str, Any]:
 
     project_views = [_project_view(item, resolver) for item in ordered]
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": workspace.report_date,
         "status": workspace.status,
         "window": _window(workspace_path, workspace.timezone),
@@ -174,7 +173,16 @@ def _work_item_view(item: WorkItem, project_key: str, resolver: CitationResolver
         "work_item_ref": item.work_item_ref,
         "title": item.title,
         "kind": item.kind,
-        "disposition": _disposition(item),
+        "disposition": item.disposition.type if item.disposition is not None else None,
+        "disposition_assessment": (
+            {
+                "scope": item.disposition.scope,
+                "summary": item.disposition.summary,
+                "citations": _resolve_refs(item.disposition.evidence_refs, project_key, resolver),
+            }
+            if item.disposition is not None
+            else None
+        ),
         "confidence": item.confidence,
         "covered_turns": [
             {"session_ref": ref.session_ref, "turn_ref": ref.turn_ref} for ref in item.covered_turns
@@ -203,14 +211,6 @@ def _work_item_view(item: WorkItem, project_key: str, resolver: CitationResolver
         ],
         "limits": list(item.limits),
     }
-
-
-def _disposition(item: WorkItem) -> str | None:
-    return derive_disposition(
-        kind=item.kind,
-        terminal_types=frozenset(state.type for state in item.terminal_states),
-        has_outcomes=bool(item.outcomes),
-    )
 
 
 def _resolve_refs(
@@ -242,7 +242,10 @@ def _read_envelope(workspace_path: Path, project_key: str) -> dict[str, Any]:
     path = workspace_path / "projects" / project_key / "project-synthesis.json"
     if not path.exists():  # pragma: no cover - a synthesized project always has an envelope
         return {}
-    return _load_json(path)
+    envelope = _load_json(path)
+    if envelope.get("schema_version") != 2:
+        raise PromptDiaryError(_outdated_envelope_message(project_key))
+    return envelope
 
 
 def _read_existing_report(workspace_path: Path) -> dict[str, Any] | None:
@@ -297,7 +300,7 @@ def _preserve_completed_slots(
     previous: dict[str, Any] | None,
     citation_scope: _CommittedCitationScope,
 ) -> None:
-    if previous is None:
+    if previous is None or previous.get("schema_version") != 2:
         return
     _preserve_project_summaries(report, previous, citation_scope)
     if _title_substrate(previous) == _title_substrate(report) and _complete_report_title(
@@ -465,4 +468,11 @@ def _corrupt_work_item_message(project_key: str, ref: str) -> str:
     return (
         f"project {project_key!r} has a structurally invalid work item ({ref}); "
         "re-run project synthesis to repair the envelope"
+    )
+
+
+def _outdated_envelope_message(project_key: str) -> str:
+    return (
+        f"project {project_key!r} requires project-synthesis schema version 2; "
+        "re-run project synthesis to assess task dispositions"
     )

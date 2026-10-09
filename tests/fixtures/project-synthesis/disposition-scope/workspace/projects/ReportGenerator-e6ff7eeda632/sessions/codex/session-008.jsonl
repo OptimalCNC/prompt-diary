@@ -1,0 +1,5 @@
+{"timestamp": "2026-10-08T08:00:00Z", "type": "session_meta", "payload": {"id": "fixture-S0008", "cwd": "/fixture/ReportGenerator"}}
+{"timestamp": "2026-10-08T08:00:00Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Build search.py and verify the search integration tests."}}
+{"timestamp": "2026-10-08T08:01:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Agent added partial search.py code, then the user explicitly interrupted execution. No later resume or scope adjustment appears in the evidence."}], "channel": "commentary"}}
+{"timestamp": "2026-10-08T08:02:00Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "S0008-T0001", "output": "The session records a user interrupt before the test command ran."}}
+{"timestamp": "2026-10-08T08:03:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Work explicitly stopped before required implementation and testing finished."}], "channel": "final"}}

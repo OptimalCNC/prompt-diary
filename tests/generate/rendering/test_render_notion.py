@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from prompt_diary.generate.rendering.layout import (
     Citation,
     Document,
@@ -216,18 +218,44 @@ def test_render_notion_work_item_toggle_keeps_metadata_inside_its_details(tmp_pa
     children = _basic_children(tmp_path)
     toggles = _of_type(children, "toggle")
 
-    # Task names keep the collapsed reading path concise; recorded state and confidence remain
-    # available inside the details without claiming a status that later outcomes may supersede.
+    # Task names keep the collapsed reading path concise; task status and confidence remain
+    # available inside the details with the assessment that explains the overall verdict.
     toggle = next(t for t in toggles if _plain(t).startswith("Simplify the MCP evidence tools"))
     assert _plain(toggle) == "Simplify the MCP evidence tools and drop chain_ref"
     metadata = _children_of(toggle)[0]
     assert metadata["type"] == "paragraph"
-    assert _plain(metadata) == "Recorded state: completed · high confidence"
+    assert _plain(metadata) == "Task status: completed · high confidence"
     runs = _rich_text(metadata)
-    status = next(run for run in runs if run["text"]["content"] == "Recorded state: completed")
+    status = next(run for run in runs if run["text"]["content"] == "Task status: completed")
     confidence = next(run for run in runs if run["text"]["content"] == "high confidence")
-    assert status["annotations"]["color"] == "gray"
+    assert status["annotations"]["color"] == "green"
     assert confidence["annotations"]["color"] == "gray"
+
+
+@pytest.mark.parametrize(
+    ("disposition", "color"),
+    [
+        ("completed", "green"),
+        ("in_progress", "blue"),
+        ("blocked", "orange"),
+        ("interrupted", "yellow"),
+        ("failed", "red"),
+        ("cancelled", "gray"),
+        ("unknown", "gray"),
+    ],
+)
+def test_render_notion_task_status_colors_cover_every_disposition(
+    disposition: str, color: str
+) -> None:
+    work_item = Group("Work", (Tag(disposition, "disposition"), Tag("high", "confidence")))
+    section = Section("Work by Project", (Group("Proj", (ListBlock("bullet", (work_item,)),)),))
+
+    payload = render_notion(_doc_with_section(section))
+    toggle = _of_type(payload.children, "toggle")[0]
+    runs = _rich_text(_children_of(toggle)[0])
+    assert runs[0]["text"]["content"] == f"Task status: {disposition}"
+    assert runs[0]["annotations"]["color"] == color
+    assert runs[-1]["annotations"]["color"] == "gray"
 
 
 def test_render_notion_work_item_details_follow_the_collaboration_before_original_messages(
@@ -246,28 +274,34 @@ def test_render_notion_work_item_details_follow_the_collaboration_before_origina
         "paragraph",
         "paragraph",
         "paragraph",
+        "paragraph",
         "bulleted_list_item",
         "paragraph",
         "paragraph",
         "quote",
     ]
-    assert _plain(nested[0]) == "Recorded state: completed · high confidence"
+    assert _plain(nested[0]) == "Task status: completed · high confidence"
     assert _plain(nested[1]) == (
+        "User asked to simplify the MCP evidence tools and remove chain_ref. — "
+        "The requested work is complete within the effective scope. S0001/T0001"
+    )
+    assert [run["text"]["content"] for run in _citation_runs(nested[1])] == ["S0001/T0001"]
+    assert _plain(nested[2]) == (
         "Human direction  User asked to simplify the MCP evidence tools and remove chain_ref."
     )
-    assert _plain(nested[2]) == (
+    assert _plain(nested[3]) == (
         "Agent response  Updated the MCP tools page, evidence contract, and extractor prompt "
         "to a top-level turn_ref identity."
     )
-    assert _plain(nested[3]) == "Outcomes"
-    outcome = nested[4]
+    assert _plain(nested[4]) == "Outcomes"
+    outcome = nested[5]
     assert "Top-level turn_ref adopted; chain_ref removed from the evidence surface." in _plain(
         outcome
     )
-    assert _plain(nested[5]) == "Limits  Prompt-test suite not confirmed green within these turns."
-    assert _plain(nested[6]) == "Original user messages"
-    assert _plain(nested[7]) == "Please simplify the MCP evidence tools and drop chain_ref."
-    assert all(_rich_text(nested[index])[0]["annotations"]["bold"] for index in (1, 2, 3, 6))
+    assert _plain(nested[6]) == "Limits  Prompt-test suite not confirmed green within these turns."
+    assert _plain(nested[7]) == "Original user messages"
+    assert _plain(nested[8]) == "Please simplify the MCP evidence tools and drop chain_ref."
+    assert all(_rich_text(nested[index])[0]["annotations"]["bold"] for index in (2, 3, 4, 7))
     assert all("children" not in block[block["type"]] for block in nested)
     assert [run["text"]["content"] for run in _citation_runs(outcome)] == ["S0001/T0001"]
     assert _code_runs(outcome) == []
@@ -294,7 +328,7 @@ def test_render_notion_work_item_body_skips_non_rendering_child_without_divider(
     nested = _children_of(toggle)
 
     assert [block["type"] for block in nested] == ["paragraph", "paragraph"]
-    assert _plain(nested[0]) == "Recorded state: completed · high confidence"
+    assert _plain(nested[0]) == "Task status: completed · high confidence"
     assert _plain(nested[1]) == "Visible body."
 
 
@@ -515,6 +549,9 @@ def test_render_notion_no_new_claims_every_model_string_present(tmp_path: Path) 
         claims.append(project["summary"]["text"])
         for item in project["work_items"]:
             claims.append(item["title"])
+            if item["disposition_assessment"] is not None:
+                assessment = item["disposition_assessment"]
+                claims += [assessment["scope"], assessment["summary"]]
             claims += [outcome["what_changed"] for outcome in item["outcomes"]]
             claims += list(item["limits"])
     engagement = report["engagement_assessment"]

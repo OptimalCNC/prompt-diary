@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from tests.support.project_synthesis import (
@@ -11,6 +12,7 @@ from tests.support.project_synthesis import (
     deep_copy_json,
     load_project_synthesis,
     project_synthesis_text,
+    synthesis_path,
     turn_ref,
     valid_evidence_gap_work_item,
     valid_material_work_item,
@@ -33,7 +35,7 @@ def test_first_write_creates_envelope_and_populates_source_user_messages(tmp_pat
         result, work_item_ref="W0001", uncovered=[("S0001", "T0003"), ("S0002", "T0001")]
     )
     envelope = load_project_synthesis(workspace)
-    assert envelope["schema_version"] == 1
+    assert envelope["schema_version"] == 2
     assert envelope["project_key"] == PROJECT_KEY
     assert envelope["project_label"] == "ReportGenerator"
     assert [item["work_item_ref"] for item in envelope["work_items"]] == ["W0001"]
@@ -182,6 +184,53 @@ def test_rejects_evidence_ref_not_in_covered_turns(tmp_path: Path) -> None:
     )
 
 
+def test_rejects_disposition_citing_a_turn_outside_the_work_item(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    item = work_item_with_value(("disposition", "evidence_refs"), [turn_ref("S0002", "T0001")])
+
+    result = call_write_work_item_api(workspace_path=workspace, work_item=item)
+
+    assert_invalid_result(
+        result,
+        path="work_item.disposition.evidence_refs[0]",
+        message_contains="covered",
+        hint_contains="covered_turns",
+    )
+    assert not synthesis_path(workspace).exists()
+
+
+def test_rejects_disposition_citing_a_turn_without_a_committed_chain(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    item = valid_material_work_item()
+    item["covered_turns"].append(turn_ref("S0001", "T0003"))
+    item["disposition"]["evidence_refs"] = [turn_ref("S0001", "T0003")]
+
+    result = call_write_work_item_api(workspace_path=workspace, work_item=item)
+
+    assert_invalid_result(
+        result,
+        path="work_item.disposition.evidence_refs[0]",
+        message_contains="no committed evidence chain",
+        hint_contains="cannot be cited",
+    )
+    assert not synthesis_path(workspace).exists()
+
+
+def test_rejects_missing_task_disposition_without_modifying_existing_envelope(
+    tmp_path: Path,
+) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    call_write_work_item_api(workspace_path=workspace, work_item=valid_no_material_work_item())
+    before = project_synthesis_text(workspace)
+    item = valid_material_work_item()
+    del item["disposition"]
+
+    result = call_write_work_item_api(workspace_path=workspace, work_item=item)
+
+    assert_invalid_result(result, path="work_item.disposition", message_contains="requires")
+    assert project_synthesis_text(workspace) == before
+
+
 def test_rejects_citing_a_turn_with_no_committed_chain(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
     # A non-gap kind that covers the gap turn (itself rejected) and also cites it; the
@@ -244,8 +293,35 @@ def test_first_write_regenerates_a_nondict_envelope(tmp_path: Path) -> None:
         result, work_item_ref="W0001", uncovered=[("S0001", "T0003"), ("S0002", "T0001")]
     )
     envelope = load_project_synthesis(workspace)
-    assert envelope["schema_version"] == 1
+    assert envelope["schema_version"] == 2
     assert envelope["project_key"] == PROJECT_KEY
     assert envelope["project_label"] == "ReportGenerator"
     assert [item["work_item_ref"] for item in envelope["work_items"]] == ["W0001"]
     assert len(envelope["source_user_messages"]) == 3
+
+
+def test_first_write_regenerates_an_obsolete_envelope(tmp_path: Path) -> None:
+    workspace = copy_basic_project_workspace(tmp_path)
+    synthesis_path(workspace).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_key": PROJECT_KEY,
+                "project_label": "ReportGenerator",
+                "work_items": [valid_no_material_work_item()],
+                "source_user_messages": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = call_write_work_item_api(
+        workspace_path=workspace, work_item=valid_material_work_item()
+    )
+
+    assert_appended_result(
+        result, work_item_ref="W0001", uncovered=[("S0001", "T0003"), ("S0002", "T0001")]
+    )
+    envelope = load_project_synthesis(workspace)
+    assert envelope["schema_version"] == 2
+    assert [item["work_item_ref"] for item in envelope["work_items"]] == ["W0001"]

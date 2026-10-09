@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+from prompt_diary.errors import PromptDiaryError
 from prompt_diary.generate.project_synthesis.cards import load_committed_chains
 from prompt_diary.generate.prompts import (
     ENGAGEMENT_DIMENSIONS,
@@ -250,6 +251,8 @@ _TEAM_LEARNING_STANDING_LIMIT = (
 
 def build_layout(report: dict[str, Any], *, evidence_chains: tuple[Group, ...] = ()) -> Document:
     """Project a finalized daily-report model into the abstract layout tree."""
+    if report.get("schema_version") != 2:
+        raise PromptDiaryError(_OBSOLETE_REPORT_MESSAGE)
     labels = _project_labels(report)
     anchors = _evidence_anchors(evidence_chains)
     children = [
@@ -264,6 +267,12 @@ def build_layout(report: dict[str, Any], *, evidence_chains: tuple[Group, ...] =
         properties=_properties(report),
         children=tuple(children),
     )
+
+
+_OBSOLETE_REPORT_MESSAGE = (
+    "rendering requires daily-report schema version 2; re-run generate to synthesize task "
+    "dispositions before rendering"
+)
 
 
 def _report_title(report: dict[str, Any]) -> str:
@@ -371,6 +380,9 @@ def _work_item_group(
     if isinstance(disposition, str):
         children.append(Tag(disposition, "disposition"))
     children.append(Tag(_str(item.get("confidence")), "confidence"))
+    assessment = _disposition_assessment_prose(item, anchors)
+    if assessment is not None:
+        children.append(assessment)
     why = _why_toggle(item)
     if why is not None:
         children.append(why)
@@ -380,6 +392,20 @@ def _work_item_group(
     children.append(_outcomes_block(item, anchors))
     children.extend(_limit_callouts(item))
     return Group(_str(item.get("title")), tuple(children))
+
+
+def _disposition_assessment_prose(
+    item: dict[str, Any], anchors: dict[tuple[str, str, str], str]
+) -> Prose | None:
+    """Keep the task's effective scope and status explanation visible with its label."""
+    assessment = item.get("disposition_assessment")
+    if not isinstance(assessment, dict):
+        return None
+    mapping = cast("dict[str, Any]", assessment)
+    return Prose(
+        f"{_str(mapping.get('scope'))} — {_str(mapping.get('summary'))}",
+        _citation(mapping.get("citations"), {}, anchors, scoped=False),
+    )
 
 
 def _why_toggle(item: dict[str, Any]) -> Toggle | None:

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0005",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User requests schema.sql migration followed by verification.",
+        "quoted_messages": [
+          {
+            "text": "Migrate the database to schema.sql and verify it after the migration finishes.",
+            "citations": [
+              {
+                "lines": "2-2"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "2-2"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent started the migration job and is monitoring it. At the final observed checkpoint the job is active and 60 percent complete; post-migration verification has not started.",
+          "citations": [
+            {
+              "lines": "3-5"
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "category": "process_outcome",
+          "summary": "The schema migration job was started and is actively processing rows.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "observed_checks": [
+        {
+          "type": "command_output",
+          "summary": "Migration job status: RUNNING, progress 60%; the process is still executing.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "terminal_state": {
+        "type": "other",
+        "summary": "The evidence ends at an active progress checkpoint; no stop, failure, or completion was observed.",
+        "citations": [
+          {
+            "lines": "5-5"
+          }
+        ]
+      },
+      "materiality": "material"
+    }
+  ]
+}

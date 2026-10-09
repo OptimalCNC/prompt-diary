@@ -83,6 +83,15 @@ EVIDENCE_APPENDIX_METADATA_KEY = "_prompt_diary_evidence_appendix"
 _MINOR_ACTIVITY_LABEL = "Minor activity"
 # Role colors aid scanning; only the short labels carry color, leaving the narrative neutral.
 _ROLE_LABEL_COLORS = {"Human direction": "blue", "Agent response": "purple"}
+_DISPOSITION_COLORS = {
+    "completed": "green",
+    "in_progress": "blue",
+    "blocked": "orange",
+    "interrupted": "yellow",
+    "failed": "red",
+    "cancelled": "gray",
+    "unknown": "gray",
+}
 
 
 @dataclass(frozen=True)
@@ -423,7 +432,7 @@ def _prose_rich_text(prose: Prose, *, separate_metadata: bool = False) -> list[d
 
 
 def _label_rich_text(label: str, tags: tuple[Tag, ...]) -> list[dict[str, Any]]:
-    # Keep the title prominent; recorded state is metadata, not a latest-status verdict.
+    # Keep the title prominent; the task assessment and confidence remain short metadata.
     return [
         *_text_runs(label, annotations={"bold": True}),
         *_tag_runs(tags, separator=" — "),
@@ -440,11 +449,12 @@ def _tag_runs(tags: tuple[Tag, ...], *, separator: str) -> list[dict[str, Any]]:
         label = (
             f"{tag.value} confidence"
             if tag.scale == "confidence"
-            else f"Recorded state: {tag.value}"
+            else f"Task status: {tag.value}"
             if tag.scale == "disposition"
             else tag.value
         )
-        runs.extend(_text_runs(label, annotations={"color": "gray"}))
+        color = _DISPOSITION_COLORS.get(tag.value, "gray") if tag.scale == "disposition" else "gray"
+        runs.extend(_text_runs(label, annotations={"color": color}))
     return runs
 
 

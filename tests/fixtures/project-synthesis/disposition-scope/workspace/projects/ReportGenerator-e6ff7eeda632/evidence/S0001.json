@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "project_key": "ReportGenerator-e6ff7eeda632",
+  "session_ref": "S0001",
+  "evidence_chains": [
+    {
+      "turn_ref": "T0001",
+      "trigger": {
+        "type": "explicit_user_message",
+        "summary": "User requests CSV export implementation, verification, and a PR.",
+        "quoted_messages": [
+          {
+            "text": "Implement CSV export in export.py, verify it, and create a PR.",
+            "citations": [
+              {
+                "lines": "2-2"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "2-2"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent inspected the export API and began implementing export.py; the user stopped this attempt before validation or PR creation.",
+          "citations": [
+            {
+              "lines": "3-5"
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "category": "code_outcome",
+          "summary": "Initial CSV export code was added, with verification and PR creation still outstanding.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "observed_checks": [
+        {
+          "type": "command_output",
+          "summary": "Session records an explicit user interrupt while work is unfinished.",
+          "citations": [
+            {
+              "lines": "4-5"
+            }
+          ]
+        }
+      ],
+      "terminal_state": {
+        "type": "interrupted",
+        "summary": "Agent execution was explicitly interrupted before tests and PR creation.",
+        "citations": [
+          {
+            "lines": "5-5"
+          }
+        ]
+      },
+      "materiality": "material"
+    },
+    {
+      "turn_ref": "T0002",
+      "trigger": {
+        "type": "resume_or_continue",
+        "summary": "User resumes the same CSV export task with its original delivery scope.",
+        "quoted_messages": [
+          {
+            "text": "Resume the CSV export task. Finish verification and create the PR.",
+            "citations": [
+              {
+                "lines": "6-6"
+              }
+            ]
+          }
+        ],
+        "citations": [
+          {
+            "lines": "6-6"
+          }
+        ]
+      },
+      "agent_reactions": [
+        {
+          "summary": "Agent finished export.py, ran export tests successfully, pushed the change, and created PR #101.",
+          "citations": [
+            {
+              "lines": "7-9"
+            }
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "category": "code_outcome",
+          "summary": "CSV export implementation was delivered in PR #101.",
+          "citations": [
+            {
+              "lines": "8-9"
+            }
+          ]
+        }
+      ],
+      "observed_checks": [
+        {
+          "type": "test_output",
+          "summary": "All 12 export tests passed; PR creation returned the URL for PR #101.",
+          "citations": [
+            {
+              "lines": "8-9"
+            }
+          ]
+        }
+      ],
+      "terminal_state": {
+        "type": "material_result",
+        "summary": "Requested implementation, verification, and PR are delivered.",
+        "citations": [
+          {
+            "lines": "9-9"
+          }
+        ]
+      },
+      "materiality": "material"
+    }
+  ]
+}

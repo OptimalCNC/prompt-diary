@@ -146,6 +146,15 @@ def _render_item_block(item: WorkItem, *, header: str) -> str:
         lines.append(f"trigger: {item.trigger.summary}")
     if item.agent_reaction is not None:
         lines.append(f"reaction: {item.agent_reaction.summary}")
+    if item.disposition is not None:
+        lines.extend(
+            (
+                f"disposition: {item.disposition.type}",
+                f"effective scope: {item.disposition.scope}",
+                f"disposition assessment: {item.disposition.summary}",
+                f"disposition evidence: {_render_turns(item.disposition.evidence_refs)}",
+            )
+        )
     if item.outcomes:
         lines.append("outcomes:")
         lines.extend(
@@ -153,7 +162,7 @@ def _render_item_block(item: WorkItem, *, header: str) -> str:
             for outcome in item.outcomes
         )
     if item.terminal_states:
-        lines.append("terminal states:")
+        lines.append("process terminal states (not task disposition):")
         lines.extend(f"- {state.type}: {state.summary}" for state in item.terminal_states)
     if item.limits:
         lines.append("limits:")
@@ -195,6 +204,14 @@ def _render_title_work_item(item: dict[str, Any], project_key: str) -> list[str]
         f"disposition: {_as_str(item.get('disposition'))}",
         f"confidence: {_as_str(item.get('confidence'))}",
     ]
+    assessment = _as_mapping(item.get("disposition_assessment"))
+    lines.extend(
+        (
+            f"effective scope: {_as_str(assessment.get('scope'))}",
+            f"disposition assessment: {_as_str(assessment.get('summary'))}",
+            *_render_cite_handles(assessment.get("citations")),
+        )
+    )
     outcomes = _as_list(item.get("outcomes"))
     if outcomes:
         lines.append("outcomes:")
@@ -209,7 +226,7 @@ def _render_title_work_item(item: dict[str, Any], project_key: str) -> list[str]
     else:
         terminal_states = _as_list(item.get("terminal_states"))
         if terminal_states:
-            lines.append("terminal states:")
+            lines.append("process terminal states (not task disposition):")
             for state in terminal_states:
                 state_mapping = _as_mapping(state)
                 lines.append(f"- {_as_str(state_mapping.get('summary'))}")
@@ -238,6 +255,8 @@ def _render_turns(turns: tuple[Any, ...]) -> str:
 
 
 def _parse_work_items(envelope: dict[str, Any], project_key: str) -> tuple[WorkItem, ...]:
+    if envelope.get("schema_version") != 2:
+        raise PromptDiaryError(_outdated_envelope_message(project_key))
     items: list[WorkItem] = []
     for index, raw in enumerate(_as_list(envelope.get("work_items"))):
         parsed = parse_work_item(_as_mapping(raw))
@@ -299,3 +318,10 @@ def _corrupt_work_item_message(project_key: str, ref: str) -> str:
 
 def _unknown_project_message(project_key: str) -> str:
     return f"unknown project_key {project_key!r} in prepared workspace"
+
+
+def _outdated_envelope_message(project_key: str) -> str:
+    return (
+        f"project {project_key!r} requires project-synthesis schema version 2; "
+        "re-run project synthesis to assess task dispositions"
+    )

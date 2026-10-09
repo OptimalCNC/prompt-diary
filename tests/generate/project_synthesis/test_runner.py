@@ -117,6 +117,29 @@ def test_runner_reuses_complete_existing_envelope(tmp_path: Path) -> None:
     assert second_factory.runners == []
 
 
+def test_runner_regenerates_complete_obsolete_synthesis(tmp_path: Path) -> None:
+    workspace = copy_complete_project_workspace(tmp_path)
+    assert _run(GroupingAgentSessionFactory(), workspace).status == "success"
+    envelope = load_project_synthesis(workspace)
+    envelope["schema_version"] = 1
+    for item in envelope["work_items"]:
+        item.pop("disposition", None)
+    synthesis_path(workspace).write_text(json.dumps(envelope), encoding="utf-8")
+    factory = GroupingAgentSessionFactory()
+
+    result = _run(factory, workspace)
+
+    assert result.status == "success"
+    assert len(factory.runners) == 1
+    regenerated = load_project_synthesis(workspace)
+    assert regenerated["schema_version"] == 2
+    assert all(
+        item["disposition"]["type"] == "completed"
+        for item in regenerated["work_items"]
+        if item["kind"] == "material_work_item"
+    )
+
+
 def test_runner_populates_source_user_messages(tmp_path: Path) -> None:
     workspace = copy_complete_project_workspace(tmp_path)
 

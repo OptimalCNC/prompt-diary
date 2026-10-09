@@ -127,6 +127,41 @@ PROJECT_WORK_ITEM_KINDS: tuple[PromptEnumValue, ...] = (
     ),
 )
 
+PROJECT_WORK_ITEM_DISPOSITIONS: tuple[PromptEnumValue, ...] = (
+    PromptEnumValue(
+        "completed",
+        "the evidence supports completion of all delivery requirements in the final "
+        "effective scope",
+    ),
+    PromptEnumValue(
+        "in_progress",
+        "effective requirements remain unfinished and the evidence explicitly shows "
+        "work continuing",
+    ),
+    PromptEnumValue(
+        "blocked",
+        "effective requirements remain unfinished because an observed dependency, missing "
+        "information, or required decision still prevents progress",
+    ),
+    PromptEnumValue(
+        "interrupted",
+        "unfinished work explicitly stopped or paused, with no later recovery or accepted scope "
+        "change resolving that stop",
+    ),
+    PromptEnumValue(
+        "failed",
+        "the task ended in an observed failure, with no later repair or completion",
+    ),
+    PromptEnumValue(
+        "cancelled",
+        "the user cancelled the whole goal or explicitly abandoned its delivery",
+    ),
+    PromptEnumValue(
+        "unknown",
+        "the available evidence is insufficient to determine the task's final state",
+    ),
+)
+
 ENGAGEMENT_DIMENSIONS: tuple[PromptEnumValue, ...] = (
     PromptEnumValue(
         "direction",
@@ -205,6 +240,7 @@ def project_synthesizer_instructions() -> str:
     return _render(
         "project-synthesizer.md",
         work_item_kind_descriptions=_format_enum_values(PROJECT_WORK_ITEM_KINDS),
+        disposition_descriptions=_format_enum_values(PROJECT_WORK_ITEM_DISPOSITIONS),
     )
 
 

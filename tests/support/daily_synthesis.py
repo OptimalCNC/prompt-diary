@@ -62,9 +62,9 @@ def copy_basic_daily_workspace(tmp_path: Path) -> Path:
 def copy_dispositions_daily_workspace(tmp_path: Path) -> Path:
     """Copy the disposition-coverage fixture: one project of material work items per disposition.
 
-    Its envelope exercises every disposition branch (failed / blocked / interrupted / completed /
-    clarification, plus failed-wins precedence). Build does not read evidence cards, so this
-    fixture omits them.
+    Its envelope carries explicit task-level assessments, including completion after recovery from
+    failed and blocked branches. Build lifts these judgments instead of deriving them from history.
+    This fixture omits evidence cards because its tests exercise deterministic lifting only.
     """
     return _copy_workspace(DISPOSITIONS_FIXTURE_ROOT, tmp_path)
 
@@ -210,7 +210,7 @@ def seed_daily_report_skeleton(workspace_path: Path) -> Path:
     metadata = _load_json(workspace_path / "metadata.json")
     window_local = _as_mapping(metadata.get("report_window_local"))
     skeleton: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_date": metadata.get("report_date"),
         "status": metadata.get("status"),
         "window": {

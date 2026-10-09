@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from prompt_diary.cli import app
 from prompt_diary.generate.prompts import (
+    PROJECT_WORK_ITEM_DISPOSITIONS,
     engagement_instructions,
     engagement_prompt,
     evidence_extractor_instructions,
@@ -107,6 +108,39 @@ def test_project_synthesizer_prompt() -> None:
     assert "## Role" in instructions
     assert "## Role" not in result
     assert "{{" not in instructions
+
+
+def test_project_synthesizer_defines_independent_task_judgment() -> None:
+    instructions = project_synthesizer_instructions()
+
+    for disposition in PROJECT_WORK_ITEM_DISPOSITIONS:
+        assert f"`{disposition.value}`: {disposition.description}." in instructions
+    assert "final effective scope" in instructions
+    assert "user additions" in instructions
+    assert "narrowed, replaced, deferred" in instructions
+    assert "an agent's unilateral reduction do not change the scope" in instructions
+    assert "not just the last turn or a" in instructions
+    assert "chain's `terminal_state`" in instructions
+    assert "historical interruption followed by completed delivery" in instructions
+    assert "A turn boundary," in instructions
+    assert "cutoff leaves the final state ambiguous" in instructions
+    assert "do not establish chronology across sessions" in instructions
+    assert '"disposition": {' in instructions
+    assert "Omit this field for all other kinds" in instructions
+
+
+def test_daily_prompts_consume_the_task_assessment_without_inheriting_process_states() -> None:
+    for instructions in (
+        project_summary_instructions(),
+        report_title_instructions(),
+        engagement_instructions(),
+        team_learning_instructions(),
+    ):
+        assert "effective scope assessment as the authority for overall task" in instructions
+        assert "Historical chain or branch terminal states describe the process" in instructions
+        assert "do not inherit them as the" in instructions
+        assert "limits and uncertainty" in instructions
+        assert "user intentions" in instructions
 
 
 def test_project_synthesizer_next_prompt() -> None:

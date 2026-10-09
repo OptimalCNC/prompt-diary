@@ -196,6 +196,12 @@ def _material_work_item(
         "terminal_states": [
             {"type": "material_result", "summary": "Thread concluded.", "evidence_refs": cite}
         ],
+        "disposition": {
+            "type": "completed",
+            "scope": f"Complete the requested work thread in {session_ref}.",
+            "summary": "The requested work thread concluded with an evidenced result.",
+            "evidence_refs": cite,
+        },
         "limits": [],
         "confidence": "medium",
     }

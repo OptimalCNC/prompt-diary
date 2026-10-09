@@ -20,6 +20,7 @@ def _plain(block: dict[str, Any]) -> str:
 
 def _work_report(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        "schema_version": 2,
         "projects": [{"project_key": "one", "project_label": "Project", "work_items": items}],
     }
 
@@ -59,7 +60,7 @@ def test_terminal_state_is_a_recorded_result_and_does_not_become_an_outcome() ->
             {
                 "kind": "minor",
                 "title": "Attempt",
-                "disposition": "blocked",
+                "disposition": None,
                 "terminal_states": [{"summary": "Waiting for input.", "confidence": "high"}],
             }
         ]
@@ -70,14 +71,14 @@ def test_terminal_state_is_a_recorded_result_and_does_not_become_an_outcome() ->
     body = work["toggle"]["children"]
 
     assert _plain(work) == "Attempt"
-    assert _plain(body[0]) == "Recorded state: blocked"
-    assert _plain(body[1]) == "Recorded result"
-    assert _plain(body[2]).startswith("Waiting for input.")
+    assert _plain(body[0]) == "Recorded result"
+    assert _plain(body[1]).startswith("Waiting for input.")
     assert work["toggle"]["color"] == "gray"
 
 
 def test_pattern_fields_with_prose_separators_stay_separate_and_verbatim() -> None:
     report = {
+        "schema_version": 2,
         "team_learning": {
             "takeaways": {"text": "Learn from collaboration."},
             "patterns": [
@@ -120,6 +121,7 @@ def test_duplicate_labels_and_titles_keep_project_and_item_associations() -> Non
     ]
     projects.insert(1, {"project_key": "empty", "project_label": "No work", "work_items": []})
     report = {
+        "schema_version": 2,
         "projects": projects,
         "engagement_assessment": {
             "overall_reading": {

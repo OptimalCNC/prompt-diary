@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 from prompt_diary.generate.daily_synthesis.citations import CitationResolver
 from prompt_diary.generate.daily_synthesis.model import (
     CONFIDENCE_RANK,
+    DISPOSITIONS,
     REPORTABLE_WORK_ITEM_KINDS,
     DailyReportWriteError,
 )
@@ -180,11 +181,81 @@ def _ranked(value: object) -> Iterator[int]:
 
 def _validate(report: dict[str, Any], committed: _CommittedResolver) -> list[DailyReportWriteError]:
     errors: list[DailyReportWriteError] = []
+    if report.get("schema_version") != 2:
+        errors.append(
+            DailyReportWriteError(
+                "schema_version",
+                "daily report must use schema version 2",
+                "re-run project and daily synthesis to assess task dispositions",
+            )
+        )
+    errors.extend(_disposition_errors(report))
     if _has_reportable_work(report):
         errors.extend(_required_slot_errors(report))
         errors.extend(_completeness_errors(report))
     errors.extend(_citation_errors(report, committed))
     return errors
+
+
+def _disposition_errors(report: dict[str, Any]) -> Iterator[DailyReportWriteError]:
+    """Require a cited task assessment, with refs belonging to that work item's covered turns."""
+    for project_index, raw_project in enumerate(_as_list(report.get("projects"))):
+        project = _as_mapping(raw_project)
+        project_key = _as_str(project.get("project_key"))
+        for item_index, raw_item in enumerate(_as_list(project.get("work_items"))):
+            item = _as_mapping(raw_item)
+            base = f"projects[{project_index}].work_items[{item_index}]"
+            if item.get("kind") != _MATERIAL_WORK_ITEM:
+                for field_name in ("disposition", "disposition_assessment"):
+                    if item.get(field_name) is not None:
+                        yield DailyReportWriteError(
+                            f"{base}.{field_name}",
+                            "non-material work items must have no task disposition assessment",
+                            _DISPOSITION_HINT,
+                        )
+                continue
+            if item.get("disposition") not in DISPOSITIONS:
+                yield DailyReportWriteError(
+                    f"{base}.disposition",
+                    "material work items need a valid disposition",
+                    _DISPOSITION_HINT,
+                )
+            yield from _assessment_errors(item, project_key=project_key, base=base)
+
+
+def _assessment_errors(
+    item: dict[str, Any], *, project_key: str, base: str
+) -> Iterator[DailyReportWriteError]:
+    assessment_path = f"{base}.disposition_assessment"
+    assessment = item.get("disposition_assessment")
+    if not isinstance(assessment, dict):
+        yield DailyReportWriteError(
+            assessment_path, "material work items need a disposition assessment", _DISPOSITION_HINT
+        )
+        return
+    mapping = cast("dict[str, Any]", assessment)
+    for field_name in ("scope", "summary"):
+        value = mapping.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            yield DailyReportWriteError(
+                f"{assessment_path}.{field_name}",
+                f"disposition {field_name} must be non-empty",
+                _DISPOSITION_HINT,
+            )
+    yield from _citations_present(mapping, assessment_path)
+    covered = {
+        (_as_str(ref.get("session_ref")), _as_str(ref.get("turn_ref")))
+        for ref in (_as_mapping(raw_ref) for raw_ref in _as_list(item.get("covered_turns")))
+    }
+    for index, raw_citation in enumerate(_as_list(mapping.get("citations"))):
+        citation = _as_mapping(raw_citation)
+        turn_key = (_as_str(citation.get("session_ref")), _as_str(citation.get("turn_ref")))
+        if citation.get("project_key") != project_key or turn_key not in covered:
+            yield DailyReportWriteError(
+                f"{assessment_path}.citations[{index}]",
+                "disposition citations must belong to this work item's covered turns",
+                _DISPOSITION_HINT,
+            )
 
 
 def _has_reportable_work(report: dict[str, Any]) -> bool:
@@ -354,6 +425,9 @@ def _project_citations(
     for item_index, raw_item in enumerate(_as_list(project.get("work_items"))):
         item = _as_mapping(raw_item)
         item_base = f"{base}.work_items[{item_index}]"
+        yield from _cited_object(
+            item.get("disposition_assessment"), f"{item_base}.disposition_assessment"
+        )
         for outcome_index, outcome in enumerate(_as_list(item.get("outcomes"))):
             yield from _cited_object(outcome, f"{item_base}.outcomes[{outcome_index}]")
         # Terminal-state citations are stored on every material item (they render in the no-outcome
@@ -439,4 +513,8 @@ _CLAIM_TEXT_HINT = "a synthesized claim renders its text; it must not be empty"
 _EMPTY_CITATIONS_HINT = "every synthesized claim must cite the turns it rests on"
 _UNSOUND_HINT = (
     "cite a committed turn of the citation's own project; lines must match the session index span"
+)
+_DISPOSITION_HINT = (
+    "rebuild from project synthesis; material task status must include effective scope, "
+    "a reason, and citations to the work item's covered turns"
 )

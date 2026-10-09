@@ -73,7 +73,7 @@ def _write_envelope(workspace: Path, envelope: dict[str, Any]) -> None:
 def test_build_header_lifts_metadata(tmp_path: Path) -> None:
     report = _build(tmp_path)
 
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == 2
     assert report["report_date"] == "2026-05-28"
     assert report["status"] == "final"
     assert report["window"] == {
@@ -191,6 +191,7 @@ def test_build_w0003_minor_item(tmp_path: Path) -> None:
 
     assert item["kind"] == "no_material_work_item"
     assert item["disposition"] is None
+    assert item["disposition_assessment"] is None
     assert item["confidence"] == "low"
     assert item["trigger_summary"] is None
     assert item["agent_reaction_summary"] is None
@@ -203,6 +204,7 @@ def test_build_w0004_evidence_gap_item(tmp_path: Path) -> None:
 
     assert item["kind"] == "evidence_gap_item"
     assert item["disposition"] is None
+    assert item["disposition_assessment"] is None
 
 
 def test_build_source_user_messages_lifted_verbatim(tmp_path: Path) -> None:
@@ -260,7 +262,7 @@ def test_build_keeps_all_work_item_outcomes(tmp_path: Path) -> None:
     ]
 
 
-# --- disposition derivation -------------------------------------------------------------------
+# --- task disposition assessment --------------------------------------------------------------
 
 
 def _disposition_report(tmp_path: Path) -> dict[str, Any]:
@@ -268,7 +270,7 @@ def _disposition_report(tmp_path: Path) -> dict[str, Any]:
     return build_daily_report_via_api(workspace)
 
 
-def test_build_disposition_per_branch(tmp_path: Path) -> None:
+def test_build_preserves_each_project_synthesis_disposition(tmp_path: Path) -> None:
     report = _disposition_report(tmp_path)
     by_ref = {item["work_item_ref"]: item["disposition"] for item in _work_items(report)}
 
@@ -276,11 +278,11 @@ def test_build_disposition_per_branch(tmp_path: Path) -> None:
         "W0001": "failed",
         "W0002": "blocked",
         "W0003": "interrupted",
-        "W0004": "clarification",
+        "W0004": "in_progress",
         "W0005": "completed",
         "W0006": "completed",
-        "W0007": "clarification",
-        "W0008": "failed",
+        "W0007": "unknown",
+        "W0008": "completed",
     }
 
 
@@ -298,6 +300,65 @@ def test_build_interrupted_terminal_still_stays_with_work_item(tmp_path: Path) -
     assert _by_ref(report, "W0003")["terminal_states"][0]["summary"] == (
         "W0003 interrupted terminal."
     )
+
+
+def test_build_completed_assessment_survives_failed_and_interrupted_history(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    envelope = _load_envelope(workspace)
+    item = envelope["work_items"][0]
+    item["terminal_states"] = [
+        {"type": status, "summary": f"Historical {status}.", "evidence_refs": item["covered_turns"]}
+        for status in ("failed", "interrupted", "material_result")
+    ]
+    item["disposition"] = {
+        "type": "completed",
+        "scope": "Deliver the final scope accepted by the user.",
+        "summary": "The work resumed, corrected the failure, and delivered that scope.",
+        "evidence_refs": item["covered_turns"],
+    }
+    _write_envelope(workspace, envelope)
+
+    result = _by_ref(build_daily_report_via_api(workspace), "W0001")
+
+    assert result["disposition"] == "completed"
+    assert result["disposition_assessment"] == {
+        "scope": item["disposition"]["scope"],
+        "summary": item["disposition"]["summary"],
+        "citations": [
+            {
+                "project_key": PROJECT_KEY,
+                "session_ref": "S0001",
+                "turn_ref": "T0001",
+                "lines": "2-8",
+            }
+        ],
+    }
+    assert len(result["terminal_states"]) == 3
+
+
+@pytest.mark.parametrize("status", ["blocked", "cancelled"])
+def test_build_outcomes_do_not_override_task_assessment(tmp_path: Path, status: str) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    envelope = _load_envelope(workspace)
+    item = envelope["work_items"][0]
+    item["disposition"]["type"] = status
+    item["disposition"]["summary"] = "Partial work exists; the remaining work is not completed."
+    _write_envelope(workspace, envelope)
+
+    result = _by_ref(build_daily_report_via_api(workspace), "W0001")
+
+    assert result["outcomes"]
+    assert result["disposition"] == status
+
+
+def test_build_rejects_legacy_project_synthesis_without_task_assessment(tmp_path: Path) -> None:
+    workspace = copy_basic_daily_workspace(tmp_path)
+    envelope = _load_envelope(workspace)
+    envelope["schema_version"] = 1
+    _write_envelope(workspace, envelope)
+
+    with pytest.raises(PromptDiaryError, match="re-run project synthesis"):
+        build_daily_report_via_api(workspace)
 
 
 # --- uncited entries --------------------------------------------------------------------------

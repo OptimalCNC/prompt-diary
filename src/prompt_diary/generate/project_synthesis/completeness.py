@@ -143,8 +143,8 @@ def _read_envelope(path: Path) -> dict[str, Any] | None:
 
 def _envelope_errors(envelope: dict[str, Any], project: PreparedProject) -> list[str]:
     errors: list[str] = []
-    if envelope.get("schema_version") != 1:
-        errors.append("schema_version must be 1")
+    if envelope.get("schema_version") != 2:
+        errors.append("schema_version must be 2")
     if envelope.get("project_key") != project.project_key:
         errors.append(_project_mismatch_message(project.project_key))
     if envelope.get("project_label") != project.project_label:

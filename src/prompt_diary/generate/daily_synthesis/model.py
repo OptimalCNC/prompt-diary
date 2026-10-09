@@ -16,7 +16,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
-from prompt_diary.generate.prompts import ENGAGEMENT_DIMENSIONS, TEAM_LEARNING_PATTERN_KINDS
+from prompt_diary.generate.prompts import (
+    ENGAGEMENT_DIMENSIONS,
+    PROJECT_WORK_ITEM_DISPOSITIONS,
+    TEAM_LEARNING_PATTERN_KINDS,
+)
 
 _CONFIDENCE_VALUES = frozenset({"high", "medium", "low"})
 _DIMENSIONS = frozenset(item.value for item in ENGAGEMENT_DIMENSIONS)
@@ -33,10 +37,9 @@ _GENERIC_TITLE_PHRASES = frozenset(
 )
 _MAX_TITLE_LENGTH = 80
 
-# The work-item disposition scale (daily-synthesis.md). A material work item carries exactly one of
-# these, derived deterministically by the Build step from its terminal states and outcomes; minor
-# kinds carry no disposition. Ordered most-to-least severe, matching the derivation precedence.
-DISPOSITIONS: tuple[str, ...] = ("completed", "blocked", "interrupted", "failed", "clarification")
+# Project synthesis assesses task status across the work item's turns and effective scope. Build
+# carries that judgment into the report; process terminal states never override it.
+DISPOSITIONS: tuple[str, ...] = tuple(item.value for item in PROJECT_WORK_ITEM_DISPOSITIONS)
 
 # The confidence band ranking shared by Build's significance sort and Finalize's roll-up.
 CONFIDENCE_RANK: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
@@ -49,31 +52,6 @@ CONFIDENCE_RANK: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
 REPORTABLE_WORK_ITEM_KINDS: frozenset[str] = frozenset(
     {"material_work_item", "no_material_work_item"}
 )
-
-_MATERIAL_WORK_ITEM = "material_work_item"
-
-
-def derive_disposition(
-    *, kind: str, terminal_types: frozenset[str], has_outcomes: bool
-) -> str | None:
-    """Derive a material work item's disposition from its terminal states and outcomes.
-
-    Returns a member of :data:`DISPOSITIONS`, or ``None`` for a non-material work item. The
-    precedence is most-to-least severe — a failed/blocked/interrupted branch wins over a completion,
-    a completion (any outcome or a ``material_result`` terminal) wins over a bare clarification, and
-    every remaining material work item folds into ``clarification`` as the residual disposition.
-    """
-    if kind != _MATERIAL_WORK_ITEM:
-        return None
-    if "failed" in terminal_types:
-        return "failed"
-    if "blocked" in terminal_types:
-        return "blocked"
-    if "interrupted" in terminal_types:
-        return "interrupted"
-    if has_outcomes or "material_result" in terminal_types:
-        return "completed"
-    return "clarification"
 
 
 @dataclass(frozen=True)

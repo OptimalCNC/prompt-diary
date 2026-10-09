@@ -10,7 +10,10 @@ nothing is added. Because rendering is deterministic, the "no new claims" guaran
 not a rule the synthesizer must remember.
 
 Rendering reads `daily-report.json` from the prepared workspace root and writes its outputs beside
-it. It may also read prepared evidence cards under `projects/*/evidence/<session_ref>.json` to
+it. The model must use schema version 2. If an existing model uses an older version, run full
+generation to rebuild the project assessments and daily model before rendering; rendering cannot
+infer the missing assessments. It may also read prepared evidence cards under
+`projects/*/evidence/<session_ref>.json` to
 render the evidence appendix and link citations to the matching evidence-card toggle. It does not
 read raw sessions or project-synthesis work items; an output that reads those, or introduces
 claim-bearing content absent from the model or evidence cards, is a rendering bug.
@@ -70,16 +73,18 @@ Section "Work by Project" — the day's brief and outcomes, grouped by project t
             (qualitative) · Citation(work items)
     List of work items (material first):
       Group    {work item title}              · Tag(disposition) · Tag(confidence)
+        Prose scope + status explanation (material items only) — disposition_assessment · Citation
         Prose label "Context and Response"    — trigger.summary (+ agent_reaction) · Citation
         Prose label "User Messages"           — verbatim source_user_messages for the work item's turns · Citation
         Prose label "Outcomes"
         List of outcomes — what changed · Tag(confidence) · Citation
         Callout(limit) (only if any) — what this work item did not verify or confirm · work_items[].limits
-        (a work item with no material outcome shows its terminal disposition in place of the outcomes)
+        (a work item with no material outcome shows its historical terminal observations in place of the outcomes)
     Prose label "Minor activity"              — introduces the project's no-material / trivial work items
       List of minor work items                — same work-item Group shape
     needs: projects[] → { project_label, summary → {text, citations}, work_items[] → { title, kind,
-           disposition, confidence, trigger.summary, agent_reaction.summary,
+           disposition, disposition_assessment → {scope, summary, citations},
+           confidence, trigger.summary, agent_reaction.summary,
            outcomes[] → {what_changed, confidence, citations},
            terminal_states[] → {summary, citations}, limits[] } }
            + source_user_messages by covered_turn → verbatim {messages} per (session_ref, turn_ref)
@@ -151,8 +156,11 @@ Notes on the purpose-1 region:
   outcome — or, for a work item that ended without material output, its `terminal_states[].summary`.
   The work item `title` is the group label, and its text only as a fallback for a trivial work item
   with neither. Rendering selects and orders; it never re-writes a claim.
-- `disposition` (completed / blocked / interrupted / failed / clarification) is derived from the work
-  item's `terminal_states` and outcomes — the at-a-glance "finished or not" signal.
+- `disposition` (completed / in_progress / blocked / interrupted / failed / cancelled / unknown) is
+  the upstream task-level assessment lifted into the report model. A brief scope and status explanation
+  from `disposition_assessment`, with its citations, lets the reader understand the label. Historical
+  terminal observations do not determine the label; [Project Synthesis](./project-synthesis.md) owns
+  the assessment rules.
 - Non-material and trivial work items are kept (the coverage invariant holds) but grouped under a
   per-project "Minor activity" label so they do not drown the material work.
 - There is no standalone cross-project outcome table: cross-project slicing is a Notion affordance

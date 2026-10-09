@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ProjectBeta-bbbbbbbbbbbb",
   "project_label": "ProjectBeta",
   "work_items": [
@@ -7,6 +7,17 @@
       "work_item_ref": "W0001",
       "kind": "material_work_item",
       "title": "Fix the export bug in Beta",
+      "disposition": {
+        "type": "completed",
+        "scope": "User asked Beta to fix the export bug.",
+        "summary": "The requested work is complete within the effective scope.",
+        "evidence_refs": [
+          {
+            "session_ref": "S0001",
+            "turn_ref": "T0001"
+          }
+        ]
+      },
       "covered_turns": [
         {"session_ref": "S0001", "turn_ref": "T0001"}
       ],
