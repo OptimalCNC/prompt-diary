@@ -361,10 +361,10 @@ def test_runner_uses_packaged_settings_for_each_pass(tmp_path: Path) -> None:
     assert [
         (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
     ] == [
-        ("gpt-5.6-terra", "low"),
-        ("gpt-5.6-terra", "low"),
-        ("gpt-6-astra", "medium"),
-        ("gpt-6-astra", "medium"),
+        ("gpt-6.1-sol", "low"),
+        ("gpt-6-luna", "low"),
+        ("gpt-6.1-sol", "high"),
+        ("gpt-6.1-sol", "high"),
     ]
 
 

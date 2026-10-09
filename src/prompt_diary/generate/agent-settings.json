@@ -9,20 +9,20 @@
   },
   "daily_synthesis": {
     "project_summary": {
-      "model": "gpt-5.6-terra",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "low"
     },
     "report_title": {
-      "model": "gpt-5.6-terra",
+      "model": "gpt-6-luna",
       "reasoning_effort": "low"
     },
     "engagement": {
-      "model": "gpt-6-astra",
-      "reasoning_effort": "medium"
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "high"
     },
     "team_learning": {
-      "model": "gpt-6-astra",
-      "reasoning_effort": "medium"
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "high"
     }
   }
 }
