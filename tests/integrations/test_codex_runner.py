@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from typing import TYPE_CHECKING, ClassVar
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 
 import pytest
 
@@ -20,6 +21,8 @@ from prompt_diary.integrations.codex_runner import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
     from pathlib import Path
+
+_T = TypeVar("_T")
 
 
 class FakeRootItem:
@@ -56,6 +59,7 @@ class FakeSandbox:
 
 class FakeThread:
     def __init__(self) -> None:
+        self.id = "thread-1"
         self.run_calls: list[dict[str, object]] = []
         self.started = asyncio.Event()
         self.release = asyncio.Event()
@@ -144,6 +148,50 @@ class FakeTurnHandle:
         return None
 
 
+class FakeRequestClient:
+    def __init__(self) -> None:
+        self.loaded: set[str] = set()
+        self.pending_release: set[str] = set()
+        self.unsubscribe_received = asyncio.Event()
+        self.finish_release = asyncio.Event()
+        self.block_release = False
+        self.requests: list[tuple[str, dict[str, object]]] = []
+        self.remaining_loaded_polls = 0
+        self.keep_loaded = False
+        self.unsubscribe_error: Exception | None = None
+        self.next_page: list[str] | None = None
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, object],
+        *,
+        response_model: type[_T],
+    ) -> _T:
+        del response_model
+        self.requests.append((method, params))
+        if method == "thread/unsubscribe":
+            if self.unsubscribe_error is not None:
+                raise self.unsubscribe_error
+            thread_id = params["threadId"]
+            assert isinstance(thread_id, str)
+            self.pending_release.add(thread_id)
+            self.unsubscribe_received.set()
+            return cast("_T", SimpleNamespace(status="unsubscribed"))
+        assert method == "thread/loaded/list"
+        if self.block_release:
+            await self.finish_release.wait()
+        if self.remaining_loaded_polls:
+            self.remaining_loaded_polls -= 1
+        elif not self.keep_loaded:
+            self.loaded -= self.pending_release
+            self.pending_release.clear()
+        if self.next_page is not None and not params:
+            return cast("_T", SimpleNamespace(data=[], next_cursor="next"))
+        data = self.next_page if self.next_page is not None else sorted(self.loaded)
+        return cast("_T", SimpleNamespace(data=data, next_cursor=None))
+
+
 class FakeAsyncCodex:
     instances: ClassVar[list[FakeAsyncCodex]] = []
     next_thread: ClassVar[FakeThread | None] = None
@@ -153,10 +201,16 @@ class FakeAsyncCodex:
         self.entered = False
         self.exited = False
         self.thread_start_calls: list[dict[str, object]] = []
+        self.thread_start_received = asyncio.Event()
+        self.thread_start_release = asyncio.Event()
+        self.block_thread_start = False
         self.close_started = asyncio.Event()
         self.close_release = asyncio.Event()
         self.block_close = False
         self.thread = FakeAsyncCodex.next_thread or FakeThread()
+        self.threads: list[FakeThread] = []
+        self.rpc = FakeRequestClient()
+        self._client = self.rpc
         FakeAsyncCodex.next_thread = None
         FakeAsyncCodex.instances.append(self)
 
@@ -175,9 +229,12 @@ class FakeAsyncCodex:
         if self.block_close:
             await self.close_release.wait()
         self.exited = True
-        self.thread.stream_error = RuntimeError("transport closed")
-        self.thread.release.set()
-        self.thread.start_release.set()
+        self.thread_start_release.set()
+        for thread in (self.thread, *self.threads):
+            thread.stream_error = RuntimeError("transport closed")
+            thread.release.set()
+            thread.start_release.set()
+        self._client.loaded.clear()
 
     async def thread_start(
         self,
@@ -205,7 +262,17 @@ class FakeAsyncCodex:
                 "config": config,
             }
         )
-        return self.thread
+        thread = self.thread if not self.threads else FakeThread()
+        thread.id = f"thread-{len(self.threads) + 1}"
+        self.threads.append(thread)
+        self._client.loaded.add(thread.id)
+        self.thread_start_received.set()
+        if self.block_thread_start:
+            await self.thread_start_release.wait()
+        if self.exited:
+            error = RuntimeError("transport closed")
+            raise error
+        return thread
 
 
 class FakeSdkModule:
@@ -344,7 +411,7 @@ def test_backend_enter_exit_and_runner_config_pass_through(
     app_config = fake_codex.config
     assert isinstance(app_config, FakeCodexConfig)
     assert app_config.codex_bin == str(codex_bin)
-    assert app_config.config_overrides == ("mcp.prompt_diary={}",)
+    assert app_config.config_overrides == ("mcp.prompt_diary={}", "thread_unload_delay_secs=0")
     assert app_config.env == {"PROMPT_DIARY": "1"}
     assert app_config.client_name == "prompt_diary"
     assert fake_codex.thread_start_calls == [
@@ -524,6 +591,75 @@ def test_cancelled_startup_interrupts_the_handle_after_it_arrives(
                 await asyncio.wait_for(task, 1)
             assert fake_thread.handles[0].interrupt_count == 1
             assert fake_thread.handles[0].terminal_read
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_thread_start_waits_for_response_then_releases_conversation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            sdk = FakeAsyncCodex.instances[0]
+            sdk.block_thread_start = True
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            operation = asyncio.create_task(runner.turn("Cancel before the thread response."))
+            await asyncio.wait_for(sdk.thread_start_received.wait(), 1)
+            assert sdk.rpc.loaded == {"thread-1"}
+            operation.cancel("original startup cancellation")
+            await asyncio.sleep(0)
+            operation.cancel("repeated startup cancellation")
+            await asyncio.sleep(0)
+            assert not operation.done()
+            assert sdk.rpc.requests == []
+            sdk.thread_start_release.set()
+            with pytest.raises(asyncio.CancelledError, match="original startup cancellation"):
+                await asyncio.wait_for(operation, 1)
+            assert sdk.thread.run_calls == []
+            await runner.aclose()
+            assert sdk.rpc.loaded == set()
+            assert sdk.rpc.requests[0] == ("thread/unsubscribe", {"threadId": "thread-1"})
+            assert not sdk.exited
+
+            other = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            assert (await other.turn("Use the shared backend again.")).assistant_text
+            await other.aclose()
+            assert sdk.rpc.loaded == set()
+            assert len(sdk.thread_start_calls) == 2
+            assert not sdk.exited
+
+    asyncio.run(exercise())
+
+
+def test_unconfirmed_cancelled_thread_start_stops_the_shared_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_sdk(monkeypatch)
+    monkeypatch.setattr(codex_runner, "_TURN_CLEANUP_TIMEOUT_SECONDS", 0.01)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            sdk = FakeAsyncCodex.instances[0]
+            sdk.block_thread_start = True
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            operation = asyncio.create_task(runner.turn("Thread response never arrives."))
+            await asyncio.wait_for(sdk.thread_start_received.wait(), 1)
+            operation.cancel("unconfirmed startup cancellation")
+            with pytest.raises(asyncio.CancelledError, match="unconfirmed startup cancellation"):
+                await asyncio.wait_for(operation, 1)
+            assert sdk.exited
+            assert sdk.rpc.loaded == set()
+            assert sdk.thread.run_calls == []
+            assert sdk.rpc.requests == []
+            await runner.aclose()
+            with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                _ = backend.codex
+            other = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                await other.turn("Cannot restart an unconfirmed backend.")
+            assert len(sdk.thread_start_calls) == 1
 
     asyncio.run(exercise())
 
@@ -710,6 +846,175 @@ def test_codex_session_factory_shares_one_backend_across_runners(
 def test_codex_session_factory_satisfies_agent_session_factory() -> None:
     factory: AgentSessionFactory = CodexAgentSessionFactory(CodexBackendConfig())
     assert isinstance(factory, CodexAgentSessionFactory)
+
+
+def test_completed_conversations_release_resources_while_another_turn_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_sdk(monkeypatch)
+    active_thread = FakeThread()
+    active_thread.block = True
+    FakeAsyncCodex.next_thread = active_thread
+
+    async def exercise() -> None:
+        async with CodexAgentSessionFactory(CodexBackendConfig()) as factory:
+            active = await factory.runner(AgentConfig(working_directory=tmp_path))
+            operation = asyncio.create_task(active.turn("Keep running."))
+            await active_thread.started.wait()
+            sdk = FakeAsyncCodex.instances[0]
+            try:
+                for _ in range(40):
+                    runner = await factory.runner(AgentConfig(working_directory=tmp_path))
+                    await runner.turn("Complete this assignment.")
+                    await runner.aclose()
+                    await runner.aclose()
+                    assert sdk.rpc.loaded == {active_thread.id}
+                    assert not sdk.exited
+                    assert not operation.done()
+                    with pytest.raises(CodexRunnerError, match="already been released"):
+                        await runner.turn("Cannot reuse a released conversation.")
+                active_thread.release.set()
+                await operation
+                await active.aclose()
+                assert sdk.rpc.loaded == set()
+            finally:
+                active_thread.release.set()
+                await asyncio.gather(operation, return_exceptions=True)
+        assert sdk.exited
+
+    asyncio.run(exercise())
+    assert len(FakeAsyncCodex.instances) == 1
+    assert len(FakeAsyncCodex.instances[0].thread_start_calls) == 41
+
+
+def test_close_confirms_unload_and_finishes_despite_repeated_cancellation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            await runner.turn("Complete this assignment.")
+            sdk = FakeAsyncCodex.instances[0]
+            sdk.rpc.block_release = True
+            closing = asyncio.create_task(runner.aclose())
+            await sdk.rpc.unsubscribe_received.wait()
+            assert sdk.rpc.loaded == {"thread-1"}
+            assert not closing.done()
+            closing.cancel()
+            await asyncio.sleep(0)
+            closing.cancel()
+            await asyncio.sleep(0)
+            assert not closing.done()
+            sdk.rpc.finish_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await closing
+            assert sdk.rpc.loaded == set()
+            assert not sdk.exited
+            await runner.aclose()
+            assert sum(method == "thread/unsubscribe" for method, _ in sdk.rpc.requests) == 1
+
+    asyncio.run(exercise())
+
+
+def test_close_polls_loaded_pages_until_shutdown_is_confirmed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_sdk(monkeypatch)
+    monkeypatch.setattr(codex_runner, "_THREAD_RELEASE_POLL_SECONDS", 0)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            await runner.turn("Complete this assignment.")
+            sdk = FakeAsyncCodex.instances[0]
+            sdk.rpc.remaining_loaded_polls = 2
+            await runner.aclose()
+            assert sdk.rpc.loaded == set()
+            assert [method for method, _ in sdk.rpc.requests].count("thread/loaded/list") == 3
+
+            other = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            await other.turn("Check paginated loaded results.")
+            sdk.rpc.next_page = []
+            await other.aclose()
+            assert sdk.rpc.requests[-1] == ("thread/loaded/list", {"cursor": "next"})
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("invalidate", [False, True])
+def test_close_without_live_thread_is_safe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, invalidate: bool
+) -> None:
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            if invalidate:
+                await runner.turn("Complete this assignment.")
+                await backend.invalidate()
+            await runner.aclose()
+            await runner.aclose()
+            assert FakeAsyncCodex.instances[0].rpc.requests == []
+
+    asyncio.run(exercise())
+
+
+def test_close_rejects_an_active_turn_without_releasing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_sdk(monkeypatch)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            sdk = FakeAsyncCodex.instances[0]
+            sdk.thread.block = True
+            operation = asyncio.create_task(runner.turn("Keep running."))
+            await sdk.thread.started.wait()
+            try:
+                with pytest.raises(CodexRunnerError, match="while a turn is running"):
+                    await runner.aclose()
+                assert sdk.rpc.requests == []
+            finally:
+                sdk.thread.release.set()
+                await operation
+            await runner.aclose()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", ["unsubscribe", "unload_timeout", "shutdown_timeout"])
+def test_unconfirmed_release_disables_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    _patch_sdk(monkeypatch)
+    monkeypatch.setattr(codex_runner, "_THREAD_RELEASE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(codex_runner, "_TURN_CLEANUP_TIMEOUT_SECONDS", 0.01)
+
+    async def exercise() -> None:
+        async with CodexBackend(CodexBackendConfig()) as backend:
+            runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+            await runner.turn("Complete this assignment.")
+            sdk = FakeAsyncCodex.instances[0]
+            if failure == "unload_timeout":
+                sdk.rpc.keep_loaded = True
+            else:
+                sdk.rpc.unsubscribe_error = RuntimeError("unsubscribe failed")
+                sdk.block_close = failure == "shutdown_timeout"
+            try:
+                with pytest.raises(CodexRunnerError) as error:
+                    await runner.aclose()
+                assert error.value.__cause__ is not None
+                with pytest.raises(CodexRunnerError, match="backend was stopped"):
+                    _ = backend.codex
+                assert sdk.close_started.is_set()
+            finally:
+                sdk.close_release.set()
+
+    asyncio.run(exercise())
 
 
 def _patch_sdk(monkeypatch: pytest.MonkeyPatch) -> None:

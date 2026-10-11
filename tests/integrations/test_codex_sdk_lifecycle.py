@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from openai_codex._message_router import (
         _TurnSubscription,  # pyright: ignore[reportPrivateUsage]
     )
+    from openai_codex.models import JsonValue
 
 
 class _ObservedRouter(MessageRouter):
@@ -101,8 +102,14 @@ class _MemoryTransport(CodexClient):
         self._router = self.router
         self.loop = loop
         self.interrupt_received = asyncio.Event()
+        self.unsubscribe_received: asyncio.Queue[str] = asyncio.Queue()
+        self.loaded_list_requested = asyncio.Event()
         self.requests: list[str] = []
         self.payloads: list[JsonObject] = []
+        self.loaded_threads: set[str] = set()
+        self.turn_threads: dict[str, str] = {}
+        self.defer_unload = False
+        self.peak_loaded_threads = 0
         self.close_calls = 0
 
     def _write_message(self, payload: JsonObject) -> None:
@@ -113,19 +120,22 @@ class _MemoryTransport(CodexClient):
         params = payload["params"]
         assert isinstance(params, dict)
         if method == "thread/start":
+            thread_id = f"thread-{self.requests.count('thread/start')}"
+            self.loaded_threads.add(thread_id)
+            self.peak_loaded_threads = max(self.peak_loaded_threads, len(self.loaded_threads))
             self.router.route_response(
                 {
                     "id": payload["id"],
                     "result": {
-                        "model": params["model"],
+                        "model": params.get("model") or SDK_PROBE_SETTINGS.model,
                         "modelProvider": "openai",
                         "cwd": params["cwd"],
                         "approvalPolicy": params["approvalPolicy"],
                         "approvalsReviewer": params["approvalsReviewer"],
                         "sandbox": {"type": "workspaceWrite"},
                         "thread": {
-                            "id": "thread-1",
-                            "sessionId": "thread-1",
+                            "id": thread_id,
+                            "sessionId": thread_id,
                             "cliVersion": "0.162.0",
                             "createdAt": 0,
                             "updatedAt": 0,
@@ -141,11 +151,33 @@ class _MemoryTransport(CodexClient):
                 }
             )
             return
-        assert params["threadId"] == "thread-1"
+        if method == "thread/loaded/list":
+            self.loop.call_soon_threadsafe(self.loaded_list_requested.set)
+            loaded_ids: list[JsonValue] = list(self.loaded_threads)
+            loaded: JsonObject = {
+                "data": loaded_ids,
+                "nextCursor": None,
+            }
+            self.router.route_response(
+                {
+                    "id": payload["id"],
+                    "result": loaded,
+                }
+            )
+            return
+        thread_id = params["threadId"]
+        assert isinstance(thread_id, str)
         result: JsonObject = {}
         if method == "turn/start":
             turn_id = f"turn-{self.requests.count('turn/start')}"
+            self.loaded_threads.add(thread_id)
+            self.turn_threads[turn_id] = thread_id
             result = {"turn": {"id": turn_id, "status": "inProgress", "items": []}}
+        elif method == "thread/unsubscribe":
+            if not self.defer_unload:
+                self.loaded_threads.discard(thread_id)
+            self.loop.call_soon_threadsafe(self.unsubscribe_received.put_nowait, thread_id)
+            result = {"status": "unsubscribed"}
         else:
             assert method == "turn/interrupt"
             assert params["turnId"] == "turn-1"
@@ -164,6 +196,7 @@ class _MemoryTransport(CodexClient):
         )
 
     def complete_turn(self, turn_id: str) -> None:
+        thread_id = self.turn_threads[turn_id]
         items = [
             ThreadItem(
                 root=AgentMessageThreadItem(
@@ -183,7 +216,7 @@ class _MemoryTransport(CodexClient):
                 Notification(
                     method="item/completed",
                     payload=ItemCompletedNotification(
-                        completed_at_ms=0, thread_id="thread-1", turn_id=turn_id, item=item
+                        completed_at_ms=0, thread_id=thread_id, turn_id=turn_id, item=item
                     ),
                 )
             )
@@ -191,7 +224,7 @@ class _MemoryTransport(CodexClient):
             Notification(
                 method="turn/completed",
                 payload=TurnCompletedNotification(
-                    thread_id="thread-1",
+                    thread_id=thread_id,
                     turn=Turn(id=turn_id, items=items, status=TurnStatus.completed),
                 ),
             )
@@ -368,17 +401,26 @@ def test_assignment_model_and_effort_reach_real_sdk_and_survive_retry(
                         )
                         == turn_id
                     )
+                    assert "thread/unsubscribe" not in transport.requests
                     transport.complete_turn(turn_id)
                 result = await asyncio.wait_for(operation, timeout=2)
                 assert result.ok
                 assert result.attempts == 2
+                assert transport.router.consumed_terminal == ["turn-1", "turn-2"]
 
-            assert transport.requests == ["thread/start", "turn/start", "turn/start"]
+            assert transport.requests == [
+                "thread/start",
+                "turn/start",
+                "turn/start",
+                "thread/unsubscribe",
+                "thread/loaded/list",
+            ]
+            assert transport.loaded_threads == set()
             params = transport.payloads[0]["params"]
             assert isinstance(params, dict)
             assert params["model"] == expected_model
             assert params["config"] == {"model_reasoning_effort": expected_effort}
-            for payload in transport.payloads[1:]:
+            for payload in transport.payloads[1:3]:
                 turn_params = payload["params"]
                 assert isinstance(turn_params, dict)
                 assert turn_params["threadId"] == "thread-1"
@@ -388,5 +430,151 @@ def test_assignment_model_and_effort_reach_real_sdk_and_survive_retry(
             transport.router.release_waiters()
             if operation is not None:
                 await asyncio.gather(operation, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=5))
+
+
+def test_assignment_release_waits_for_unload_without_interrupting_other_conversation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        transport = _MemoryTransport(asyncio.get_running_loop(), monkeypatch)
+        transport.defer_unload = True
+        client = AsyncCodexClient()
+        monkeypatch.setattr(client, "_sync", transport)
+        codex = AsyncCodex()
+        monkeypatch.setattr(codex, "_client", client)
+        monkeypatch.setattr(codex, "_initialized", True)
+
+        def context_factory(*, config: object) -> AsyncCodex:
+            del config
+            return codex
+
+        monkeypatch.setattr(openai_codex, "AsyncCodex", context_factory)
+        assignment: asyncio.Task[object] | None = None
+        other_turn: asyncio.Task[object] | None = None
+        try:
+            async with CodexBackend(CodexBackendConfig()) as backend:
+                runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+                other_runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+                assignment = asyncio.create_task(
+                    run_agent_turn_with_resume(
+                        runner=runner,
+                        initial_prompt="First assignment.",
+                        resume_prompt=lambda: "Finish the first assignment.",
+                        inspect_artifacts=lambda: AgentArtifactStatus(
+                            complete="turn-1" in transport.router.consumed_terminal,
+                            progress_marker=False,
+                        ),
+                        progress_made=lambda _before, _after: False,
+                        action="while testing conversation release",
+                    )
+                )
+                assert (
+                    await asyncio.wait_for(transport.router.consumer_started_turns.get(), timeout=2)
+                    == "turn-1"
+                )
+                other_turn = asyncio.create_task(other_runner.turn("Concurrent assignment."))
+                assert (
+                    await asyncio.wait_for(transport.router.consumer_started_turns.get(), timeout=2)
+                    == "turn-2"
+                )
+                transport.complete_turn("turn-1")
+                assert (
+                    await asyncio.wait_for(transport.unsubscribe_received.get(), timeout=2)
+                    == "thread-1"
+                )
+                await asyncio.wait_for(transport.loaded_list_requested.wait(), timeout=2)
+
+                assert not assignment.done(), "unsubscribe acknowledgement must not confirm unload"
+                assert transport.loaded_threads == {"thread-1", "thread-2"}
+                assert transport.router.waiting == {"turn-2"}
+                assert transport.close_calls == 0
+
+                transport.complete_turn("turn-2")
+                result = await asyncio.wait_for(other_turn, timeout=2)
+                assert result.assistant_text == "Final answer."
+                assert not assignment.done()
+                assert transport.router.consumed_terminal == ["turn-1", "turn-2"]
+
+                transport.loaded_threads.remove("thread-1")
+                released = await asyncio.wait_for(assignment, timeout=2)
+                assert released.ok
+                assert transport.loaded_threads == {"thread-2"}
+                assert transport.close_calls == 0
+                assert "turn/interrupt" not in transport.requests
+                assert backend.codex is codex
+
+                transport.defer_unload = False
+                await other_runner.aclose()
+                assert transport.loaded_threads == set()
+            assert transport.close_calls == 1
+        finally:
+            transport.loaded_threads.clear()
+            transport.router.release_waiters()
+            if assignment is not None:
+                await asyncio.gather(assignment, return_exceptions=True)
+            if other_turn is not None:
+                await asyncio.gather(other_turn, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=5))
+
+
+def test_many_assignments_share_backend_without_accumulating_loaded_threads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        transport = _MemoryTransport(asyncio.get_running_loop(), monkeypatch)
+        client = AsyncCodexClient()
+        monkeypatch.setattr(client, "_sync", transport)
+        codex = AsyncCodex()
+        monkeypatch.setattr(codex, "_client", client)
+        monkeypatch.setattr(codex, "_initialized", True)
+
+        def context_factory(*, config: object) -> AsyncCodex:
+            del config
+            return codex
+
+        monkeypatch.setattr(openai_codex, "AsyncCodex", context_factory)
+        assignment: asyncio.Task[object] | None = None
+        try:
+            async with CodexBackend(CodexBackendConfig()) as backend:
+                for index in range(1, 21):
+                    runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
+                    turn_id = f"turn-{index}"
+                    assignment = asyncio.create_task(
+                        run_agent_turn_with_resume(
+                            runner=runner,
+                            initial_prompt="Next assignment.",
+                            resume_prompt=lambda: "Finish the assignment.",
+                            inspect_artifacts=lambda target_turn=turn_id: AgentArtifactStatus(
+                                complete=target_turn in transport.router.consumed_terminal,
+                                progress_marker=False,
+                            ),
+                            progress_made=lambda _before, _after: False,
+                            action="while testing repeated conversation release",
+                        )
+                    )
+                    assert (
+                        await asyncio.wait_for(
+                            transport.router.consumer_started_turns.get(), timeout=2
+                        )
+                        == turn_id
+                    )
+                    transport.complete_turn(turn_id)
+                    result = await asyncio.wait_for(assignment, timeout=2)
+                    assert result.ok
+                    assert transport.loaded_threads == set()
+                    assert transport.close_calls == 0
+                    assert backend.codex is codex
+
+                assert transport.peak_loaded_threads == 1
+                assert transport.requests.count("thread/start") == 20
+                assert transport.requests.count("thread/unsubscribe") == 20
+            assert transport.close_calls == 1
+        finally:
+            transport.router.release_waiters()
+            if assignment is not None:
+                await asyncio.gather(assignment, return_exceptions=True)
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=5))

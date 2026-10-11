@@ -65,10 +65,10 @@ counts sum assistant message usage once per message id. Preparation does not tok
 classify session content. Excluded sessions are neither copied nor indexed. Existing workspaces
 retain their prepared inputs until refreshed with `prepare --force`.
 
-Copied session files keep their source filenames. The examples above use UUID-based filenames
-because both Codex and Claude Code identify local session transcript files by session id rather
-than by report date. Only root session transcripts are copied. Delegation prompts, tool results,
-and completion notifications already recorded in a parent session remain available as evidence.
+Prepared session files keep their source filenames. Codex filenames may distinguish several
+physical rollouts of the same native thread; each retained rollout has its own prepared file and
+`session_ref`. Only root session transcripts are included. Delegation prompts, tool results, and
+completion notifications already recorded in a parent session remain available as evidence.
 
 The workspace boundary is an intended-input boundary, not a security sandbox. This design does not
 require filesystem or network isolation.
@@ -211,14 +211,31 @@ are not human triggers unless they carry a new externally authored instruction.
 Malformed JSONL lines are never standalone evidence for a work claim. The adapter should treat
 malformed and untimestamped records as preparation diagnostics, not report evidence.
 
-Copied root session files keep original source filenames and original record order under
-`sessions/<source>/`. Adapters must preserve line numbering because the session index cites
-root session line numbers.
+Prepared root session files keep original source filenames under `sessions/<source>/`. A source
+that already contains its complete history is copied unchanged. For a Codex delta rollout,
+preparation materializes its explicitly inherited history through the recorded `history_base`
+cutoff before its own records, recursively resolving earlier bases when necessary. History is
+inherited only through explicit bounded source links. Each prepared file represents one linear
+conversation. Original source files remain untouched; the session index and citations use the
+prepared file's physical line numbers, which can differ from those of the native delta file. The
+existing private audit manifest maps materialized line ranges back to their original source ranges;
+generation does not consume that mapping. For a selected delta rollout, a missing, ambiguous, or
+cyclic base, or invalid history metadata or cutoff, fails preparation before any workspace
+replacement; incomplete native history is not treated as a complete transcript.
 
-Before writing the workspace, preparation groups selected files by `(source, source_session_id)`.
-Files with the same bytes and project identity contribute one session, chosen by the
-lexicographically smallest absolute source path. Conflicting content or project identities fail
-preparation before workspace changes, including replacement with `--force`.
+Before writing the workspace, preparation groups selected files by physical source identity.
+Canonical Codex rollout filenames distinguish native physical rollout ids even when their stable
+thread id is shared. Other files retain `(source, source_session_id)` identity. Copies of the same
+physical rollout with the same bytes and project identity contribute one session, chosen by the
+lexicographically smallest absolute source path. Conflicting content or project identities for the
+same physical identity fail preparation before workspace changes, including replacement with
+`--force`.
+
+Materialized inherited turns remain in the prepared file as readable context, while extraction
+ownership stays with the rollout in which the human trigger occurred. They create no duplicate
+index entries, evidence chains, or engagement activity. Work beyond a descendant's recorded base
+cutoff remains eligible in its original rollout and is not inherited by that descendant. Matching
+text or overlapping native ordinals alone does not prove that two human triggers are one occurrence.
 
 For Codex root forks, an explicit `session_meta.payload.forked_from_id` and exact complete-turn
 records in a selected ancestor can prove a leading inherited prefix. Preparation compares canonical
@@ -226,8 +243,8 @@ JSON records, including timestamps and agent reactions, across all human turns b
 report date. It stops at the first distinct turn, retains later turns, and omits an index row when
 no target-day turns remain. Missing immediate parents, cyclic or ambiguous ancestry, and malformed
 history preserve the fork's turns. A known ancestor can still prove inheritance when its own parent
-is unavailable. Retained turns keep source line numbers and receive consecutive `T0001` references;
-copied transcript bytes stay intact.
+is unavailable. Retained turns receive consecutive `T0001` references. Complete-history source
+copies retain their source bytes and line numbers; materialized rollouts use prepared-file lines.
 
 ## Session Index Context (`sessions.index.jsonl`)
 
@@ -237,7 +254,9 @@ Subagent sessions have no session index rows or child-file locators. Evidence ab
 comes from the parent session's recorded prompts, results, and completion notifications.
 
 `session_ref` is unique within the project session index and deterministic for the same project
-inputs. It gives citations a short stable handle for a copied session.
+inputs. It gives citations a short stable handle for one prepared session file. Several rows may
+share the same native `source_session_id`; that field records provenance and does not identify a
+prepared session.
 
 Required fields:
 
@@ -258,7 +277,11 @@ Required fields:
     {
       "turn_ref": "T0002",
       "turn_start_line": 60,
-      "turn_end_line": 98
+      "turn_end_line": 98,
+      "previous_context": {
+        "start_line": 21,
+        "end_line": 55
+      }
     }
   ]
 }
@@ -283,6 +306,10 @@ Each `turns` item records one trigger-owned work unit inside the target span:
   inclusive. For the last trigger in a session, this extends to the end of the file. For earlier
   triggers, it ends before the pre-trigger scaffolding of the next turn (see
   [Source Session Formats](./source-session-formats.md) for scaffolding rules per source).
+- Optional `previous_context` supplies the immediately preceding human turn's physical
+  `start_line` and `end_line` in the same prepared file, before filtering by report date or removing
+  inherited turns from extraction. It can therefore locate an unindexed predecessor. It has no
+  `turn_ref`, grants no extraction ownership, and does not expand the current turn's citation bounds.
 
 Diagnostic data such as checksums, total line counts, event bounds, event counts, and parse warnings
 is not report input.
@@ -303,8 +330,10 @@ Target span and turn construction:
 - `target_start_line` is the first included turn's `turn_start_line`.
 - `target_end_line` is the last included turn's `turn_end_line`.
 - A human-authored trigger belongs to the target report date when its timestamp falls inside
-  `report_window_utc`. Each in-window trigger produces one entry in `turns`. Only confirmed adjacent
-  Codex message/echo pairs share a trigger; distinct adjacent human messages remain separate.
+  `report_window_utc`. Each retained in-window trigger occurrence produces one entry in `turns`.
+  Explicitly inherited copies remain readable context and create no duplicate extraction targets.
+  Only confirmed adjacent Codex message/echo pairs share a trigger; distinct adjacent human messages
+  remain separate.
 - Source-generated reset-plan bootstraps, meta messages, compaction summaries, and tool-only results
   do not create turns. Later human followups in the same root session remain eligible.
 - A trigger's turn starts at the trigger line (`turn_start_line`) and ends after the agent reactions
@@ -320,5 +349,6 @@ Target span and turn construction:
 - If malformed, untimestamped, or non-monotonic records make a turn broader than the true
   trigger-owned work unit, preparation still records the inclusive turn it can determine
   and treats the anomaly as a preparation diagnostic.
-- No separate context index is generated. The reporter can inspect surrounding lines directly in the
-  copied root session file. Child session transcripts are outside the report evidence boundary.
+- No separate context index is generated. An indexed turn's optional `previous_context` locates
+  preceding context in the same prepared file, and the reporter can inspect surrounding lines
+  directly. Child session transcripts are outside the report evidence boundary.

@@ -21,7 +21,7 @@ workflow layer depend only on this module — never on the Codex SDK adapter dir
 
 It defines two protocols:
 
-- `AgentRunner` — one agent conversation. Its single `turn(prompt, *, timeout_seconds, output_schema)` method starts the conversation on first use and continues it on later calls.
+- `AgentRunner` — one agent conversation. Its `turn(prompt, *, timeout_seconds, output_schema)` method starts the conversation on first use and continues it on later calls. Its required, idempotent `aclose()` method releases conversation resources and rejects later turns.
 - `AgentSessionFactory` — owns one shared backend and mints a fresh `AgentRunner` per call via `runner(config)`. It is an async context manager: `__aenter__` starts the backend; `__aexit__` stops it.
 
 The shared agent value types also live here:
@@ -46,9 +46,10 @@ class AgentTurnResult:
 ```
 
 `CodexAgentSessionFactory` in `integrations/codex_runner.py` is the production adapter: it owns
-one `CodexBackend` (via `AsyncExitStack`) and mints a lifecycle-free `CodexAgentRunner`
-conversation per `runner()` call. Each `CodexAgentRunner` is bound to the shared backend but has
-no lifecycle of its own — it starts its SDK thread on the first `turn()` call.
+one `CodexBackend` (via `AsyncExitStack`) and mints a `CodexAgentRunner` conversation per
+`runner()` call. Each `CodexAgentRunner` starts its SDK thread on the first `turn()` call and releases
+that thread through `aclose()`. Closing one conversation leaves the shared backend available to
+other conversations.
 
 The generation phase wiring composition root is `cmds/generate.py::build_generation_workflow()`,
 the only place that imports both `generate/` and `integrations/`. It constructs one
@@ -70,6 +71,7 @@ The wrapper should support:
 - enforcing turn-level timeouts and surfacing actionable errors;
 - leaving artifact validation to callers.
 - allowing callers to retry or repair by sending another prompt on the same runner instance.
+- releasing conversation resources when its assignment finishes, including failure or cancellation.
 
 Multi-turn support matters for tool rejection repair, deterministic validation feedback, and
 artifact repair. The runner instance should preserve the SDK conversation state internally, so
@@ -136,6 +138,8 @@ class CodexAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult: ...
 
+    async def aclose(self) -> None: ...
+
 
 class CodexAgentSessionFactory:
     def __init__(self, backend_config: CodexBackendConfig) -> None: ...
@@ -148,7 +152,8 @@ class CodexAgentSessionFactory:
 ```
 
 The first `turn` call starts the underlying SDK conversation. Later `turn` calls continue that same
-conversation.
+conversation until `aclose()` permanently closes the runner. Closing an unused runner starts no SDK
+thread, and repeated closes are safe.
 
 `AgentTurnEvent` and `AgentTurnResult` (the turn result types) live in `prompt_diary.agent`:
 
@@ -169,13 +174,17 @@ class AgentTurnResult:
 Artifact paths should usually be checked by the caller rather than trusted from assistant text.
 The shared generation retry helper (`generate/agent_retry.py`) follows that rule: after every
 successful or failed `turn(...)`, it re-reads durable artifacts and sends a phase-specific resume
-prompt on the same runner only when the artifact still needs work.
+prompt on the same runner only when the artifact still needs work. The helper owns the assignment's
+conversation and calls `aclose()` in a `finally` block after success, failure, or cancellation. This
+also covers artifact-inspection and resume-prompt errors. Callers using runners directly must close
+them after their own retry or repair loop.
 
 `CodexBackend.__aenter__` lazily imports `openai_codex`, starts the SDK app-server.
 `CodexAgentRunner.turn(...)` starts one SDK thread on first use and reuses it for later turns.
 `CodexAgentSessionFactory` wraps a `CodexBackend` in an `AsyncExitStack` and mints a fresh
-`CodexAgentRunner` per `runner()` call — each runner is lifecycle-free; only the factory is a
-managed context. The package depends on the published `openai-codex` SDK and loads it lazily; use
+`CodexAgentRunner` per `runner()` call. The factory manages backend lifetime; each assignment manages
+its runner's conversation lifetime. The package depends on the published `openai-codex` SDK and
+loads it lazily; use
 `uv sync` when resolving a development environment. The adapter module is not
 exported from `prompt_diary.__init__`.
 
@@ -190,6 +199,14 @@ The SDK has three lifecycle layers:
 Prompt Diary should use one shared `AsyncCodex` backend for concurrent conversations when their
 backend-level configuration is compatible. Each `CodexAgentRunner` should own one SDK thread from
 that backend, and each `turn` call should run one SDK turn on that thread.
+
+`CodexAgentRunner.aclose()` sends `thread/unsubscribe` through the SDK's typed client and confirms
+that the thread has unloaded before returning. Invocation-local `thread_unload_delay_secs=0` removes
+the server's idle delay, releasing the thread's MCP servers and other runtime resources promptly.
+The transcript stays persisted and unarchived. Cancellation during thread creation waits for its
+response so cleanup can release the new thread. Cleanup has a bounded grace period; if startup or
+unload cannot be confirmed, the adapter closes and permanently disables the shared backend. Other
+runners cannot restart it.
 
 Use separate `AsyncCodex` backends only when sessions need incompatible backend-level
 configuration, which for Prompt Diary means incompatible MCP server or MCP tool policy setup. This
@@ -260,13 +277,16 @@ async with CodexBackend(backend_config) as backend:
         ),
     )
 
-    result = await runner.turn(prompt, timeout_seconds=600.0)
+    try:
+        result = await runner.turn(prompt, timeout_seconds=600.0)
 
-    if not expected_artifact.exists():
-        repair_result = await runner.turn(
-            "The expected artifact was not created. Please repair it using the same constraints.",
-            timeout_seconds=600.0,
-        )
+        if not expected_artifact.exists():
+            repair_result = await runner.turn(
+                "The expected artifact was not created. Please repair it using the same constraints.",
+                timeout_seconds=600.0,
+            )
+    finally:
+        await runner.aclose()
 ```
 
 Generation phases normally use `run_agent_turn_with_resume(...)` instead of open-coding this
@@ -278,9 +298,16 @@ To execute independent sessions concurrently, create independent instances:
 
 ```python
 async with CodexBackend(backend_config) as backend:
+    async def run_assignment(config: AgentConfig, prompt: str) -> AgentTurnResult:
+        runner = CodexAgentRunner(backend=backend, config=config)
+        try:
+            return await runner.turn(prompt)
+        finally:
+            await runner.aclose()
+
     results = await asyncio.gather(
-        CodexAgentRunner(backend=backend, config=config_a).turn(prompt_a),
-        CodexAgentRunner(backend=backend, config=config_b).turn(prompt_b),
+        run_assignment(config_a, prompt_a),
+        run_assignment(config_b, prompt_b),
     )
 ```
 

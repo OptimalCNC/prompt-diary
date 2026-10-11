@@ -27,6 +27,7 @@ from prompt_diary.models import (
     SourceSpec,
     serialize_datetime,
 )
+from prompt_diary.prepare.codex_rollouts import CodexRolloutStore, RolloutTranscript
 from prompt_diary.prepare.turn_usage import ClaudeTurnUsage, CodexTurnUsage
 from prompt_diary.progress.events import (
     PhaseFinished,
@@ -70,6 +71,12 @@ class ProjectIdentity:
 
 
 @dataclass(frozen=True)
+class _TurnContext:
+    start_line: int
+    end_line: int
+
+
+@dataclass(frozen=True)
 class ParsedTurn:
     """One trigger-owned work unit inside a parsed session."""
 
@@ -77,6 +84,7 @@ class ParsedTurn:
     turn_start_line: int
     turn_end_line: int
     output_tokens: int | None
+    previous_context: _TurnContext | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +103,7 @@ class ParsedSession:
     non_monotonic_timestamp_count: int
     first_event_at: str | None
     last_event_at: str | None
+    rollout: RolloutTranscript | None = None
 
     @property
     def target_start_line(self) -> int:
@@ -456,6 +465,9 @@ def _selected_sessions(
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> Iterable[_SessionSelection]:
     per_source = [(spec, _jsonl_source_files(spec.root)) for spec in source_specs]
+    rollouts = CodexRolloutStore(
+        tuple(path for spec, paths in per_source if spec.source == "codex" for path in paths)
+    )
     probed_sources: list[tuple[SourceSpec, tuple[Path, ...], frozenset[Path]]] = []
     for spec, source_paths in per_source:
         scope = _source_scope(spec)
@@ -484,6 +496,7 @@ def _selected_sessions(
                 spec=spec,
                 target=target,
                 reports_root=reports_root,
+                rollout=rollouts.prepare(source_path) if spec.source == "codex" else None,
             )
             if parsed is not None:
                 selected_count += 1
@@ -505,7 +518,8 @@ def _normalize_selections(selections: Iterable[_SessionSelection]) -> tuple[Pars
         selections, key=lambda item: item.session.source_path.absolute().as_posix()
     ):
         session = selection.session
-        identity = (session.source, session.source_session_id)
+        rollout_id = session.rollout.rollout_id if session.rollout is not None else None
+        identity = (session.source, rollout_id or session.source_session_id)
         previous = by_identity.get(identity)
         if previous is None:
             by_identity[identity] = selection
@@ -520,9 +534,20 @@ def _normalize_selections(selections: Iterable[_SessionSelection]) -> tuple[Pars
             )
             raise PromptDiaryError(message)
 
+    by_thread: dict[tuple[SourceName, str], _SessionSelection] = {}
+    ambiguous_threads: set[tuple[SourceName, str]] = set()
+    for selection in by_identity.values():
+        identity = (selection.session.source, selection.session.source_session_id)
+        if identity in by_thread:
+            ambiguous_threads.add(identity)
+        else:
+            by_thread[identity] = selection
+    for identity in ambiguous_threads:
+        del by_thread[identity]
+
     result: list[ParsedSession] = []
     for selection in by_identity.values():
-        inherited_starts = _inherited_turn_starts(selection, by_identity)
+        inherited_starts = _inherited_turn_starts(selection, by_thread)
         turns = tuple(
             replace(turn, turn_ref=_turn_ref(position))
             for position, turn in enumerate(
@@ -543,6 +568,8 @@ def _inherited_turn_starts(
     selection: _SessionSelection,
     by_identity: Mapping[tuple[SourceName, str], _SessionSelection],
 ) -> set[int]:
+    if selection.session.rollout is not None and selection.session.rollout.owned_start_line > 1:
+        return set()
     history = selection.fork_history
     if history is None or history.parent_id is None:
         return set()
@@ -787,9 +814,12 @@ def _parse_session_file(
     spec: SourceSpec,
     target: ReportTarget,
     reports_root: Path,
+    rollout: RolloutTranscript | None = None,
 ) -> _SessionSelection | None:
-    raw_bytes = source_path.read_bytes()
-    checksum = hashlib.sha256(raw_bytes).hexdigest()
+    raw_bytes = source_path.read_bytes() if rollout is None else rollout.content
+    checksum = (
+        hashlib.sha256(raw_bytes).hexdigest() if rollout is None else rollout.source_checksum_sha256
+    )
     text = raw_bytes.decode("utf-8", errors="replace")
     lines = text.splitlines()
     state = _ParseState(
@@ -813,7 +843,12 @@ def _parse_session_file(
             if _is_human_trigger(record, spec.source):
                 state.has_untimestamped_trigger = True
             continue
-        state.record_timestamp(timestamp)
+        state.record_timestamp(
+            timestamp,
+            is_context_header=line_number == 1
+            and rollout is not None
+            and rollout.owned_start_line > 1,
+        )
         if _is_human_trigger(record, spec.source):
             message = parse_codex_message(record) if spec.source == "codex" else None
             previous = state.triggers[-1] if state.triggers else None
@@ -841,6 +876,8 @@ def _parse_session_file(
         if state.malformed_line_count or state.has_untimestamped_trigger
         else turns
     )
+    owned_start_line = rollout.owned_start_line if rollout is not None else 1
+    turns = tuple(turn for turn in turns if turn.turn_start_line >= owned_start_line)
     if state.is_excluded or not turns:
         return None
 
@@ -869,6 +906,7 @@ def _parse_session_file(
         non_monotonic_timestamp_count=state.non_monotonic_timestamp_count,
         first_event_at=serialize_datetime(first_event_at),
         last_event_at=serialize_datetime(last_event_at),
+        rollout=rollout,
     )
     fork_history = None
     if (
@@ -911,10 +949,10 @@ class _ParseState:
     previous_event_at: datetime | None = None
     triggers: list[_TriggerLine] = field(default_factory=list)
 
-    def record_timestamp(self, timestamp: datetime) -> None:
+    def record_timestamp(self, timestamp: datetime, *, is_context_header: bool = False) -> None:
         if self.previous_event_at is not None and timestamp < self.previous_event_at:
             self.non_monotonic_timestamp_count += 1
-        self.previous_event_at = timestamp
+        self.previous_event_at = None if is_context_header else timestamp
         self.first_event_at = _earliest(self.first_event_at, timestamp)
         self.last_event_at = _latest(self.last_event_at, timestamp)
 
@@ -982,6 +1020,7 @@ def _build_turns(
     result: list[ParsedTurn] = []
     source_turns: list[_SourceTurn] = []
     usage = CodexTurnUsage() if source == "codex" else ClaudeTurnUsage()
+    previous_context: _TurnContext | None = None
     if triggers:
         for line in lines[: triggers[0].line_number - 1]:
             usage.observe(_json_object_from_line(line))
@@ -1003,6 +1042,8 @@ def _build_turns(
             source_turns.append(
                 _SourceTurn(start_line=trigger.line_number, fingerprint=digest.hexdigest())
             )
+        context = previous_context
+        previous_context = _TurnContext(trigger.line_number, turn_end)
         if not target.report_window_utc.start <= trigger.timestamp < target.report_window_utc.end:
             continue
         result.append(
@@ -1011,6 +1052,7 @@ def _build_turns(
                 turn_start_line=trigger.line_number,
                 turn_end_line=turn_end,
                 output_tokens=usage.finish_turn(bounded=next_trigger is not None),
+                previous_context=context,
             )
         )
     return tuple(result), tuple(source_turns)
@@ -1291,7 +1333,10 @@ def _copy_project_sessions(
         seen_destinations.add(destination_key)
         destination = project_dir / session_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(session.source_path, destination)
+        if session.rollout is not None and session.rollout.owned_start_line > 1:
+            destination.write_bytes(session.rollout.content)
+        else:
+            shutil.copy2(session.source_path, destination)
         index_rows.append(_session_index_row(session, session_ref=f"S{position:04d}"))
 
     _write_jsonl(project_dir / "sessions.index.jsonl", index_rows)
@@ -1314,11 +1359,17 @@ def _session_index_row(session: ParsedSession, *, session_ref: str) -> JsonObjec
 
 
 def _turn_index_json(turn: ParsedTurn) -> JsonObject:
-    return {
+    result: JsonObject = {
         "turn_ref": turn.turn_ref,
         "turn_start_line": turn.turn_start_line,
         "turn_end_line": turn.turn_end_line,
     }
+    if turn.previous_context is not None:
+        result["previous_context"] = {
+            "start_line": turn.previous_context.start_line,
+            "end_line": turn.previous_context.end_line,
+        }
+    return result
 
 
 def _audit_manifest(
@@ -1351,7 +1402,7 @@ def _source_spec_json(spec: SourceSpec) -> JsonObject:
 
 
 def _session_audit_json(session: ParsedSession) -> JsonObject:
-    return {
+    result: JsonObject = {
         "source": session.source,
         "source_session_id": session.source_session_id,
         "source_path": str(session.source_path),
@@ -1360,7 +1411,11 @@ def _session_audit_json(session: ParsedSession) -> JsonObject:
         "canonical_project_root": session.project.canonical_root,
         "project_root_is_unknown": session.project.is_unknown,
         "source_checksum_sha256": session.source_checksum_sha256,
-        "workspace_checksum_sha256": session.source_checksum_sha256,
+        "workspace_checksum_sha256": (
+            hashlib.sha256(session.rollout.content).hexdigest()
+            if session.rollout is not None
+            else session.source_checksum_sha256
+        ),
         "total_lines": session.total_lines,
         "target_start_line": session.target_start_line,
         "target_end_line": session.target_end_line,
@@ -1371,6 +1426,18 @@ def _session_audit_json(session: ParsedSession) -> JsonObject:
         "non_monotonic_timestamp_count": session.non_monotonic_timestamp_count,
         "warnings": _session_warnings(session),
     }
+    if session.rollout is not None and session.rollout.segments:
+        result["source_segments"] = [
+            {
+                "source_path": str(segment.source_path),
+                "source_start_line": segment.source_start_line,
+                "workspace_start_line": segment.prepared_start_line,
+                "line_count": segment.line_count,
+                "source_checksum_sha256": segment.source_checksum_sha256,
+            }
+            for segment in session.rollout.segments
+        ]
+    return result
 
 
 def _session_warnings(session: ParsedSession) -> list[JsonValue]:

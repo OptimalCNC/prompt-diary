@@ -105,11 +105,16 @@ def test_prepare_workflow_assigns_row_local_turn_refs_for_multi_turn_sessions(
     assert [
         (turn["turn_ref"], turn["turn_start_line"], turn["turn_end_line"]) for turn in codex_turns
     ] == [("T0001", 4, 6), ("T0002", 10, 12)]
+    assert "previous_context" not in codex_turns[0]
+    assert codex_turns[1]["previous_context"] == {"start_line": 4, "end_line": 6}
 
     claude_turns = cast("list[JsonObject]", rows_by_source["claude-code"]["turns"])
     assert [
         (turn["turn_ref"], turn["turn_start_line"], turn["turn_end_line"]) for turn in claude_turns
     ] == [("T0001", 2, 5), ("T0002", 6, 8), ("T0003", 9, 10)]
+    assert "previous_context" not in claude_turns[0]
+    assert claude_turns[1]["previous_context"] == {"start_line": 2, "end_line": 5}
+    assert claude_turns[2]["previous_context"] == {"start_line": 6, "end_line": 8}
 
 
 def test_prepare_workflow_keeps_parent_results_without_copying_children(tmp_path: Path) -> None:
@@ -300,6 +305,7 @@ def test_prepare_workflow_indexes_cross_day_agent_reactions_by_human_trigger(
             "turn_ref": "T0001",
             "turn_start_line": 16,
             "turn_end_line": 18,
+            "previous_context": {"start_line": 4, "end_line": 13},
         }
     ]
 

@@ -38,6 +38,10 @@ class EvidenceWritingAgentRunner:
     project_key: str | None = None
     session_ref: str | None = None
     target_turn: dict[str, Any] | None = None
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def turn(
         self,
@@ -47,6 +51,7 @@ class EvidenceWritingAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
+        assert self.close_calls == 0
         self.prompts.append(prompt)
         target_turn = _last_json_block(prompt, self.target_turn)
         self.target_turn = target_turn
@@ -133,6 +138,10 @@ class EvidenceReadingWritingAgentRunner:
     project_key: str | None = None
     session_ref: str | None = None
     target_turn: dict[str, Any] | None = None
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def turn(
         self,
@@ -142,6 +151,7 @@ class EvidenceReadingWritingAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
+        assert self.close_calls == 0
         self.prompts.append(prompt)
         target_turn = _last_json_block(prompt, self.target_turn)
         self.target_turn = target_turn

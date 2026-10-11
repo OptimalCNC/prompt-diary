@@ -58,6 +58,10 @@ class DailySynthesisAgentRunner:
     failed_passes: set[str]
     prompts: list[str]
     tamper_citation: bool = False
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def turn(
         self,
@@ -67,6 +71,7 @@ class DailySynthesisAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
+        assert self.close_calls == 0
         self.prompts.append(prompt)
         pass_name = _pass_of(self.config.base_instructions or prompt)
         if pass_name in self.fail_once_passes and pass_name not in self.failed_passes:

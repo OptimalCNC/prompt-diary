@@ -39,6 +39,11 @@ Read a physical line range from one indexed session. The session is resolved by 
 arbitrary path. Line numbers are 1-based and match the physical JSONL line numbers produced by
 `prepare`, so compact records and citations stay stable.
 
+Readable ranges are bounded by the prepared file, not by its indexed turns. An extractor can read
+an inherited prefix or an unindexed preceding turn from the same file as context. Evidence writes
+remain bounded by the assigned indexed turn; readable context does not create extraction targets
+or permit citations outside that turn.
+
 This tool is read-only and safe under the server's `default_tools_approval_mode="approve"`.
 `write_evidence` remains the only write tool for evidence extraction.
 
@@ -109,7 +114,7 @@ Compact record fields are sparse: absent values, empty collections, and default 
 
 Command exit codes preserve zero. Completion status alone does not prove command success. Modern
 Codex custom tool outputs and completed command, file-change, and MCP events are normalized before
-metadata is removed. Physical line numbers locate the unchanged copied source; per-line hashes,
+metadata is removed. Physical line numbers locate records in the prepared file; per-line hashes,
 byte counts, correlation IDs, and normalization metadata are not retained in compact records.
 
 Confirmed Codex message echoes return a physical line and `duplicate_of` instead of repeated text.
@@ -134,7 +139,7 @@ Compaction first normalizes evidence, then removes known scaffolding and redunda
 Genuine user and assistant text stays exact, including Claude string and text-block messages.
 Large genuine messages are paginated rather than shortened. Small tool results remain intact.
 Use `mode="full"` on specific lines when a trimmed result, attachment, or unknown shape leaves an
-evidence gap. Full mode reads the unchanged source copy.
+evidence gap. Full mode reads the prepared file without compaction.
 
 ### Full return shape
 
@@ -159,7 +164,7 @@ In either mode, an oversized record uses this fragment shape in `records`:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `line` | int | Physical line of the original source record. |
+| `line` | int | Physical line of the record in the prepared file. |
 | `record_format` | `compact_json` \| `raw_line` | The fragment reconstructs a serialized compact record or the original raw line. |
 | `offset` | int | Zero-based Unicode-character offset in that content. |
 | `total_chars` | int | Character count of the complete content. |

@@ -124,8 +124,9 @@ def test_runner_read_completes_when_last_physical_line_is_omitted(tmp_path: Path
     assert _citation_lines(chain["terminal_state"]) == "7-7"
 
 
+@pytest.mark.parametrize("previous_is_indexed", [False, True])
 def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, previous_is_indexed: bool
 ) -> None:
     workspace = copy_basic_evidence_workspace(tmp_path)
     project_dir = workspace / "projects" / PROJECT_KEY
@@ -151,6 +152,13 @@ def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
     row["turns"][1]["turn_start_line"] += len(padding)
     row["turns"][1]["turn_end_line"] += len(padding)
     row["target_end_line"] += len(padding)
+    row["turns"][1]["previous_context"] = {
+        "start_line": row["turns"][0]["turn_start_line"],
+        "end_line": row["turns"][0]["turn_end_line"],
+    }
+    if not previous_is_indexed:
+        row["turns"] = [row["turns"][1]]
+        row["target_start_line"] = row["turns"][0]["turn_start_line"]
     index_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
     context_reads: list[ReadSessionLinesCompactResult] = []
     original_read = EvidenceReadingWritingAgentRunner.read_assigned_turn
@@ -168,7 +176,7 @@ def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
             for record in page.records
         ):
             # The fresh conversation discovers this line from its prompt, not a known fixture span.
-            previous_trigger = target_turn["previous_turn"]["turn_start_line"]
+            previous_trigger = target_turn["previous_context"]["start_line"]
             context = read_session_lines(
                 workspace_path=self.config.working_directory,
                 project_key=project_key,
@@ -188,14 +196,18 @@ def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
 
     assert _run(factory, workspace).status == "success"
 
-    assert len(factory.runners) == 2
+    assert len(factory.runners) == (2 if previous_is_indexed else 1)
     assert [record.line for context in context_reads for record in context.records] == [2]
     previous_trigger = context_reads[0].records[0]
     assert isinstance(previous_trigger, CompactRecord)
     assert previous_trigger.text == (
         "Please update the evidence contract docs for the MCP write surface."
     )
-    continued = load_evidence_card(workspace)["evidence_chains"][1]
+    chains = load_evidence_card(workspace)["evidence_chains"]
+    assert [chain["turn_ref"] for chain in chains] == (
+        ["T0001", "T0002"] if previous_is_indexed else ["T0002"]
+    )
+    continued = chains[-1]
     assert _citation_lines(continued["trigger"]) == "109-109"
     assert _citation_lines(continued["terminal_state"]) == "110-110"
 

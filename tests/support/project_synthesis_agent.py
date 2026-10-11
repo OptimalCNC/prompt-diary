@@ -47,6 +47,10 @@ class GroupingAgentRunner:
     counter: _RefCounter = field(default_factory=_RefCounter)
     first_turn_session_limit: int | None = None
     first_continuation_failed: bool = False
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def turn(
         self,
@@ -56,6 +60,7 @@ class GroupingAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
+        assert self.close_calls == 0
         self.prompts.append(prompt)
         if _CONTINUATION_MARKER in prompt:
             if self.fail_first_continuation and not self.first_continuation_failed:

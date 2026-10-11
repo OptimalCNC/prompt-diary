@@ -119,8 +119,18 @@ def test_only_leading_inherited_turns_are_removed_and_source_lines_stay_intact(
     result = _prepare(tmp_path)
 
     assert _turns(_rows(result)["child"]) == [
-        {"turn_ref": "T0001", "turn_start_line": 4, "turn_end_line": 5},
-        {"turn_ref": "T0002", "turn_start_line": 6, "turn_end_line": 7},
+        {
+            "turn_ref": "T0001",
+            "turn_start_line": 4,
+            "turn_end_line": 5,
+            "previous_context": {"start_line": 2, "end_line": 3},
+        },
+        {
+            "turn_ref": "T0002",
+            "turn_start_line": 6,
+            "turn_end_line": 7,
+            "previous_context": {"start_line": 4, "end_line": 5},
+        },
     ]
     copied = next(result.workspace_path.glob("projects/*/sessions/codex/child.jsonl"))
     assert copied.read_bytes() == child.read_bytes()
@@ -209,7 +219,12 @@ def test_inherited_prefix_proof_includes_off_day_human_turns(
 
     assert ("child" not in rows) is copied_previous_day
     assert _turns(rows["parent"]) == [
-        {"turn_ref": "T0001", "turn_start_line": 4, "turn_end_line": 5}
+        {
+            "turn_ref": "T0001",
+            "turn_start_line": 4,
+            "turn_end_line": 5,
+            "previous_context": {"start_line": 2, "end_line": 3},
+        }
     ]
 
 
@@ -263,7 +278,12 @@ def test_fork_keeps_new_project_work_without_recounting_inherited_history(tmp_pa
 
     assert result.project_count == 2
     assert _turns(_rows(result)["child"]) == [
-        {"turn_ref": "T0001", "turn_start_line": 4, "turn_end_line": 5}
+        {
+            "turn_ref": "T0001",
+            "turn_start_line": 4,
+            "turn_end_line": 5,
+            "previous_context": {"start_line": 2, "end_line": 3},
+        }
     ]
 
 

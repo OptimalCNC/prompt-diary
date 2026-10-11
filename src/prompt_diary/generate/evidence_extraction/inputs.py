@@ -77,8 +77,14 @@ def build_session_extraction_inputs(
 
 def _target_turn_json(turn: IndexedTurn, previous: IndexedTurn | None) -> str:
     assignment = _turn_locator(turn)
-    if previous is not None:
-        assignment["previous_turn"] = _turn_locator(previous)
+    previous_context = turn.previous_context
+    if previous_context is None and previous is not None:
+        previous_context = previous.span
+    if previous_context is not None:
+        assignment["previous_context"] = {
+            "start_line": previous_context.start,
+            "end_line": previous_context.end,
+        }
     return json.dumps(assignment, indent=2, ensure_ascii=False)
 
 

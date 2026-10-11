@@ -792,6 +792,7 @@ def test_prepare_workspace_codex_pre_trigger_scaffolding_all_types(tmp_path: Pat
     assert turns[1]["turn_ref"] == "T0002"
     assert turns[1]["turn_start_line"] == 8
     assert turns[1]["turn_end_line"] == 9
+    assert turns[1]["previous_context"] == {"start_line": 2, "end_line": 3}
 
 
 def test_prepare_workspace_codex_session_meta_edge_cases(tmp_path: Path) -> None:

@@ -56,8 +56,9 @@ dependencies are complete.
 
 The three agent phase runners hold an injected `AgentSessionFactory` but do not own backend
 lifecycle. Backend ownership lives at the run scope: `GenerateWorkspaceWorkflow` enters one shared
-factory once per run (inside `asyncio.run`), and every agent task mints its own conversation off that
-shared backend via `factory.runner(config)`. The composition root
+factory once per run (inside `asyncio.run`), and each agent assignment mints its own conversation off
+that shared backend via `factory.runner(config)`. The assignment owns that conversation until its
+artifact-aware retry loop finishes, then closes it through `AgentRunner.aclose()`. The composition root
 `cmds/generate.py::build_generation_workflow()` constructs one `CodexAgentSessionFactory`, wraps it
 with the Prompt Diary content-language injector, passes the wrapper to the three agent phase
 runners, and sets it as the workflow's `agent_factory`; the rendering runner is deterministic and
@@ -104,8 +105,10 @@ inside a task through `generate/agent_retry.py`: they keep the current `AgentRun
 artifacts after each successful or failed turn, and send a phase-specific resume prompt when the
 artifact shows more work is needed. The default policy permits three consecutive no-progress
 attempts with exponential backoff from 1s up to 60s. If that budget is exhausted, the phase returns
-a failed task with an `agent made no progress ...` error. Deterministic rendering and non-agent
-failures remain outside this helper.
+a failed task with an `agent made no progress ...` error. The helper closes the conversation after
+assignment completion, failure, or cancellation, including failures during artifact inspection or
+resume-prompt construction. It retains the conversation throughout retries. Deterministic rendering
+and non-agent failures remain outside this helper.
 
 The Codex runner retains the active turn handle and consumes its public event stream until a
 terminal notification confirms completion, interruption, or failure. A timeout or caller
@@ -114,6 +117,11 @@ for another turn. Cleanup and backend shutdown have bounded grace periods; cance
 propagated after cleanup. If termination cannot be confirmed, the shared backend is closed and
 disabled, which can also stop other tasks using it. Cached conversation threads cannot restart a
 disabled backend. A confirmed failed turn remains eligible for ordinary artifact-aware retry.
+Closing a Codex conversation unsubscribes its SDK thread and confirms that the server unloaded it
+before returning. Invocation-local `thread_unload_delay_secs=0` lets completed assignments release
+their MCP and other runtime resources immediately while the backend remains available to other
+conversations. Persisted transcripts remain available for debugging and are not archived. If unload
+cannot be confirmed within the cleanup grace period, the shared backend is closed and disabled.
 
 A full pipeline run succeeds when terminal deliverables succeed. Non-terminal tolerated failures
 remain visible on the run result. Project synthesis verifies that every prerequisite evidence card
@@ -143,10 +151,13 @@ existing `daily-report.json`; `generate render --notion` renders then publishes 
 
 The evidence extraction phase runner creates a fresh agent conversation for each uncommitted source
 turn, in indexed order. Each receives the stable extractor contract as base instructions and the
-current turn's scope in a separate user message. An optional `previous_turn` locator supplies the
-preceding indexed turn's ref and bounds for narrow MCP context reads behind continuations or
-corrections; only current-turn lines may support citations. Earlier extraction conversations and
-their transcript reads are not carried forward.
+current turn's scope in a separate user message. An optional `previous_context` locator supplies
+the preceding human turn's `start_line` and `end_line` in the same prepared file, even when it is
+unindexed inherited history or falls outside the report date. It supplies no `turn_ref` and is used
+for narrow MCP context reads behind continuations or corrections; only current-turn lines may
+support citations. For older prepared workspaces without the locator, the runner falls back to the
+preceding indexed turn. Earlier extraction conversations and their transcript reads are not carried
+forward.
 
 After each turn the runner verifies the result by reading the evidence card from the workspace
 directly. It never trusts the assistant's text response. An uncommitted turn — one where the card
@@ -154,6 +165,7 @@ on disk does not reflect the expected turn — is retried on the same agent conv
 turn is committed or the no-progress budget is exhausted. The retry counter is scoped to the
 current assigned turn and resets when the runner advances to the next committed turn. Retries send
 short assignment reminders on the same conversation without appending the original prompt again.
+The helper closes that conversation before the runner advances to the next source turn.
 
 At task start the runner validates any existing evidence card against the current prepared session.
 A complete card requires no agent calls. A valid partial card is retained, and only missing turns are

@@ -25,17 +25,20 @@ An evidence extractor receives prepared context for exactly one indexed turn:
 The supplied index row is the authoritative session metadata. The target turn is the only turn the
 extractor may write in that invocation. The target turn supplies `turn_ref`, `turn_start_line`,
 and `turn_end_line`; extraction writes `turn_ref` into the evidence chain, and the line bounds
-remain the citation boundary. The extractor reads the assigned turn's line range via the
-`read_session_lines` MCP tool, resolved by `(project_key, session_ref)`. The extractor must NOT
-read the raw session file directly.
+remain the citation boundary. Optional `previous_context` contains `start_line` and `end_line` for
+the preceding human turn in the same prepared file, including a predecessor omitted from the
+extraction index. It has no turn reference and supplies context only. The extractor reads the
+assigned turn's line range via the `read_session_lines` MCP tool, resolved by
+`(project_key, session_ref)`. The extractor must NOT read the raw session file directly.
 
 The extractor's read is scoped to the assigned turn. It reads the
 `turn_start_line`..`turn_end_line` range via `read_session_lines` (compact by default; `full` only
 for a narrow range with a good reason) as the extraction target and may read neighboring lines only
 as non-citable local context, such as the session header or the preceding turn behind a continue or
-resume trigger. A scoped read must preserve the file's absolute 1-based line numbers so citations
-resolve, and every citation stays within the assigned turn's line bounds. The line model that
-defines `turn_start_line` and `turn_end_line` is the
+resume trigger. A supplied `previous_context` helps locate that preceding turn without extracting
+its inherited copy. A scoped read must preserve the file's absolute 1-based line numbers so
+citations resolve, and every citation stays within the assigned turn's line bounds. The line model
+that defines `turn_start_line` and `turn_end_line` is the
 [Workspace Layout](../workspace-layout.md).
 
 The extractor writes one draft chain at a time through `write_evidence`, passing the project
@@ -77,7 +80,9 @@ An existing session evidence card maps one-to-one to one row in one project's
 
 `session_ref` is the report-facing handle used by citations. `source_session_id` remains source
 provenance in the session index and should not replace `session_ref` in generated report
-citations.
+citations. Different prepared sessions can share a native source id without sharing an evidence
+card. Inherited turns copied into a session as context have no chains in that session's card;
+their owning session supplies their evidence when they are indexed for this report.
 Evidence cards should not duplicate file locators such as `session_path`; consumers that need the
 copied session file resolve `(project_key, session_ref)` through the project session index.
 

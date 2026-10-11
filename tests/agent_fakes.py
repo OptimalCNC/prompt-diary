@@ -18,6 +18,10 @@ class FakeAgentRunner:
     config: AgentConfig
     script: Callable[[str, AgentConfig], AgentTurnResult]
     prompts: list[str] = field(default_factory=list)
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def turn(
         self,
@@ -27,6 +31,7 @@ class FakeAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         del timeout_seconds, output_schema
+        assert self.close_calls == 0
         self.prompts.append(prompt)
         return self.script(prompt, self.config)
 

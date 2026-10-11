@@ -28,6 +28,8 @@ class CodexRunnerError(PromptDiaryError):
 
 
 _TURN_CLEANUP_TIMEOUT_SECONDS = 5.0
+_THREAD_RELEASE_TIMEOUT_SECONDS = 15.0
+_THREAD_RELEASE_POLL_SECONDS = 0.05
 _T = TypeVar("_T")
 
 
@@ -76,6 +78,8 @@ class _AsyncCodexContext(Protocol):
 
 
 class _AsyncCodex(Protocol):
+    _client: _AsyncCodexClient
+
     async def thread_start(
         self,
         *,
@@ -92,12 +96,34 @@ class _AsyncCodex(Protocol):
 
 
 class _AsyncThread(Protocol):
+    id: str
+
     async def turn(
         self,
         prompt: str,
         *,
         output_schema: Mapping[str, object] | None = None,
     ) -> _AsyncTurnHandle: ...
+
+
+class _AsyncCodexClient(Protocol):
+    async def request(
+        self,
+        method: str,
+        params: JsonObject,
+        *,
+        response_model: type[_T],
+    ) -> _T: ...
+
+
+class _LoadedThreads(Protocol):
+    data: list[str]
+    next_cursor: str | None
+
+
+class _ThreadResponseModels(Protocol):
+    ThreadUnsubscribeResponse: type[object]
+    ThreadLoadedListResponse: type[_LoadedThreads]
 
 
 class _AsyncTurnHandle(Protocol):
@@ -150,7 +176,7 @@ class CodexBackend:
         sdk_module = _load_openai_codex()
         codex_config = sdk_module.CodexConfig(
             codex_bin=str(self.config.codex_bin) if self.config.codex_bin is not None else None,
-            config_overrides=self.config.mcp_config_overrides,
+            config_overrides=(*self.config.mcp_config_overrides, "thread_unload_delay_secs=0"),
             env=dict(self.config.env_overrides) or None,
             client_name=CODEX_REPORT_ORIGINATOR,
         )
@@ -183,6 +209,23 @@ class CodexBackend:
         close_task = self._start_close(None, None, None)
         if close_task is not None:
             await asyncio.shield(close_task)
+
+    async def release_thread(self, thread_id: str) -> None:
+        """Unsubscribe and confirm runtime shutdown without archiving the transcript."""
+        codex = self._codex
+        if codex is None:
+            return
+        operation = asyncio.create_task(_release_sdk_thread(codex, thread_id))
+        operation.add_done_callback(_consume_task_exception)
+        try:
+            await asyncio.wait_for(operation, _THREAD_RELEASE_TIMEOUT_SECONDS)
+        except Exception as exc:
+            # Reusing an app-server with unconfirmed release would accumulate resources again.
+            try:
+                await asyncio.wait_for(self.invalidate(), _TURN_CLEANUP_TIMEOUT_SECONDS)
+            except Exception as shutdown_error:
+                raise CodexRunnerError(_shutdown_unconfirmed_message()) from shutdown_error
+            raise CodexRunnerError(_thread_release_failed_message(thread_id)) from exc
 
     def _start_close(
         self,
@@ -224,6 +267,24 @@ class CodexAgentRunner:
         self.config = config
         self._thread: _AsyncThread | None = None
         self._turn_running = False
+        self._closed = False
+        self._release_task: asyncio.Task[None] | None = None
+
+    async def aclose(self) -> None:
+        """Release this completed assignment's conversation; repeated closes are safe."""
+        if self._turn_running:
+            raise CodexRunnerError(_close_running_turn_message())
+        if self._release_task is None:
+            self._closed = True
+            self._release_task = asyncio.create_task(self._release_thread())
+            self._release_task.add_done_callback(_consume_task_exception)
+        await _finish_cleanup(self._release_task)
+
+    async def _release_thread(self) -> None:
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            await self.backend.release_thread(thread.id)
 
     async def turn(
         self,
@@ -233,6 +294,8 @@ class CodexAgentRunner:
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         """Run one prompt turn in the conversation."""
+        if self._closed:
+            raise CodexRunnerError(_closed_runner_message())
         if timeout_seconds <= 0:
             raise ValueError(_non_positive_timeout_message())
         if self._turn_running:
@@ -240,7 +303,15 @@ class CodexAgentRunner:
 
         self._turn_running = True
         try:
-            thread = await self._ensure_thread_started()
+            startup = asyncio.create_task(self._ensure_thread_started())
+            startup.add_done_callback(_consume_task_exception)
+            try:
+                thread = await asyncio.shield(startup)
+            except asyncio.CancelledError as exc:
+                try:
+                    await _finish_cleanup(asyncio.create_task(self._settle_thread_start(startup)))
+                finally:
+                    raise exc
             state = _TurnState()
             operation = asyncio.create_task(self._run_turn(thread, state, prompt, output_schema))
             operation.add_done_callback(_consume_task_exception)
@@ -267,6 +338,13 @@ class CodexAgentRunner:
             return completed.result
         finally:
             self._turn_running = False
+
+    async def _settle_thread_start(self, startup: asyncio.Task[_AsyncThread]) -> None:
+        # Keep the thread ID available for assignment cleanup after cancellation.
+        try:
+            await _wait_for_cleanup(startup)
+        except Exception:  # noqa: BLE001 — an unknown thread ID requires transport invalidation.
+            await self._abort_turn(startup)
 
     async def _run_turn(
         self,
@@ -416,6 +494,34 @@ def _load_openai_codex() -> _CodexSdkModule:
     except ModuleNotFoundError as exc:
         raise CodexRunnerError(_codex_sdk_missing_message()) from exc
     return cast("_CodexSdkModule", module)
+
+
+async def _release_sdk_thread(codex: _AsyncCodex, thread_id: str) -> None:
+    models = cast("_ThreadResponseModels", importlib.import_module("openai_codex.generated.v2_all"))
+    # The SDK has typed requests for these methods but no high-level convenience methods.
+    client = codex._client  # pyright: ignore[reportPrivateUsage]
+    await client.request(
+        "thread/unsubscribe",
+        {"threadId": thread_id},
+        response_model=models.ThreadUnsubscribeResponse,
+    )
+    while await _sdk_thread_is_loaded(client, models, thread_id):
+        await asyncio.sleep(_THREAD_RELEASE_POLL_SECONDS)
+
+
+async def _sdk_thread_is_loaded(
+    client: _AsyncCodexClient, models: _ThreadResponseModels, thread_id: str
+) -> bool:
+    params: JsonObject = {}
+    while True:
+        loaded = await client.request(
+            "thread/loaded/list", params, response_model=models.ThreadLoadedListResponse
+        )
+        if thread_id in loaded.data:
+            return True
+        if loaded.next_cursor is None:
+            return False
+        params = {"cursor": loaded.next_cursor}
 
 
 def _thread_config(config: AgentConfig) -> JsonObject | None:
@@ -606,8 +712,26 @@ def _concurrent_turn_message() -> str:
     return "CodexAgentRunner.turn cannot be called concurrently on the same runner."
 
 
+def _close_running_turn_message() -> str:
+    return "CodexAgentRunner cannot release a conversation while a turn is running."
+
+
+def _closed_runner_message() -> str:
+    return "CodexAgentRunner conversation has already been released."
+
+
+def _thread_release_failed_message(thread_id: str) -> str:
+    return (
+        f"Could not confirm resource release for Codex conversation {thread_id}; "
+        "the shared backend was stopped."
+    )
+
+
 def _invalidated_backend_message() -> str:
-    return "Codex backend was stopped because a turn's termination could not be confirmed."
+    return (
+        "Codex backend was stopped because turn termination or conversation release "
+        "could not be confirmed."
+    )
 
 
 def _shutdown_unconfirmed_message() -> str:

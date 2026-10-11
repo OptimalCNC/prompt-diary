@@ -45,7 +45,7 @@ class AgentTurnResult:
 
 
 class AgentRunner(Protocol):
-    """One agent conversation. Turns run sequentially on a single instance."""
+    """One agent conversation, explicitly released after its sequential turns."""
 
     async def turn(
         self,
@@ -55,6 +55,10 @@ class AgentRunner(Protocol):
         output_schema: Mapping[str, object] | None = None,
     ) -> AgentTurnResult:
         """Run one prompt turn and return its structured result."""
+        ...
+
+    async def aclose(self) -> None:
+        """Release this conversation without stopping the shared backend."""
         ...
 
 

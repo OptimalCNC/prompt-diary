@@ -31,6 +31,7 @@ class IndexedTurn:
 
     turn_ref: str
     span: LineSpan
+    previous_context: LineSpan | None = None
 
 
 @dataclass(frozen=True)
@@ -219,9 +220,42 @@ def _required_turns(
                     line_number=line_number,
                     label=f"turn {turn_ref}",
                 ),
+                previous_context=_optional_previous_context(
+                    turn,
+                    turn_ref=turn_ref,
+                    turn_start=turn_start,
+                    path=path,
+                    line_number=line_number,
+                ),
             )
         )
     return tuple(turns)
+
+
+def _optional_previous_context(
+    value: JsonObject,
+    *,
+    turn_ref: str,
+    turn_start: int,
+    path: Path,
+    line_number: int,
+) -> LineSpan | None:
+    raw_context = value.get("previous_context")
+    if raw_context is None:
+        return None
+    if not isinstance(raw_context, dict):
+        raise PromptDiaryError(_field_message(path, line_number, "previous_context", "object"))
+    context = cast("JsonObject", raw_context)
+    span = _line_span(
+        start=_required_int(context, "start_line", path=path, line_number=line_number),
+        end=_required_int(context, "end_line", path=path, line_number=line_number),
+        path=path,
+        line_number=line_number,
+        label=f"previous_context for turn {turn_ref}",
+    )
+    if span.end >= turn_start:
+        raise PromptDiaryError(_preceding_context_message(path, line_number, turn_ref))
+    return span
 
 
 def _required_session_path(
@@ -337,6 +371,13 @@ def _project_key_mismatch_message(
 
 def _turn_object_message(path: Path, line_number: int, position: int) -> str:
     return f"{path}:{line_number} turns[{position}] must be a JSON object"
+
+
+def _preceding_context_message(path: Path, line_number: int, turn_ref: str) -> str:
+    return (
+        f"{path}:{line_number} previous_context for turn {turn_ref} "
+        "must end before the assigned turn starts"
+    )
 
 
 def _session_path_message(path: Path, line_number: int) -> str:
