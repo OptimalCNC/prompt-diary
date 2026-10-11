@@ -358,6 +358,7 @@ def test_repeated_cancellation_finishes_close_before_returning(*, cancel_during_
         close_started = asyncio.Event()
         release_close = asyncio.Event()
         close_finished = asyncio.Event()
+        cancellations: list[asyncio.CancelledError] = []
 
         async def block_turn() -> None:
             turn_started.set()
@@ -373,19 +374,26 @@ def test_repeated_cancellation_finishes_close_before_returning(*, cancel_during_
             turn_step=block_turn if cancel_during_turn else None,
             close_step=block_close,
         )
-        operation = asyncio.create_task(
-            run_agent_turn_with_resume(
-                runner=runner,
-                initial_prompt="initial",
-                resume_prompt=lambda: "resume",
-                inspect_artifacts=lambda: AgentArtifactStatus(
-                    complete=not cancel_during_turn, progress_marker=0
-                ),
-                progress_made=lambda before, after: after > before,
-                action="while testing cancelled assignment",
-                retry_policy=_policy(),
-            )
-        )
+
+        async def run_assignment() -> None:
+            try:
+                await run_agent_turn_with_resume(
+                    runner=runner,
+                    initial_prompt="initial",
+                    resume_prompt=lambda: "resume",
+                    inspect_artifacts=lambda: AgentArtifactStatus(
+                        complete=not cancel_during_turn, progress_marker=0
+                    ),
+                    progress_made=lambda before, after: after > before,
+                    action="while testing cancelled assignment",
+                    retry_policy=_policy(),
+                )
+            except asyncio.CancelledError as exc:
+                # Python 3.10 replaces cancellation metadata at the Task boundary.
+                cancellations.append(exc)
+                raise
+
+        operation = asyncio.create_task(run_assignment())
         if cancel_during_turn:
             await asyncio.wait_for(turn_started.wait(), 1)
             operation.cancel("original cancellation")
@@ -397,10 +405,12 @@ def test_repeated_cancellation_finishes_close_before_returning(*, cancel_during_
         assert not operation.done()
         assert not close_finished.is_set()
         release_close.set()
-        with pytest.raises(asyncio.CancelledError) as caught:
+        with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(operation, 1)
         expected_message = "original cancellation" if cancel_during_turn else "cleanup cancellation"
-        assert str(caught.value) == expected_message
+        assert operation.cancelled()
+        assert len(cancellations) == 1
+        assert str(cancellations[0]) == expected_message
         assert close_finished.is_set()
         assert runner.close_calls == 1
 
@@ -414,6 +424,7 @@ def test_cancellation_preserves_cleanup_failure_as_its_cause(*, cancel_during_tu
         close_started = asyncio.Event()
         release_close = asyncio.Event()
         failure = RuntimeError("unload failed")
+        cancellations: list[asyncio.CancelledError] = []
 
         async def block_turn() -> None:
             turn_started.set()
@@ -429,19 +440,26 @@ def test_cancellation_preserves_cleanup_failure_as_its_cause(*, cancel_during_tu
             turn_step=block_turn if cancel_during_turn else None,
             close_step=fail_close,
         )
-        operation = asyncio.create_task(
-            run_agent_turn_with_resume(
-                runner=runner,
-                initial_prompt="initial",
-                resume_prompt=lambda: "resume",
-                inspect_artifacts=lambda: AgentArtifactStatus(
-                    complete=not cancel_during_turn, progress_marker=0
-                ),
-                progress_made=lambda before, after: after > before,
-                action="while testing cancelled cleanup failure",
-                retry_policy=_policy(),
-            )
-        )
+
+        async def run_assignment() -> None:
+            try:
+                await run_agent_turn_with_resume(
+                    runner=runner,
+                    initial_prompt="initial",
+                    resume_prompt=lambda: "resume",
+                    inspect_artifacts=lambda: AgentArtifactStatus(
+                        complete=not cancel_during_turn, progress_marker=0
+                    ),
+                    progress_made=lambda before, after: after > before,
+                    action="while testing cancelled cleanup failure",
+                    retry_policy=_policy(),
+                )
+            except asyncio.CancelledError as exc:
+                # Inspect the helper's exception before the Task can replace its cause.
+                cancellations.append(exc)
+                raise
+
+        operation = asyncio.create_task(run_assignment())
         if cancel_during_turn:
             await asyncio.wait_for(turn_started.wait(), 1)
             operation.cancel("assignment cancellation")
@@ -450,9 +468,15 @@ def test_cancellation_preserves_cleanup_failure_as_its_cause(*, cancel_during_tu
             operation.cancel("cleanup cancellation")
         await asyncio.sleep(0)
         release_close.set()
-        with pytest.raises(asyncio.CancelledError, match="cancellation") as caught:
+        with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(operation, 1)
-        assert caught.value.__cause__ is failure
+        expected_message = (
+            "assignment cancellation" if cancel_during_turn else "cleanup cancellation"
+        )
+        assert operation.cancelled()
+        assert len(cancellations) == 1
+        assert str(cancellations[0]) == expected_message
+        assert cancellations[0].__cause__ is failure
         assert runner.close_calls == 1
 
     asyncio.run(run())

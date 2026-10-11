@@ -605,7 +605,16 @@ def test_cancelled_thread_start_waits_for_response_then_releases_conversation(
             sdk = FakeAsyncCodex.instances[0]
             sdk.block_thread_start = True
             runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
-            operation = asyncio.create_task(runner.turn("Cancel before the thread response."))
+            cancellations: list[asyncio.CancelledError] = []
+
+            async def run_turn() -> None:
+                try:
+                    await runner.turn("Cancel before the thread response.")
+                except asyncio.CancelledError as exc:
+                    cancellations.append(exc)
+                    raise
+
+            operation = asyncio.create_task(run_turn())
             await asyncio.wait_for(sdk.thread_start_received.wait(), 1)
             assert sdk.rpc.loaded == {"thread-1"}
             operation.cancel("original startup cancellation")
@@ -615,8 +624,10 @@ def test_cancelled_thread_start_waits_for_response_then_releases_conversation(
             assert not operation.done()
             assert sdk.rpc.requests == []
             sdk.thread_start_release.set()
-            with pytest.raises(asyncio.CancelledError, match="original startup cancellation"):
+            with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(operation, 1)
+            assert len(cancellations) == 1
+            assert str(cancellations[0]) == "original startup cancellation"
             assert sdk.thread.run_calls == []
             await runner.aclose()
             assert sdk.rpc.loaded == set()
@@ -644,11 +655,22 @@ def test_unconfirmed_cancelled_thread_start_stops_the_shared_backend(
             sdk = FakeAsyncCodex.instances[0]
             sdk.block_thread_start = True
             runner = CodexAgentRunner(backend, AgentConfig(working_directory=tmp_path))
-            operation = asyncio.create_task(runner.turn("Thread response never arrives."))
+            cancellations: list[asyncio.CancelledError] = []
+
+            async def run_turn() -> None:
+                try:
+                    await runner.turn("Thread response never arrives.")
+                except asyncio.CancelledError as exc:
+                    cancellations.append(exc)
+                    raise
+
+            operation = asyncio.create_task(run_turn())
             await asyncio.wait_for(sdk.thread_start_received.wait(), 1)
             operation.cancel("unconfirmed startup cancellation")
-            with pytest.raises(asyncio.CancelledError, match="unconfirmed startup cancellation"):
+            with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(operation, 1)
+            assert len(cancellations) == 1
+            assert str(cancellations[0]) == "unconfirmed startup cancellation"
             assert sdk.exited
             assert sdk.rpc.loaded == set()
             assert sdk.thread.run_calls == []
