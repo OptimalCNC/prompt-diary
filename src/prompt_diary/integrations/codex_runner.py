@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Literal, Protocol, TypeGuard, TypeVar, cast
 
+from prompt_diary import __version__
 from prompt_diary.agent import AgentTurnEvent, AgentTurnResult
 from prompt_diary.errors import PromptDiaryError
 from prompt_diary.source_records import CODEX_REPORT_ORIGINATOR
@@ -54,6 +55,7 @@ class _CodexConfigFactory(Protocol):
         config_overrides: tuple[str, ...],
         env: dict[str, str] | None,
         client_name: str,
+        client_version: str,
     ) -> object: ...
 
 
@@ -179,6 +181,7 @@ class CodexBackend:
             config_overrides=(*self.config.mcp_config_overrides, "thread_unload_delay_secs=0"),
             env=dict(self.config.env_overrides) or None,
             client_name=CODEX_REPORT_ORIGINATOR,
+            client_version=__version__,
         )
         context = sdk_module.AsyncCodex(config=codex_config)
         self._sdk_module = sdk_module
