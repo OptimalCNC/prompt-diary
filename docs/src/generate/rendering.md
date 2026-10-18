@@ -134,14 +134,13 @@ Section "Evidence Chains" — rendered only when prepared evidence cards contain
   Group per project
     EvidenceChainEntry {session_ref}/{turn_ref} — citation target for that cited turn
       List(bullet)
-        Trigger: trigger.summary
         Agent reactions: agent_reactions[].summary, or "None recorded."
         Outcomes: outcomes[].summary, or "None recorded."
         Observed checks: observed_checks[].summary, or "None recorded."
         Terminal state: terminal_state.type + terminal_state.summary
         Materiality: materiality
       Quote blocks: trigger.quoted_messages[].text
-  needs: evidence/<session_ref>.json → { evidence_chains[] → {turn_ref, trigger.summary,
+  needs: evidence/<session_ref>.json → { evidence_chains[] → {turn_ref,
          agent_reactions[].summary, outcomes[].summary, observed_checks[].summary,
          terminal_state.{type, summary}, materiality, trigger.quoted_messages[].text} }
 
@@ -165,8 +164,8 @@ Notes on the purpose-1 region:
   per-project "Minor activity" label so they do not drown the material work.
 - There is no standalone cross-project outcome table: cross-project slicing is a Notion affordance
   over the flat outcome records.
-- The "User Messages" block reveals the verbatim `source_user_messages` (tool-populated raw user
-  text per turn, already secret-redacted) for the work item's covered turns, so a reader can see
+- The "User Messages" block reveals the verbatim `source_user_messages` (tool-populated human
+  text per turn, without redaction) for the work item's covered turns, so a reader can see
   exactly what was asked. It is untrusted display content — the renderer shows it quoted/escaped and
   never interprets it — and the same substrate feeds the engagement and team-learning readings.
 - Evidence honesty stays visible: each work item's `limits` (what it did not verify or could not

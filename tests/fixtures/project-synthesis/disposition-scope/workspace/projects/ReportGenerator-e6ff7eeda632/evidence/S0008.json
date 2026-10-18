@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0008",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests search implementation and integration verification.",
         "quoted_messages": [
           {
-            "text": "Build search.py and verify the search integration tests.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Build search.py and verify the search integration tests."
           }
         ],
         "citations": [

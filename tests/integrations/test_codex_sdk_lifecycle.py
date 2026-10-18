@@ -310,8 +310,8 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
     [
         pytest.param(
             load_agent_settings().evidence_extraction,
-            "gpt-6.1-sol",
-            "medium",
+            "gpt-6-luna",
+            "high",
             id="evidence_extraction",
         ),
         pytest.param(
@@ -322,8 +322,8 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
         ),
         pytest.param(
             load_agent_settings().daily_synthesis.project_summary,
-            "gpt-6.1-sol",
-            "low",
+            "gpt-6-luna",
+            "medium",
             id="project_summary",
         ),
         pytest.param(

@@ -93,7 +93,7 @@ Write behavior:
   No assessment is inferred for its old items. The generation runner separately rejects reuse of an
   obsolete artifact and regenerates work items from the existing evidence cards.
 - `source_user_messages` is messages-only (verbatim user-message text, no line citations) — the tool
-  does not re-redact (the extractor already redacted secrets). Its shape and rules are in
+  copies the source-derived quotations without redaction. Its shape and rules are in
   [Project Synthesis](../project-synthesis.md#envelope).
 - Writes are serialized per `project_key` and committed with atomic file replacement so parallel
   calls cannot corrupt the envelope.

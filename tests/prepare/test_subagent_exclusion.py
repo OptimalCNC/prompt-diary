@@ -161,7 +161,7 @@ def test_claude_sidechain_metadata_stops_body_reading(
     assert result.session_count == 0
 
 
-@pytest.mark.parametrize("schema", [None, 1, 2, 4])
+@pytest.mark.parametrize("schema", [None, 1, 2, 3, 4, 5, 6, 8])
 def test_unsupported_workspace_requires_force_refresh(tmp_path: Path, schema: int | None) -> None:
     reports_root = tmp_path / "reports"
     result = prepare_workspace(_target(), reports_root=reports_root, source_specs=())

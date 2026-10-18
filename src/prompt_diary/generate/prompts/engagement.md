@@ -29,6 +29,9 @@ goal, supplies context, corrects a wrong turn, or reviews a result shows effort;
 ("ok", "go", "continue") with no surrounding direction reads as thin. Judge each message in context:
 a terse "go" that approves a reviewed plan is real review, not filler. Failed attempts the user
 corrected are positive evidence, not negative. Never turn message volume into engagement.
+Human-run local shell commands and client-local management operations, including their output,
+are excluded from evidence and do not count as human engagement. Instructions directed at the
+agent, including skill selections, still provide evidence of direction.
 
 Record observations along these dimensions:
 

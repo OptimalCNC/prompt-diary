@@ -48,7 +48,6 @@ def test_committed_chain_carries_trimmed_fields_and_verbatim_quotes(tmp_path: Pa
     first = chains[0]
 
     assert first.materiality == "material"
-    assert "simplify" in first.trigger_summary
     assert first.reaction_summaries == (
         "Updated the MCP tools page, evidence contract, and extractor prompt.",
     )

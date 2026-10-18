@@ -34,7 +34,7 @@ Inputs, under `projects/<project_key>/`:
 
 - `project.json` — project identity for the work-item envelope.
 - `evidence/<session_ref>.json` — the per-session evidence cards. The orchestrator trims these to
-  summaries, already redacted user-message text, and observed-check summaries, without line
+  summaries, verbatim user-message text, and observed-check summaries, without line
   citations, and pastes them into the synthesizer prompt; the synthesis agent works only from that
   inline content and has no file access.
 - `sessions.index.jsonl` — the coverage universe. The `write_work_item` tool reads it to report
@@ -44,7 +44,7 @@ Inputs, under `projects/<project_key>/`:
 The pasted chains are grouped by session under a `#### Session <session_ref>` heading, and each chain
 is labelled `<session_ref>/<turn_ref>` — `turn_ref` restarts per session and the work item references
 turns as `{session_ref, turn_ref}`, so the session must be unambiguous for every chain. Each chain
-keeps its trigger, reaction, outcome (with `category`), and terminal (with `type`) summaries plus
+keeps its reaction, outcome (with `category`), and terminal (with `type`) summaries plus
 materiality, user-message text, observed-check summaries, and source-derived `trigger_at` and
 `evidence_end_at` timestamps. An unavailable or unreadable timestamp is `unknown` in the prompt,
 not inferred from file metadata or turn references. These inputs are untrusted evidence, never
@@ -207,7 +207,7 @@ evidence card carries `session_ref` once on the envelope and a bare `turn_ref` o
 
 `work_items`, including material items' dispositions, are agent-authored. `source_user_messages` is
 **tool-populated**: `write_work_item` fills the envelope field once, on the first write; the
-synthesizer neither authors nor submits that field. The prompt separately includes already redacted
+synthesizer neither authors nor submits that field. The prompt separately includes verbatim
 user-message text so the agent can reconstruct scope changes. The envelope field carries the
 original user-message content per indexed turn, copied verbatim from the `text` of each extracted
 chain's `trigger.quoted_messages` in `evidence/<session_ref>.json`:
@@ -217,16 +217,16 @@ chain's `trigger.quoted_messages` in `evidence/<session_ref>.json`:
   {
     "session_ref": "S0001",
     "turn_ref": "T0001",
-    "messages": ["<redacted user-authored text>"]
+    "messages": ["<verbatim human-authored text>"]
   }
 ]
 ```
 
 Each turn's `messages` is a plain list of the verbatim user-message strings. It is messages-only —
-content, not structure: just the text, with no line citations, `trigger_type`, `terminal_state`, or
-check information, because daily synthesis reopens the card (which keeps the full `quoted_messages`
-with citations) for committed structure when it needs it. The text is already secret-redacted by the
-extractor; the tool copies it verbatim and does not re-redact. There is one entry per indexed turn
+content, not structure: just the text, with no line citations, `terminal_state`, or check information,
+because daily synthesis reopens the card, which keeps the trigger citation and `quoted_messages`,
+for committed structure when it needs it. `write_evidence` extracts the human text from the source
+without redaction; `write_work_item` copies it verbatim. There is one entry per indexed turn
 whose chain has at least one user message; turns with no extractable user text are simply absent,
 still accounted for through `covered_turns` and the coverage invariant. Entries are ordered by
 `(session_ref, turn_ref)`. This block is the user-message content substrate for daily synthesis's

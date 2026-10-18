@@ -36,14 +36,6 @@ def valid_material_doc_chain() -> dict[str, Any]:
     return {
         "turn_ref": "T0001",
         "trigger": {
-            "type": "explicit_user_message",
-            "summary": "User asked for evidence contract documentation updates.",
-            "quoted_messages": [
-                {
-                    "text": "Please update the evidence contract docs for the MCP write surface.",
-                    "citations": [{"lines": "2-2"}],
-                }
-            ],
             "citations": [{"lines": "2-2"}],
         },
         "agent_reactions": [
@@ -79,9 +71,6 @@ def valid_no_material_chain() -> dict[str, Any]:
     return {
         "turn_ref": "T0002",
         "trigger": {
-            "type": "resume_or_continue",
-            "summary": "User asked the agent to continue.",
-            "quoted_messages": [{"text": "continue", "citations": [{"lines": "9-9"}]}],
             "citations": [{"lines": "9-9"}],
         },
         "agent_reactions": [
@@ -222,23 +211,16 @@ def build_evidence_chain(
     span: tuple[int, int],
     kind: Literal["material", "no_material"] = "material",
 ) -> dict[str, Any]:
-    """Build a write-valid evidence chain whose citations all fall inside ``span``.
+    """Build an Agent draft whose citations all fall inside ``span``.
 
-    Trigger/quoted cite the first line; reaction/outcome/terminal cite the last line, so a
+    The trigger cites the first line; reaction/outcome/terminal cite the last line, so a
     material outcome always intersects reaction evidence (never only the trigger) for any
     span of one or more lines.
     """
     start, end = span
     start_lines = f"{start}-{start}"
     end_lines = f"{end}-{end}"
-    trigger = {
-        "type": "explicit_user_message",
-        "summary": f"User request captured for {turn_ref}.",
-        "quoted_messages": [
-            {"text": "Captured user message.", "citations": [{"lines": start_lines}]}
-        ],
-        "citations": [{"lines": start_lines}],
-    }
+    trigger = {"citations": [{"lines": start_lines}]}
     reactions: list[dict[str, Any]] = [
         {"summary": f"Agent reaction for {turn_ref}.", "citations": [{"lines": end_lines}]}
     ]
@@ -273,3 +255,16 @@ def build_evidence_chain(
         "terminal_state": terminal,
         "materiality": materiality,
     }
+
+
+def build_committed_evidence_chain(
+    *,
+    turn_ref: str,
+    span: tuple[int, int],
+    kind: Literal["material", "no_material"] = "material",
+    messages: tuple[str, ...] = ("Captured user message.",),
+) -> dict[str, Any]:
+    """Build a persisted chain for tests that construct evidence cards directly."""
+    chain = build_evidence_chain(turn_ref=turn_ref, span=span, kind=kind)
+    chain["trigger"]["quoted_messages"] = [{"text": message} for message in messages]
+    return chain

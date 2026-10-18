@@ -63,14 +63,15 @@ def test_unknown_codex_response_payload_keeps_source_type_and_payload(
         "token_usage_record",
         "world_state",
         "inter_agent_communication_metadata",
-        "compacted",
     ],
 )
 def test_known_codex_metadata_emits_nothing(kind: str) -> None:
     assert compact_record(json.dumps({"type": kind, "payload": {}}), line=1, source="codex") is None
 
 
-@pytest.mark.parametrize("kind", ["token_count", "task_started", "thread_settings_applied"])
+@pytest.mark.parametrize(
+    "kind", ["token_count", "task_started", "thread_settings_applied", "task_complete"]
+)
 def test_known_codex_lifecycle_noise_emits_nothing(kind: str) -> None:
     assert (
         compact_record(
@@ -80,11 +81,28 @@ def test_known_codex_lifecycle_noise_emits_nothing(kind: str) -> None:
     )
 
 
+@pytest.mark.parametrize("kind", ["task_complete", "error", "task_failed"])
+def test_codex_conversation_errors_are_omitted_from_compact_evidence(kind: str) -> None:
+    raw = json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": kind,
+                "message": "unexpected status 503 Service Unavailable: Maintenance",
+                "error": {
+                    "message": "unexpected status 503 Service Unavailable: Maintenance",
+                    "codex_error_info": {"http_connection_failed": {"http_status_code": 503}},
+                },
+            },
+        }
+    )
+    assert compact_record(raw, line=7, source="codex") is None
+
+
 @pytest.mark.parametrize(
     "item",
     [
         {"type": "Reasoning"},
-        {"type": "ContextCompaction"},
         {"type": "SubAgentActivity", "kind": "started"},
         {"type": "SubAgentActivity", "kind": "interacted"},
         {"type": "SubAgentActivity", "kind": "completed"},
@@ -113,14 +131,13 @@ def test_unknown_completed_items_and_failures_are_visible(item: object) -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        {"type": "task_complete"},
         {"type": "turn_aborted", "reason": "interrupted"},
-        {"type": "error", "message": "disconnected"},
-        {"type": "task_failed", "error": {"code": 403, "message": "denied"}},
         {"type": "future_event", "message": "unknown failure"},
     ],
 )
-def test_terminal_failures_and_unknown_events_are_not_discarded(payload: dict[str, Any]) -> None:
+def test_explicit_interruptions_and_unknown_events_are_not_discarded(
+    payload: dict[str, Any],
+) -> None:
     record = _codex(payload, "event_msg")
     assert record.kind in ("terminal", "unknown")
     assert record.text
@@ -132,14 +149,18 @@ def test_codex_messages_preserve_exact_text_and_omit_optional_fields(role: str, 
     record = _codex(
         {"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]}
     )
-    assert compact_record_to_json(record) == {"line": 7, "kind": role, "text": text}
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "human_input" if role == "user" else "assistant_message",
+        "text": text,
+    }
 
 
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
-        ({"type": "user_message", "message": "Please proceed."}, "user"),
-        ({"type": "agent_message", "message": "Checks failed."}, "assistant"),
+        ({"type": "user_message", "message": "Please proceed."}, "human_input"),
+        ({"type": "agent_message", "message": "Checks failed."}, "assistant_message"),
     ],
 )
 def test_legacy_codex_messages_remain_supported(payload: dict[str, str], expected: str) -> None:
@@ -174,8 +195,13 @@ def test_unknown_message_content_remains_visible_without_exposing_binary_payload
             "content": [{"type": "input_image", "data": "binary"}, {"x": 1}, 42],
         }
     )
-    assert record.unavailable == ("input_image", "unknown content", "42")
-    assert "binary" not in json.dumps(compact_record_to_json(record))
+    wire = compact_record_to_json(record)
+    assert wire["parts"] == [
+        {"kind": "human_attachment", "source_type": "input_image"},
+        {"kind": "unknown", "unavailable": "unknown content"},
+        {"kind": "unknown", "unavailable": "unknown content"},
+    ]
+    assert "binary" not in json.dumps(wire)
     assert _codex({"type": "message", "content": {"new": "format"}}).unavailable
 
 
@@ -242,7 +268,7 @@ def test_output_budget_preserves_short_results_and_both_ends_of_large_results(te
         assert len(result.preview.encode()) < 600
 
 
-@pytest.mark.parametrize("subtype", ["compact_boundary", "turn_duration", "stop_hook_summary"])
+@pytest.mark.parametrize("subtype", ["turn_duration", "stop_hook_summary"])
 def test_claude_recognized_system_noise_is_omitted(subtype: str) -> None:
     assert (
         compact_record(
@@ -276,13 +302,18 @@ def test_claude_mixed_content_keeps_text_calls_results_and_unavailable_parts() -
         },
         "claude-code",
     )
-    assert record.text == "Checking."
-    assert record.tool_uses[0].name == "Read"
-    assert record.tool_results[0].status == "failed"
-    assert record.tool_results[0].preview == "permission denied"
-    assert record.unavailable == ("image",)
     wire = compact_record_to_json(record)
-    assert wire["tool_uses"][0]["input_summary"] == '{"path": "x.py"}'
+    assert wire["kind"] == "mixed"
+    assert "text" not in wire
+    assert wire["parts"] == [
+        {"kind": "assistant_message", "text": "Checking."},
+        {"kind": "tool_call", "tool_use": {"name": "Read", "input_summary": '{"path": "x.py"}'}},
+        {
+            "kind": "tool_result",
+            "tool_result": {"kind": "output", "status": "failed", "preview": "permission denied"},
+        },
+        {"kind": "unknown", "unavailable": "image"},
+    ]
     assert "private" not in json.dumps(wire)
 
 
@@ -466,3 +497,316 @@ def test_lifecycle_items_with_results_or_errors_are_not_treated_as_empty_metadat
     assert record.kind == "unknown"
     assert record.text is not None
     assert item.get("message", item.get("error", "")) in record.text
+
+
+def test_human_skill_selection_and_expanded_instructions_have_distinct_origins() -> None:
+    human = "  Use $review; only inspect the API.\n"
+    skill = "Follow every instruction in this skill.\n" * 100
+    record = _codex(
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": human},
+                {"type": "input_text", "text": skill},
+                {"type": "input_text", "text": "Do not publish."},
+            ],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": [
+                    "user.text",
+                    "skills.selected_skill_instructions",
+                    "user.text",
+                ]
+            },
+        }
+    )
+
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "mixed",
+        "parts": [
+            {"kind": "human_input", "text": human, "source_tag": "user.text"},
+            {
+                "kind": "skill_context",
+                "text": skill,
+                "source_tag": "skills.selected_skill_instructions",
+            },
+            {"kind": "human_input", "text": "Do not publish.", "source_tag": "user.text"},
+        ],
+    }
+
+
+def test_native_skill_selection_does_not_invent_a_human_quote() -> None:
+    record = _codex(
+        {
+            "type": "item_completed",
+            "item": {"type": "UserMessage", "content": [{"type": "skill", "name": "review"}]},
+        },
+        "event_msg",
+    )
+
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "skill_invocation",
+        "name": "review",
+    }
+
+
+def test_human_attachment_is_visible_without_exposing_its_payload_or_inventing_text() -> None:
+    record = _codex(
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_image", "image_url": "data:image/png;base64,binary"}],
+        }
+    )
+
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "human_attachment",
+        "source_type": "input_image",
+    }
+
+
+def test_question_wrapper_preserves_agent_question_and_exact_human_answer_separately() -> None:
+    question, answer = "Should we deploy?", "  No, test first.\n"
+    wrapper = (
+        "<send_user_message_question_reply>"
+        + json.dumps([{"questionItemId": "question-id", "question": question, "answer": answer}])
+        + "</send_user_message_question_reply>"
+    )
+    record = _codex(
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": wrapper}]}
+    )
+
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "mixed",
+        "parts": [
+            {
+                "kind": "assistant_message",
+                "text": question,
+                "source_tag": "question_reply.question",
+            },
+            {"kind": "human_input", "text": answer, "source_tag": "question_reply.answer"},
+        ],
+    }
+
+
+def test_user_shell_command_and_result_are_absent_from_compact_evidence() -> None:
+    output = "start\n" + "x" * 2000 + "\nfinished"
+    wrapper = (
+        "<user_shell_command><command> pwd </command>"
+        f"<result>{output}</result></user_shell_command>"
+    )
+    raw = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": wrapper}],
+            },
+        }
+    )
+
+    assert compact_record(raw, line=7, source="codex") is None
+
+
+def test_shell_filter_preserves_adjacent_direction_and_agent_work() -> None:
+    wrapper = (
+        "<user_shell_command><command>git status</command>"
+        "<result>clean</result></user_shell_command>"
+    )
+    record = _codex(
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": wrapper},
+                {"type": "input_text", "text": "Please run `git status` and explain it."},
+            ],
+        }
+    )
+    assert record.kind == "human_input"
+    assert record.text == "Please run `git status` and explain it."
+    agent = _codex(
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": wrapper}],
+        }
+    )
+    assert agent.kind == "assistant_message"
+    assert agent.text == wrapper
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<send_user_message_question_reply>broken</send_user_message_question_reply>",
+        "<skill>this may be quoted text</skill>",
+    ],
+)
+def test_uncertain_user_shaped_wrappers_are_visible_without_claiming_human_authorship(
+    text: str,
+) -> None:
+    record = _codex(
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}
+    )
+
+    assert record.kind == "unknown"
+    assert record.text == text
+
+
+def test_claude_tool_owned_text_is_not_human_input() -> None:
+    record = _record(
+        {
+            "type": "user",
+            "sourceToolAssistantUUID": "tool-owner",
+            "message": {"role": "user", "content": "User has approved your plan."},
+        },
+        "claude-code",
+    )
+
+    assert record.kind == "tool_result"
+    assert record.tool_results[0].preview == "User has approved your plan."
+
+
+def test_claude_mixed_tool_result_and_human_correction_preserves_source_order() -> None:
+    record = _record(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "content": "Deployment complete."},
+                    {"type": "text", "text": " That was the wrong target.\n"},
+                ],
+            },
+        },
+        "claude-code",
+    )
+
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "mixed",
+        "parts": [
+            {
+                "kind": "tool_result",
+                "tool_result": {"kind": "output", "preview": "Deployment complete."},
+            },
+            {"kind": "human_input", "text": " That was the wrong target.\n"},
+        ],
+    }
+
+
+def test_claude_slash_command_separates_human_action_arguments_and_generated_message() -> None:
+    wrapper = (
+        "<command-name>/review</command-name>\n"
+        "<command-message>Skill instructions from the client.</command-message>\n"
+        "<command-args> only this patch\n</command-args>"
+    )
+    wire = compact_record_to_json(
+        _record({"type": "user", "message": {"content": wrapper}}, "claude-code")
+    )
+
+    assert wire == {
+        "line": 7,
+        "kind": "mixed",
+        "parts": [
+            {"kind": "human_command", "text": "/review", "source_tag": "claude.command_name"},
+            {
+                "kind": "generated_context",
+                "text": "Skill instructions from the client.",
+                "source_tag": "claude.command_message",
+            },
+            {
+                "kind": "human_input",
+                "text": " only this patch\n",
+                "source_tag": "claude.command_args",
+            },
+        ],
+    }
+
+
+def test_claude_local_command_output_is_absent_from_compact_evidence() -> None:
+    raw = json.dumps(
+        {
+            "type": "user",
+            "message": {"content": "<local-command-stdout>Updated plugin.</local-command-stdout>"},
+        }
+    )
+    assert compact_record(raw, line=7, source="claude-code") is None
+
+
+def test_claude_explicit_system_local_command_is_absent_from_compact_evidence() -> None:
+    raw = json.dumps({"type": "system", "subtype": "local_command", "content": "Updated model."})
+    assert compact_record(raw, line=7, source="claude-code") is None
+
+
+def test_claude_malformed_command_wrapper_is_not_labeled_human_input() -> None:
+    wrapper = "<command-name>/review</command-name> unrecognized trailing text"
+    record = _record({"type": "user", "message": {"content": wrapper}}, "claude-code")
+
+    assert record.kind == "unknown"
+    assert record.text == wrapper
+
+
+def test_claude_human_image_has_no_fabricated_transcription() -> None:
+    record = _record(
+        {"type": "user", "message": {"content": [{"type": "image", "source": {"data": "binary"}}]}},
+        "claude-code",
+    )
+
+    assert compact_record_to_json(record) == {
+        "line": 7,
+        "kind": "human_attachment",
+        "source_type": "image",
+    }
+
+
+@pytest.mark.parametrize("content", ["The review is complete.", None])
+def test_native_agent_message_without_echo_preserves_text_or_missing_content(
+    content: str | None,
+) -> None:
+    record = _codex(
+        {"type": "item_completed", "item": {"type": "AgentMessage", "content": content}},
+        "event_msg",
+    )
+
+    if content is None:
+        assert record.kind == "unknown"
+        assert record.text is not None
+        assert '"content": null' in record.text
+    else:
+        assert record.kind == "assistant_message"
+        assert record.text == content
+
+
+def test_claude_tool_call_without_prose_remains_an_invocation_not_an_outcome() -> None:
+    record = _record(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "name": "Read", "input": {"path": "x.py"}}]
+            },
+        },
+        "claude-code",
+    )
+
+    assert record.kind == "tool_call"
+    assert record.tool_uses[0].name == "Read"
+    assert record.tool_results == ()
+
+
+def test_claude_unrecognized_block_does_not_merge_with_human_text() -> None:
+    record = _record(
+        {"type": "user", "message": {"content": [42, {"type": "text", "text": "Please review."}]}},
+        "claude-code",
+    )
+
+    assert compact_record_to_json(record)["parts"] == [
+        {"kind": "unknown", "unavailable": "42"},
+        {"kind": "human_input", "text": "Please review."},
+    ]

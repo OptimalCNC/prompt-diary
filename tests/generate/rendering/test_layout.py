@@ -494,7 +494,6 @@ def test_layout_evidence_appendix_groups_cards_by_project_then_direct_entries(
     }
     assert first.anchor == "evidence-reportgenerator-e6ff7eeda632-s0001-t0001"
     assert [item.text for item in first.items] == [
-        "Trigger: User asked to simplify the MCP evidence tools and remove chain_ref.",
         "Agent reactions: Updated the MCP tools page, evidence contract, and extractor prompt.",
         "Outcomes: Top-level turn_ref adopted; chain_ref removed.",
         "Observed checks: None recorded.",
@@ -535,7 +534,6 @@ def test_layout_evidence_appendix_accepts_list_summaries_and_non_sequence_checks
             self.session_ref = "S9999"
             self.turn_ref = "T0009"
             self.materiality = "material"
-            self.trigger_summary = "Trigger from fake chain."
             self.reaction_summaries = ["Reaction from fake chain."]
             self.outcomes = [_Outcome()]
             self.observed_check_summaries = object()
@@ -560,7 +558,6 @@ def test_layout_evidence_appendix_accepts_list_summaries_and_non_sequence_checks
     }
     assert entry.anchor == "evidence-reportgenerator-e6ff7eeda632-s9999-t0009"
     assert [item.text for item in entry.items] == [
-        "Trigger: Trigger from fake chain.",
         "Agent reactions: Reaction from fake chain.",
         "Outcomes: Outcome from fake chain.",
         "Observed checks: None recorded.",

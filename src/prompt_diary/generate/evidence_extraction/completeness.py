@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from prompt_diary.generate.evidence_extraction.mcp import validate_evidence_chain_against_turn
 from prompt_diary.generate.evidence_extraction.model import (
+    EVIDENCE_CARD_SCHEMA_VERSION,
     InvalidEvidenceChain,
     parse_evidence_chain,
 )
@@ -121,8 +122,8 @@ def _read_card(path: Path) -> dict[str, Any] | None:
 
 def _envelope_errors(card: dict[str, Any], *, project_key: str, session_ref: str) -> list[str]:
     errors: list[str] = []
-    if card.get("schema_version") != 1:
-        errors.append("schema_version must be 1")
+    if card.get("schema_version") != EVIDENCE_CARD_SCHEMA_VERSION:
+        errors.append(f"schema_version must be {EVIDENCE_CARD_SCHEMA_VERSION}")
     if card.get("project_key") != project_key:
         errors.append(_project_mismatch_message(project_key))
     if card.get("session_ref") != session_ref:

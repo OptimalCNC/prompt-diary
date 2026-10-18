@@ -43,7 +43,10 @@ that defines `turn_start_line` and `turn_end_line` is the
 
 The extractor writes one draft chain at a time through `write_evidence`, passing the project
 key, `session_ref`, and the draft evidence chain. The MCP server owns canonical card creation,
-structural checks, and atomic writes.
+source-derived trigger quotations, structural checks, and atomic writes. The draft trigger contains
+only `citations`: exactly one `N-N` span at the assigned turn's `turn_start_line`. The server resolves
+the indexed source record and preserves its human text verbatim, without redaction, in
+`quoted_messages`. The extractor does not supply trigger text, a trigger type, or a trigger summary.
 
 Extraction is orchestrated in indexed turn order. The orchestrator provides the first target turn,
 waits for its evidence chain to be written, then invokes extraction for the next target turn.
@@ -115,25 +118,20 @@ Example canonical card:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0001",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User asked the agent to study Claude session filename conventions.",
         "quoted_messages": [
           {
-            "text": "Please study how Claude session filenames are formed and compare them with our design wording.",
-            "citations": [
-              {"lines": "45-46"}
-            ]
+            "text": "Please study how Claude session filenames are formed and compare them with our design wording."
           }
         ],
         "citations": [
-          {"lines": "45-46"}
+          {"lines": "45-45"}
         ]
       },
       "agent_reactions": [
@@ -178,6 +176,14 @@ turn -> trigger -> agent_reactions -> outcomes and/or terminal_state
 Field definitions and extraction rules are in the evidence extractor prompt. Controlled evidence
 values and their descriptions are maintained in the prompt Python API and rendered into that
 runtime prompt.
+
+The committed trigger contains the shared source citation and tool-generated `quoted_messages`,
+each with only a `text` field. Source parsing preserves separate human text blocks and answers in
+order, excludes generated context and assistant questions, and does not duplicate transcript echoes.
+A skill selection or attachment without human text has an empty quotation array. A missing,
+malformed, unsupported, or nonhuman trigger record rejects the write rather than producing an empty
+array. Trigger text is extracted from the original indexed record, not a paginated or shortened MCP
+read response.
 
 The write surface for one extracted chain is
 [`write_evidence`](./mcp-tools/evidence-extraction.md#write_evidence), which accepts the chain as an

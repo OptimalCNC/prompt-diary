@@ -5,7 +5,7 @@ detection. It supports [Workspace Layout](./workspace-layout.md) by explaining h
 distinguish human-authored triggers from source-generated records.
 
 The evidence comes from analysis of ~200 real Codex sessions and all ~50 real Claude Code sessions
-as of 2026-05-25.
+as of 2026-05-25, plus targeted plan-mode and reset-plan checks through 2026-06-06.
 
 ## Codex Session Structure
 
@@ -68,6 +68,11 @@ remain separate triggers, even when their text matches. Assistant echoes use the
 `event_msg/agent_message` followed by `response_item` with the same role, text, and timestamp window.
 Unknown shapes and unproven matches remain separate records.
 
+Complete `user_shell_command` command/result envelopes identify commands the human executed
+locally. They and their confirmed echoes are excluded from trigger indexing and compact evidence;
+they do not count toward human engagement. Ordinary prose that mentions a command and tool calls
+issued by the agent remain evidence. Raw source files and physical line numbers are preserved.
+
 ### Codex Turn Boundaries and Pre-Trigger Scaffolding
 
 Between two human triggers, the dominant record sequence is:
@@ -100,6 +105,54 @@ from Claude Code through the Codex companion are identified by
 `session_meta.payload.originator == "Claude Code"` and are treated the same way: their prompt is an
 agent-owned delegation, not a human-authored root trigger. Delegation results already recorded in
 the parent transcript remain available as evidence of the parent's reactions.
+
+### Codex Plan Mode And Reset-Plan Sessions
+
+Codex plan mode uses normal Codex session records. The mode is visible in the pre-trigger
+`turn_context` record:
+
+```text
+turn_context.payload.collaboration_mode.mode = "plan"
+turn_context.payload.collaboration_mode.settings.developer_instructions = "...Plan Mode..."
+```
+
+The plan produced by the agent is an assistant-authored message, not part of the user trigger. The
+observed final plan syntax is:
+
+```text
+response_item
+  payload.type = "message"
+  payload.role = "assistant"
+  payload.content[0].type = "output_text"
+  payload.content[0].phase = "final_answer"
+  payload.content[0].text = "<proposed_plan>\n...\n</proposed_plan>"
+```
+
+Reset-and-implement starts a new Codex session whose bootstrap prompt is structurally
+user-shaped:
+
+```text
+response_item
+  payload.type = "message"
+  payload.role = "user"
+  payload.content[0].type = "input_text"
+  payload.content[0].text starts with:
+    "A previous agent produced the plan below to accomplish the user's task. ..."
+
+event_msg
+  payload.type = "user_message"
+  payload.message starts with the same text
+```
+
+This reset bootstrap is source-generated. It carries the plan as inherited intent from a previous
+agent session, not as newly human-authored text. The Codex session metadata observed so far does not
+include a reliable parent-session pointer for this case; the robust confirmation path is to extract
+the embedded plan body and match it to a prior assistant `<proposed_plan>` body.
+
+Do not classify the whole reset session as a subagent. A reset session can later contain genuine
+human follow-up messages. Only the bootstrap message, and the implementation reaction it initiates,
+is subagent-like or agent-initiated; later human-authored messages in the same session must be
+classified independently.
 
 ## Claude Code Session Structure
 
@@ -148,6 +201,11 @@ Claude Code tool results from the Codex companion include a `[codex] Thread read
 line. These parent-visible results remain part of the Claude turn; the launched Codex transcript
 is excluded from report input.
 
+Client-local operations are excluded when source provenance establishes local execution:
+`system` records with `subtype=local_command`, local-command stdout envelopes, and command
+messages whose `parentUuid` links to a preceding `isMeta=true` local-command caveat. A slash
+command name alone is insufficient; agent-directed commands and skill invocations remain triggers.
+
 ### Claude Code Turn Boundaries
 
 Claude Code sessions have no explicit turn start/end markers like Codex's `task_started` /
@@ -166,18 +224,103 @@ or by `isSidechain=true` on records. Preparation skips child paths without openi
 scanning other files when sidechain metadata appears. Child transcripts are not copied into the
 report workspace.
 
+### Claude Code Plan Mode And Plan Implementation
+
+Claude Code records plan mode with explicit tool-result and attachment metadata. Entering plan mode
+appears as a tool-owned user record plus a plan-mode attachment:
+
+```text
+user  role=user (tool result)
+  sourceToolAssistantUUID = <assistant uuid>
+  message.content[0].type = "tool_result"
+  message.content[0].content starts with "Entered plan mode. ..."
+  toolUseResult.message = "Entered plan mode. ..."
+
+attachment
+  attachment.type = "plan_mode"
+  attachment.reminderType = "full"
+  attachment.isSubAgent = false
+  attachment.planFilePath = "/home/.../.claude/plans/<slug>.md"
+  attachment.planExists = true | false
+```
+
+The plan itself is produced by an assistant tool use:
+
+```text
+assistant
+  message.content[].type = "tool_use"
+  message.content[].name = "ExitPlanMode"
+  message.content[].input.plan = "<markdown plan>"
+  message.content[].input.planFilePath = "/home/.../.claude/plans/<slug>.md"
+  message.content[].input.allowedPrompts = [...]
+```
+
+These records are assistant-authored plan production, not user triggers.
+
+Built-in approval is also tool-owned, even though the top-level record is `type=user`:
+
+```text
+user  role=user (tool result)
+  sourceToolAssistantUUID = <assistant uuid>
+  message.content[0].type = "tool_result"
+  message.content[0].content starts with "User has approved your plan. ..."
+  toolUseResult.plan = "<approved markdown plan>"
+  toolUseResult.filePath = "/home/.../.claude/plans/<slug>.md"
+
+attachment
+  attachment.type = "plan_mode_exit"
+  attachment.planFilePath = "/home/.../.claude/plans/<slug>.md"
+  attachment.planExists = true | false
+```
+
+This built-in approval is not a true user message because `sourceToolAssistantUUID` shows that it is
+the result of the assistant's `ExitPlanMode` tool call. By contrast, when the human types an approval
+or implementation instruction directly, it has the normal Claude trigger shape (`type=user`,
+`message.role=user`, no `sourceToolAssistantUUID`, and `isSidechain=false`) and should remain a true
+user trigger. Such human-authored approvals may be followed by an `attachment.type =
+"plan_mode_exit"` record.
+
+Re-entering an existing Claude plan can add:
+
+```text
+attachment
+  attachment.type = "plan_mode_reentry"
+  attachment.planFilePath = "/home/.../.claude/plans/<slug>.md"
+```
+
+In the local Claude Code sessions checked, fresh-context plan implementation did not appear as a
+new root session with a Codex-style reset prompt. The observed fresh-context implementation form was
+a sidechain transcript under the parent session's `subagents/` directory. These transcripts have
+`isSidechain=true`, an `agentId`, and a first user-shaped delegation prompt such as "Implement the
+plan at ...". They are excluded as Claude Code subagents. The parent Agent tool result remains
+available as evidence, without reading or copying the child transcript.
+
 ## Design Decisions
 
-### Why content-based filtering for Codex
+### Why source classification combines metadata and content
 
-Codex injects source-generated context as `response_item` records with `payload.role=user`, making
-them structurally identical to human-authored triggers. The `event_msg/user_message` echo is the
-cleanest discriminator for ordinary turns, but it is absent for ~40% of triggers and can also echo
-source-generated context. Content-prefix detection applies to both record forms. The known
-prefixes include `<environment_context>`, `# AGENTS.md`, `<turn_aborted>`, `<subagent_notification>`,
-`<INSTRUCTIONS>`, and `A previous agent produced the plan below`. Preparation excludes these
-source-generated records from human-trigger detection before evidence extraction. Later genuine
-human messages in the same session remain eligible triggers.
+Codex injects source-generated context as `response_item` records with `payload.role=user`, so
+transport role alone does not establish human authorship. Where present,
+`internal_chat_message_metadata_passthrough.content_item_kinds` identifies each content block's
+source. `user.text` identifies human input; `skills.selected_skill_instructions` identifies
+generated skill context. A structured skill selection is a human action, while the expanded skill
+body does not start a human turn. Preparation and compact reading share this classification and
+preserve the order of differently attributed parts within a record.
+
+Native `retained_context` records with `payload.type=verified_answer` contain agent questions and
+human answers. Preparation starts a turn at a valid answer record; compact reads label each
+question as `assistant_message` and each answer as `human_input`. The following
+`function_call_output` may repeat the answer but does not start another human turn.
+Agent compaction records remain visible as `context_compaction`, with available summary text
+retained. They do not start human turns, even when the source stores a summary with a user role.
+
+Older records may lack this metadata. The `event_msg/user_message` echo is absent for many triggers
+and can also echo source-generated context. Recognized source conventions handle these cases;
+unknown or conflicting provenance remains visible as unknown. The known prefixes
+(`<environment_context>`, `# AGENTS.md`, `<turn_aborted>`, `<subagent_notification>`, and the
+reset-plan bootstrap phrase) are stable source conventions. Preparation excludes reset-plan
+bootstraps before evidence extraction. When investigating their source lineage, matching the
+embedded plan body to an earlier assistant `<proposed_plan>` body can confirm the relationship.
 
 ### Why trigger-owned spans instead of timestamp-per-line
 

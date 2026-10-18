@@ -77,6 +77,96 @@ def test_human_message_preserves_exact_large_text_and_blank_parts() -> None:
     assert not record.get("tool_results")
 
 
+@pytest.mark.parametrize("whole_message_marker", [False, True])
+def test_user_shaped_native_compaction_summary_preserves_source_attribution(
+    *, whole_message_marker: bool
+) -> None:
+    text = "Earlier work and unfinished next steps.\n" * 1000
+    payload: dict[str, object] = {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": text}],
+        "internal_chat_message_metadata_passthrough": {
+            "content_item_kinds": ["user.text" if whole_message_marker else "compaction.summary"]
+        },
+    }
+    raw: dict[str, object] = {"type": "response_item", "payload": payload}
+    if whole_message_marker:
+        raw["metadata"] = {"compaction_output": True}
+
+    record = compact_record(json.dumps(raw), line=42, source="codex")
+
+    assert record is not None
+    assert compact_record_to_json(record) == {
+        "line": 42,
+        "kind": "context_compaction",
+        "text": text,
+        "source_tag": "compaction.summary",
+    }
+
+
+def test_native_verified_answer_separates_authors_and_retains_exact_large_answer() -> None:
+    answer = "None of the above\nuser_note: Keep the requests independent.\n" * 1000
+    raw = json.dumps(
+        {
+            "type": "retained_context",
+            "payload": {
+                "type": "verified_answer",
+                "call_id": "call-answer",
+                "turn_id": "turn-1",
+                "questions": [{"question": "Synchronize the requests?", "answer": answer}],
+                "acceptance_order": 15,
+            },
+        }
+    )
+
+    record = compact_record(raw, line=145, source="codex")
+
+    assert record is not None
+    assert compact_record_to_json(record) == {
+        "line": 145,
+        "kind": "mixed",
+        "parts": [
+            {
+                "kind": "assistant_message",
+                "text": "Synchronize the requests?",
+                "source_tag": "verified_answer.question",
+            },
+            {"kind": "human_input", "text": answer, "source_tag": "verified_answer.answer"},
+        ],
+    }
+    output = _compact(
+        {
+            "type": "function_call_output",
+            "call_id": "call-answer",
+            "output": '{"answers":{"timing":{"answers":["Keep them independent."]}}}',
+        }
+    )
+    assert output["kind"] == "tool_result"
+
+
+@pytest.mark.parametrize("payload_type", ["verified_answer", "unknown"])
+def test_unrecognized_retained_answer_stays_visible_with_unknown_authorship(
+    payload_type: str,
+) -> None:
+    raw = json.dumps(
+        {
+            "type": "retained_context",
+            "payload": {
+                "type": payload_type,
+                "questions": [{"question": "Synchronize?", "answer": None}],
+            },
+        }
+    )
+
+    record = compact_record(raw, line=145, source="codex")
+
+    assert record is not None
+    result = compact_record_to_json(record)
+    assert result["kind"] == "unknown"
+    assert "Synchronize?" in result["text"]
+
+
 def test_command_invocation_does_not_become_observed_test_success() -> None:
     command = "python -m pytest tests/test_report.py"
 
@@ -125,6 +215,38 @@ def test_command_completion_retains_actual_exit_status_and_separate_error_output
     assert result["exit_code"] == exit_code
     assert result["preview"] == stdout
     assert result.get("stderr", "") == stderr
+
+
+@pytest.mark.parametrize("exit_code", [0, 2])
+@pytest.mark.parametrize("stdout", [None, ""])
+@pytest.mark.parametrize("legacy_event", [False, True])
+def test_command_completion_keeps_exit_code_when_aggregated_output_is_trimmed(
+    exit_code: int, stdout: str | None, *, legacy_event: bool
+) -> None:
+    output = "Build started\n" + "build log\n" * 2000 + "Export completed\n"
+    item: dict[str, object] = {
+        "type": "exec_command_end" if legacy_event else "CommandExecution",
+        "command": ["docker", "build", "."],
+        "status": "completed",
+        "stdout": stdout,
+        "aggregated_output": output,
+        "stderr": "compiler diagnostic" if exit_code else "",
+        "exit_code": exit_code,
+    }
+
+    record = _compact(item, event=True) if legacy_event else _completed_item(item)
+
+    assert record["kind"] == "tool_result"
+    result = record["tool_results"][0]
+    assert result["kind"] == "command"
+    assert result["command"] == "docker build ."
+    assert result["status"] == "completed"
+    assert result["exit_code"] == exit_code
+    assert result["preview"].startswith("Build started\n")
+    assert result["preview"].endswith("Export completed\n")
+    assert result["truncated"] is True
+    assert len(result["preview"].encode()) < 600
+    assert result.get("stderr", "") == item["stderr"]
 
 
 def test_file_change_completion_preserves_each_path_operation_and_output() -> None:
@@ -275,4 +397,7 @@ def test_missing_message_content_stays_visible_as_unavailable_source_evidence(
     result = compact_record_to_json(record)
     assert result["line"] == 23
     assert result["kind"] == "unknown"
-    assert "user" in result["text"]
+    if source == "codex":
+        assert result["unavailable"] == ["unknown content"]
+    else:
+        assert "user" in result["text"]

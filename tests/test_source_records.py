@@ -113,6 +113,14 @@ def test_parsed_assistant_echo_uses_event_then_response() -> None:
         {"type": "turn_context", "payload": {}},
         {"type": "event_msg", "payload": {"type": "token_count", "message": "text"}},
         {"type": "event_msg", "payload": {"type": "user_message", "message": 1}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "item": None}},
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {"type": "CommandExecution", "content": "done"},
+            },
+        },
         {"type": "response_item", "payload": {"type": "function_call"}},
         {"type": "response_item", "payload": {"type": "message", "role": "developer"}},
         {"type": "response_item", "payload": {"type": "message", "role": "user", "content": []}},

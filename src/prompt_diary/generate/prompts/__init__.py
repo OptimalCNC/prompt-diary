@@ -16,14 +16,6 @@ class PromptEnumValue:
     description: str
 
 
-EVIDENCE_TRIGGER_TYPES: tuple[PromptEnumValue, ...] = (
-    PromptEnumValue("explicit_user_message", "a direct user-authored request or instruction"),
-    PromptEnumValue("implicit_context", "user-managed context that caused the agent reaction"),
-    PromptEnumValue("user_correction", "a user correction or redirection of previous work"),
-    PromptEnumValue("user_approval", "a user approval or acceptance signal"),
-    PromptEnumValue("resume_or_continue", "a user request to continue, recover, or finish work"),
-)
-
 EVIDENCE_OUTCOME_CATEGORIES: tuple[PromptEnumValue, ...] = (
     PromptEnumValue(
         "code_outcome",
@@ -212,7 +204,6 @@ def evidence_extractor_instructions() -> str:
         materiality_descriptions=_format_enum_values(EVIDENCE_MATERIALITY_VALUES),
         outcome_category_descriptions=_format_enum_values(EVIDENCE_OUTCOME_CATEGORIES),
         terminal_state_descriptions=_format_enum_values(EVIDENCE_TERMINAL_STATES),
-        trigger_type_descriptions=_format_enum_values(EVIDENCE_TRIGGER_TYPES),
     )
 
 

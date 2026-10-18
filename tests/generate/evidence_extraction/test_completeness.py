@@ -11,7 +11,7 @@ from prompt_diary.generate.pipeline import evidence_card_artifact
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
     SESSION_REF,
-    build_evidence_chain,
+    build_committed_evidence_chain,
     copy_basic_evidence_workspace,
 )
 
@@ -59,7 +59,7 @@ def test_inspector_reports_malformed_json_card(tmp_path: Path) -> None:
     )
 
     assert not inspection.complete
-    assert "schema_version must be 1" in inspection.errors
+    assert "schema_version must be 2" in inspection.errors
     assert "evidence_chains must be a list" in inspection.errors
 
 
@@ -82,7 +82,7 @@ def test_inspector_reports_envelope_and_chain_shape_errors(tmp_path: Path) -> No
     )
 
     assert not inspection.complete
-    assert "schema_version must be 1" in inspection.errors
+    assert "schema_version must be 2" in inspection.errors
     assert "session_ref must be 'S0001'" in inspection.errors
     assert "evidence_chains must be a list" in inspection.errors
 
@@ -92,14 +92,14 @@ def test_inspector_reports_non_object_missing_turn_and_duplicate_chains(tmp_path
     _write_card(
         workspace,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "project_key": PROJECT_KEY,
             "session_ref": SESSION_REF,
             "evidence_chains": [
                 "not-an-object",
                 {"trigger": {}},
-                build_evidence_chain(turn_ref="T0001", span=(2, 8)),
-                build_evidence_chain(turn_ref="T0001", span=(2, 8)),
+                build_committed_evidence_chain(turn_ref="T0001", span=(2, 8)),
+                build_committed_evidence_chain(turn_ref="T0001", span=(2, 8)),
             ],
         },
     )
@@ -120,10 +120,10 @@ def test_valid_partial_card_carries_proved_coverage(tmp_path: Path) -> None:
     _write_card(
         workspace,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "project_key": PROJECT_KEY,
             "session_ref": SESSION_REF,
-            "evidence_chains": [build_evidence_chain(turn_ref="T0001", span=(2, 8))],
+            "evidence_chains": [build_committed_evidence_chain(turn_ref="T0001", span=(2, 8))],
         },
     )
 
@@ -136,6 +136,48 @@ def test_valid_partial_card_carries_proved_coverage(tmp_path: Path) -> None:
     assert inspection.missing_turn_refs == ("T0002",)
     assert not inspection.complete
     assert inspection.errors == ("missing turn_ref(s): T0002",)
+
+
+def test_legacy_card_does_not_supply_a_reusable_checkpoint(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    _write_card(
+        workspace,
+        {
+            "schema_version": 1,
+            "project_key": PROJECT_KEY,
+            "session_ref": SESSION_REF,
+            "evidence_chains": [build_committed_evidence_chain(turn_ref="T0001", span=(2, 8))],
+        },
+    )
+
+    inspection = inspect_evidence_card(
+        workspace_path=workspace, project_key=PROJECT_KEY, session_ref=SESSION_REF
+    )
+
+    assert not isinstance(inspection, EvidenceCardCheckpoint)
+    assert "schema_version must be 2" in inspection.errors
+
+
+def test_committed_card_cannot_cite_assistant_line_as_its_trigger(tmp_path: Path) -> None:
+    workspace = copy_basic_evidence_workspace(tmp_path)
+    chain = build_committed_evidence_chain(turn_ref="T0001", span=(2, 8))
+    chain["trigger"]["citations"] = [{"lines": "3-3"}]
+    _write_card(
+        workspace,
+        {
+            "schema_version": 2,
+            "project_key": PROJECT_KEY,
+            "session_ref": SESSION_REF,
+            "evidence_chains": [chain],
+        },
+    )
+
+    inspection = inspect_evidence_card(
+        workspace_path=workspace, project_key=PROJECT_KEY, session_ref=SESSION_REF
+    )
+
+    assert not isinstance(inspection, EvidenceCardCheckpoint)
+    assert any("indexed human trigger line 2-2" in error for error in inspection.errors)
 
 
 def _write_card(workspace: Path, card: dict[str, Any]) -> None:

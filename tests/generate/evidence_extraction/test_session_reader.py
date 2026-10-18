@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
+
+import pytest
 
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     compact_record_to_json,
@@ -20,6 +23,8 @@ from tests.support.session_reader import (
     expect_compact,
     expect_full,
     overwrite_session_line,
+    read_compact_records,
+    read_full_records,
     session_file_path,
     session_physical_lines,
 )
@@ -82,6 +87,55 @@ def test_compact_read_omits_assistant_reasoning(tmp_path: Path) -> None:
     assert (ok.line_range.start, ok.line_range.end) == (7, 7)
 
 
+def test_conversation_failure_is_omitted_without_hiding_tool_results_or_user_stop(
+    tmp_path: Path,
+) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    payloads = [
+        {"type": "task_complete", "error": {"message": "503 Service Unavailable"}},
+        {
+            "type": "item_completed",
+            "item": {
+                "type": "CommandExecution",
+                "command": ["curl", "--fail", "https://example.test"],
+                "exit_code": 22,
+                "stderr": "HTTP 503 Service Unavailable",
+            },
+        },
+        {
+            "type": "item_completed",
+            "item": {
+                "type": "CommandExecution",
+                "exit_code": 0,
+                "aggregated_output": "Wrote rendered report report.md.",
+            },
+        },
+        {"type": "turn_aborted", "reason": "interrupted by user"},
+    ]
+    for line, payload in enumerate(payloads, start=3):
+        overwrite_session_line(
+            workspace, line=line, raw_line=json.dumps({"type": "event_msg", "payload": payload})
+        )
+    physical = session_physical_lines(workspace)
+
+    compact = expect_compact(
+        call_read_session_lines(workspace_path=workspace, start_line=2, end_line=6)
+    )
+    records = compact_records_by_line(compact)
+    assert list(records) == [2, 4, 5, 6]
+    assert records[4].tool_results[0].exit_code == 22
+    assert records[4].tool_results[0].stderr == "HTTP 503 Service Unavailable"
+    assert records[5].tool_results[0].preview == "Wrote rendered report report.md."
+    assert records[6].kind == "terminal"
+    assert records[6].text == "interrupted by user"
+
+    full = expect_full(
+        call_read_session_lines(workspace_path=workspace, start_line=3, end_line=3, mode="full")
+    )
+    assert full.records == (FullRecord(line=3, raw_line=physical[2]),)
+    assert session_physical_lines(workspace) == physical
+
+
 def test_full_read_returns_raw_lines_verbatim(tmp_path: Path) -> None:
     workspace = copy_session_reader_workspace(tmp_path)
     physical = session_physical_lines(workspace)
@@ -117,9 +171,9 @@ def test_compact_read_uses_the_resolved_session_source(tmp_path: Path) -> None:
     )
     by_line = compact_records_by_line(ok)
 
-    assert by_line[1].kind == "user"
+    assert by_line[1].kind == "human_input"
     assert by_line[1].text == "Summarize today's changes."
-    assert by_line[2].kind == "assistant"
+    assert by_line[2].kind == "assistant_message"
     assert by_line[2].text == "Here is the summary of changes."
 
 
@@ -227,7 +281,7 @@ def test_malformed_line_in_range_is_handled_gracefully_in_compact_mode(tmp_path:
     assert fallback.kind == "malformed"
     assert fallback.text == malformed
     # Surrounding well-formed lines are still parsed normally.
-    assert by_line[3].kind == "assistant"
+    assert by_line[3].kind == "assistant_message"
 
 
 def test_malformed_line_in_range_is_returned_verbatim_in_full_mode(tmp_path: Path) -> None:
@@ -242,3 +296,84 @@ def test_malformed_line_in_range_is_returned_verbatim_in_full_mode(tmp_path: Pat
     assert isinstance(record, FullRecord)
 
     assert record.raw_line == malformed
+
+
+def test_fragmented_mixed_provenance_keeps_physical_line_and_raw_source(tmp_path: Path) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    human = "Only review the patch.\n"
+    skill = "Generated skill instructions.\n" * 3000
+    raw = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": human},
+                    {"type": "input_text", "text": skill},
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "skills.selected_skill_instructions"]
+                },
+            },
+        }
+    )
+    overwrite_session_line(workspace, line=2, raw_line=raw)
+
+    compact = read_compact_records(workspace_path=workspace, start_line=2, end_line=3)
+    full = read_full_records(workspace_path=workspace, start_line=2, end_line=3)
+
+    assert [record.line for record in compact] == [2, 3]
+    assert [record.line for record in full] == [2, 3]
+    assert full[0].raw_line == raw
+    assert compact_record_to_json(compact[0]) == {
+        "line": 2,
+        "kind": "mixed",
+        "parts": [
+            {"kind": "human_input", "text": human, "source_tag": "user.text"},
+            {
+                "kind": "skill_context",
+                "text": skill,
+                "source_tag": "skills.selected_skill_instructions",
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize("notification", [False, True])
+def test_subagent_summary_survives_pagination_without_losing_its_middle(
+    tmp_path: Path, *, notification: bool
+) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    summary = (
+        "Review findings:\n"
+        + "Context 已核对。\n" * 2500
+        + "The requested migration remains unimplemented.\n"
+        + "Supporting evidence.\n" * 2500
+        + "Final recommendation: revise the plan.\n"
+    )
+    text = (
+        f"<subagent_notification>\n{summary}</subagent_notification>" if notification else summary
+    )
+    payload = (
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}
+        if notification
+        else {"type": "agent_message", "content": [{"type": "input_text", "text": text}]}
+    )
+    raw = json.dumps({"type": "response_item", "payload": payload})
+    overwrite_session_line(workspace, line=2, raw_line=raw)
+    physical = session_physical_lines(workspace)
+
+    first_page = expect_compact(
+        call_read_session_lines(workspace_path=workspace, start_line=2, end_line=3)
+    )
+    assert first_page.next_cursor is not None
+    records = read_compact_records(workspace_path=workspace, start_line=2, end_line=3)
+
+    assert [record.line for record in records] == [2, 3]
+    assert records[0].kind == "subagent_message"
+    assert records[0].text == text
+    assert records[0].truncated is False
+    assert session_physical_lines(workspace) == physical
+    full = read_full_records(workspace_path=workspace, start_line=2, end_line=2)
+    assert full[0].raw_line == raw

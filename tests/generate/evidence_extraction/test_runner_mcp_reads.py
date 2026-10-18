@@ -135,7 +135,7 @@ def test_fresh_continuation_finds_previous_trigger_from_assignment_locator(
     session_path = project_dir / row["session_path"]
     lines = session_path.read_text(encoding="utf-8").splitlines()
     for index in (1, 8):
-        message = json.loads(lines[index])["content"]
+        message = json.loads(lines[index])["payload"]["content"][0]["text"]
         lines[index] = json.dumps(
             {
                 "type": "response_item",

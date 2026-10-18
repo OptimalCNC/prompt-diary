@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0001",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests CSV export implementation, verification, and a PR.",
         "quoted_messages": [
           {
-            "text": "Implement CSV export in export.py, verify it, and create a PR.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Implement CSV export in export.py, verify it, and create a PR."
           }
         ],
         "citations": [
@@ -70,16 +63,9 @@
     {
       "turn_ref": "T0002",
       "trigger": {
-        "type": "resume_or_continue",
-        "summary": "User resumes the same CSV export task with its original delivery scope.",
         "quoted_messages": [
           {
-            "text": "Resume the CSV export task. Finish verification and create the PR.",
-            "citations": [
-              {
-                "lines": "6-6"
-              }
-            ]
+            "text": "Resume the CSV export task. Finish verification and create the PR."
           }
         ],
         "citations": [

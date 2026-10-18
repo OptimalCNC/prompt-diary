@@ -8,11 +8,15 @@ import pytest
 from prompt_diary.generate.evidence_extraction.session_compaction import (
     compact_record_to_json,
 )
+from prompt_diary.generate.evidence_extraction.session_reader import FullRecord
 from tests.support.session_reader import (
+    PROJECT_KEY,
+    SESSION_REF_CLAUDE,
     call_read_session_lines,
     compact_records_by_line,
     copy_session_reader_workspace,
     expect_compact,
+    expect_full,
     read_compact_records,
     read_full_records,
     session_file_path,
@@ -189,7 +193,7 @@ def test_uncertain_codex_pairs_keep_message_text(tmp_path: Path, lines: list[str
         "Two" if '"Two"' in line else "One" for line in lines if '"One"' in line or '"Two"' in line
     ]
     assert [
-        record.text for record in records if record.kind in ("user", "assistant")
+        record.text for record in records if record.kind in ("human_input", "assistant_message")
     ] == expected_texts
 
 
@@ -254,7 +258,9 @@ def test_modern_message_uncertainty_keeps_evidence_visible(tmp_path: Path, conte
 
     assert len(records) == 2
     assert records[1].duplicate_of is None
-    assert records[1].text is not None or records[1].unavailable
+    assert (
+        records[1].text is not None or records[1].unavailable or records[1].source_type == "image"
+    )
 
 
 def test_source_context_echo_does_not_leave_a_dangling_pointer(tmp_path: Path) -> None:
@@ -264,3 +270,122 @@ def test_source_context_echo_does_not_leave_a_dangling_pointer(tmp_path: Path) -
     )
 
     assert read_compact_records(workspace_path=workspace, start_line=1, end_line=2) == ()
+
+
+@pytest.mark.parametrize("native_echo", [False, True])
+def test_local_shell_and_echo_are_omitted_without_changing_raw_lines_or_citations(
+    tmp_path: Path, *, native_echo: bool
+) -> None:
+    shell = (
+        "<user_shell_command><command>git status</command>"
+        "<result>clean</result></user_shell_command>"
+    )
+    echo = (
+        _modern_message("user", [{"type": "text", "text": shell}])
+        if native_echo
+        else _message("event", "user", shell)
+    )
+    lines = [
+        _message("response", "user", shell),
+        echo,
+        _message("response", "user", "Please explain `git status`."),
+        _message("response", "assistant", "The working tree is clean."),
+    ]
+    workspace = _workspace_with_lines(tmp_path, lines)
+    records = read_compact_records(workspace_path=workspace, start_line=1, end_line=4)
+    assert [record.line for record in records] == [3, 4]
+    assert [record.kind for record in records] == ["human_input", "assistant_message"]
+    assert read_compact_records(workspace_path=workspace, start_line=2, end_line=2) == ()
+    assert [
+        record.raw_line
+        for record in read_full_records(workspace_path=workspace, start_line=1, end_line=4)
+    ] == lines
+
+
+def test_claude_local_link_is_available_outside_requested_read_range(tmp_path: Path) -> None:
+    workspace = copy_session_reader_workspace(tmp_path)
+    records: list[dict[str, object]] = [
+        {
+            "type": "user",
+            "isMeta": True,
+            "uuid": "notice",
+            "message": {
+                "role": "user",
+                "content": "<local-command-caveat>Local execution.</local-command-caveat>",
+            },
+        },
+        {
+            "type": "user",
+            "parentUuid": "notice",
+            "message": {
+                "role": "user",
+                "content": "<command-name>/plugin</command-name>"
+                "<command-message>plugin</command-message><command-args>update all</command-args>",
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<local-command-stdout>Updated plugin.</local-command-stdout>",
+            },
+        },
+        {"type": "user", "message": {"role": "user", "content": "Please review the update."}},
+    ]
+    lines = [json.dumps(record) for record in records]
+    source = next((workspace / "projects" / PROJECT_KEY / "sessions" / "claude").glob("*.jsonl"))
+    source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    compact = expect_compact(
+        call_read_session_lines(
+            workspace_path=workspace, session_ref=SESSION_REF_CLAUDE, start_line=2, end_line=4
+        )
+    )
+    assert list(compact_records_by_line(compact)) == [4]
+    raw = expect_full(
+        call_read_session_lines(
+            workspace_path=workspace,
+            session_ref=SESSION_REF_CLAUDE,
+            start_line=1,
+            end_line=4,
+            mode="full",
+        )
+    )
+    assert [record.raw_line for record in raw.records if isinstance(record, FullRecord)] == lines
+
+
+def test_native_text_echo_retains_the_selected_skill_that_is_absent_from_canonical_text(
+    tmp_path: Path,
+) -> None:
+    native = json.dumps(
+        {
+            "type": "event_msg",
+            "timestamp": "2026-06-01T00:00:00.001Z",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "UserMessage",
+                    "content": [
+                        {"type": "text", "text": "Use the selected skill."},
+                        {"type": "skill", "name": "review", "path": "/skills/review/SKILL.md"},
+                    ],
+                },
+            },
+        }
+    )
+    workspace = _workspace_with_lines(
+        tmp_path, [_message("response", "user", "Use the selected skill."), native]
+    )
+
+    records = read_compact_records(workspace_path=workspace, start_line=1, end_line=2)
+
+    assert compact_record_to_json(records[1]) == {
+        "line": 2,
+        "kind": "mixed",
+        "parts": [
+            {"kind": "human_input", "text": "Use the selected skill."},
+            {"kind": "skill_invocation", "name": "review", "path": "/skills/review/SKILL.md"},
+        ],
+    }
+    assert (
+        read_full_records(workspace_path=workspace, start_line=2, end_line=2)[0].raw_line == native
+    )

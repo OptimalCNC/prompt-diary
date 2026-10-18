@@ -125,15 +125,10 @@ def test_project_synthesis_receives_owned_chains_from_both_shared_thread_rollout
     project = load_prepared_workspace(result.workspace_path).projects[0]
 
     for session in project.sessions:
-        prepared = result.workspace_path / "projects" / project.project_key / session.session_path
-        records = [json.loads(line) for line in prepared.read_text(encoding="utf-8").splitlines()]
         for turn in session.turns:
             chain = build_evidence_chain(
                 turn_ref=turn.turn_ref, span=(turn.span.start, turn.span.end)
             )
-            chain["trigger"]["summary"] = records[turn.span.start - 1]["payload"]["content"][0][
-                "text"
-            ]
             written = write_evidence(
                 workspace_path=result.workspace_path,
                 project_key=project.project_key,
@@ -154,7 +149,7 @@ def test_project_synthesis_receives_owned_chains_from_both_shared_thread_rollout
         workspace_path=result.workspace_path, project_key=project.project_key
     ).evidence_chains
     for message in ("P1", "P2", "A3", "B1", "B2"):
-        assert paste.count(f"trigger: {message}\n") == 1
+        assert paste.count(f'user_messages:\n- "{message}"\n') == 1
     assert "#### Session S0001 (3 chains)" in paste
     assert "#### Session S0002 (2 chains)" in paste
 

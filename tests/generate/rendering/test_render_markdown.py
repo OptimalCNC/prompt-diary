@@ -310,9 +310,7 @@ def test_render_evidence_appendix_has_anchors_and_structured_summaries(tmp_path:
     assert "#### S0001" not in text
     assert '<details id="evidence-reportgenerator-e6ff7eeda632-s0001-t0001">' in text
     assert "<summary>S0001/T0001</summary>" in text
-    assert (
-        "- Trigger: User asked to simplify the MCP evidence tools and remove chain\\_ref." in text
-    )
+    assert "- Trigger:" not in text
     assert (
         "- Agent reactions: Updated the MCP tools page, evidence contract, and extractor prompt."
         in text

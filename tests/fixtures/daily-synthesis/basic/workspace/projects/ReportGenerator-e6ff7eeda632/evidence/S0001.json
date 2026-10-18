@@ -1,15 +1,13 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0001",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User asked to simplify the MCP evidence tools and remove chain_ref.",
         "quoted_messages": [
-          {"text": "Please simplify the MCP evidence tools and drop chain_ref.", "citations": [{"lines": "2-2"}]}
+          {"text": "Please simplify the MCP evidence tools and drop chain_ref."}
         ],
         "citations": [{"lines": "2-2"}]
       },
@@ -26,10 +24,8 @@
     {
       "turn_ref": "T0002",
       "trigger": {
-        "type": "user_correction",
-        "summary": "User asked whether the placeholder wording was misleading.",
         "quoted_messages": [
-          {"text": "Is that placeholder misleading?", "citations": [{"lines": "9-9"}]}
+          {"text": "Is that placeholder misleading?"}
         ],
         "citations": [{"lines": "9-9"}]
       },

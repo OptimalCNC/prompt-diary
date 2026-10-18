@@ -635,7 +635,6 @@ def _evidence_entry_items(chain: Any) -> list[Prose]:
         else terminal_type or terminal_summary
     )
     return [
-        Prose(f"Trigger: {_str(getattr(chain, 'trigger_summary', ''))}"),
         Prose(f"Agent reactions: {_summary_list(getattr(chain, 'reaction_summaries', ()))}"),
         Prose(f"Outcomes: {_outcome_summary_list(getattr(chain, 'outcomes', ()))}"),
         Prose(f"Observed checks: {_summary_list(getattr(chain, 'observed_check_summaries', ()))}"),

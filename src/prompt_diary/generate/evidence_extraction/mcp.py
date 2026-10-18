@@ -7,22 +7,34 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from prompt_diary.generate.evidence_extraction.model import (
+    EVIDENCE_CARD_SCHEMA_VERSION,
     CitationSpan,
     EvidenceChain,
+    EvidenceChainDraft,
     EvidenceWriteError,
     InvalidEvidenceChain,
     Outcome,
+    QuotedMessage,
+    Trigger,
+    complete_evidence_chain,
     evidence_chain_to_json,
     new_session_card,
-    parse_evidence_chain,
+    parse_evidence_chain_draft,
 )
+from prompt_diary.generate.evidence_extraction.trigger import TriggerReadError, read_trigger_text
 from prompt_diary.generate.workspace import load_prepared_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from prompt_diary.generate.workspace import IndexedTurn, LineSpan, PreparedWorkspace
+    from prompt_diary.generate.workspace import (
+        IndexedSession,
+        IndexedTurn,
+        LineSpan,
+        PreparedWorkspace,
+    )
+    from prompt_diary.models import SourceName
 
 __all__ = [
     "EvidenceWriteError",
@@ -60,6 +72,8 @@ class _ResolvedTurn:
     """A submitted chain resolved against the prepared workspace and session index."""
 
     turn_span: LineSpan
+    session_path: Path
+    source: SourceName
     card_path: Path
     existing_card: dict[str, Any] | None
 
@@ -77,7 +91,7 @@ def write_evidence(
     duplicate, and citation containment) run against the prepared workspace. A rejected write
     returns structured errors and never touches the canonical card file.
     """
-    parsed = parse_evidence_chain(evidence_chain)
+    parsed = parse_evidence_chain_draft(evidence_chain)
     if isinstance(parsed, InvalidEvidenceChain):
         return WriteEvidenceInvalidResult("invalid", parsed.errors)
     chain = parsed.chain
@@ -95,11 +109,29 @@ def write_evidence(
     if chain_errors:
         return WriteEvidenceInvalidResult("invalid", tuple(chain_errors))
 
+    trigger_text = read_trigger_text(
+        session_path=resolved.session_path,
+        source=resolved.source,
+        line=resolved.turn_span.start,
+    )
+    if isinstance(trigger_text, TriggerReadError):
+        return _invalid(
+            "evidence_chain.trigger.citations",
+            trigger_text.message,
+            "restore or re-prepare the copied session, then retry the indexed human trigger",
+        )
+    committed_chain = complete_evidence_chain(
+        chain,
+        Trigger(
+            citations=chain.trigger.citations,
+            quoted_messages=tuple(QuotedMessage(text) for text in trigger_text.messages),
+        ),
+    )
     _append_chain_to_card(
         card_path=resolved.card_path,
         project_key=project_key,
         session_ref=session_ref,
-        chain=chain,
+        chain=committed_chain,
         existing_card=resolved.existing_card,
     )
     return WriteEvidenceAppendedResult("appended", project_key, session_ref, chain.turn_ref)
@@ -113,19 +145,42 @@ def _resolve_turn(
     turn_ref: str,
 ) -> _ResolvedTurn | WriteEvidenceInvalidResult:
     workspace = load_prepared_workspace(workspace_path)
-    turn = _find_turn(workspace, project_key, session_ref, turn_ref)
-    if isinstance(turn, WriteEvidenceInvalidResult):
-        return turn
+    found = _find_turn(workspace, project_key, session_ref, turn_ref)
+    if isinstance(found, WriteEvidenceInvalidResult):
+        return found
+    session, turn = found
+    if session.source not in ("codex", "claude-code"):
+        return _invalid(
+            "session_ref", "session source is unsupported", "re-prepare the source session"
+        )
 
     card_path = workspace_path / "projects" / project_key / "evidence" / f"{session_ref}.json"
     existing_card = _read_card(card_path)
+    if existing_card is not None and (
+        existing_card.get("schema_version") != EVIDENCE_CARD_SCHEMA_VERSION
+        or existing_card.get("project_key") != project_key
+        or existing_card.get("session_ref") != session_ref
+        or not isinstance(existing_card.get("evidence_chains"), list)
+    ):
+        return _invalid(
+            "evidence_card",
+            f"existing evidence card must use schema_version {EVIDENCE_CARD_SCHEMA_VERSION} "
+            "and match the prepared session",
+            "re-prepare and regenerate the workspace instead of appending to an incompatible card",
+        )
     if _has_committed_turn(existing_card, turn_ref):
         return _invalid(
             "evidence_chain.turn_ref",
             _duplicate_turn_message(turn_ref),
             _DUPLICATE_HINT,
         )
-    return _ResolvedTurn(turn_span=turn.span, card_path=card_path, existing_card=existing_card)
+    return _ResolvedTurn(
+        turn_span=turn.span,
+        session_path=workspace_path / "projects" / project_key / session.session_path,
+        source=session.source,
+        card_path=card_path,
+        existing_card=existing_card,
+    )
 
 
 def _find_turn(
@@ -133,7 +188,7 @@ def _find_turn(
     project_key: str,
     session_ref: str,
     turn_ref: str,
-) -> IndexedTurn | WriteEvidenceInvalidResult:
+) -> tuple[IndexedSession, IndexedTurn] | WriteEvidenceInvalidResult:
     project = next((item for item in workspace.projects if item.project_key == project_key), None)
     if project is None:
         return _invalid("project_key", _unknown_project_message(project_key), _UNKNOWN_PROJECT_HINT)
@@ -147,22 +202,32 @@ def _find_turn(
         return _invalid(
             "evidence_chain.turn_ref", _unknown_turn_message(turn_ref), _UNKNOWN_TURN_HINT
         )
-    return turn
+    return session, turn
 
 
 def validate_evidence_chain_against_turn(
-    chain: EvidenceChain,
+    chain: EvidenceChainDraft,
     turn_span: LineSpan,
 ) -> tuple[EvidenceWriteError, ...]:
     """Return workspace-dependent validation errors for a parsed evidence chain."""
     errors: list[EvidenceWriteError] = []
+    if chain.trigger.citations != (CitationSpan(turn_span.start, turn_span.start),):
+        errors.append(
+            EvidenceWriteError(
+                "evidence_chain.trigger.citations",
+                "trigger.citations must contain exactly the indexed human trigger line "
+                f"{turn_span.start}-{turn_span.start}",
+                f'cite only {{"lines": "{turn_span.start}-{turn_span.start}"}}; exclude generated '
+                "context and assistant activity",
+            )
+        )
     _check_citation_containment(chain, turn_span, errors)
     _check_material_outcomes_cite_reaction(chain, errors)
     return tuple(errors)
 
 
 def _check_citation_containment(
-    chain: EvidenceChain,
+    chain: EvidenceChainDraft,
     turn_span: LineSpan,
     errors: list[EvidenceWriteError],
 ) -> None:
@@ -178,7 +243,7 @@ def _check_citation_containment(
 
 
 def _check_material_outcomes_cite_reaction(
-    chain: EvidenceChain,
+    chain: EvidenceChainDraft,
     errors: list[EvidenceWriteError],
 ) -> None:
     trigger_lines = _span_lines(chain.trigger.citations)
@@ -207,13 +272,9 @@ def _cites_only_trigger(
     )
 
 
-def _iter_citations(chain: EvidenceChain) -> Iterator[tuple[str, CitationSpan]]:
+def _iter_citations(chain: EvidenceChainDraft) -> Iterator[tuple[str, CitationSpan]]:
     prefix = "evidence_chain"
     yield from _enumerate_citations(chain.trigger.citations, f"{prefix}.trigger")
-    for message_index, message in enumerate(chain.trigger.quoted_messages):
-        yield from _enumerate_citations(
-            message.citations, f"{prefix}.trigger.quoted_messages[{message_index}]"
-        )
     for reaction_index, reaction in enumerate(chain.agent_reactions):
         yield from _enumerate_citations(
             reaction.citations, f"{prefix}.agent_reactions[{reaction_index}]"
@@ -233,7 +294,7 @@ def _enumerate_citations(
         yield f"{path}.citations[{index}].lines", span
 
 
-def _reaction_lines(chain: EvidenceChain) -> frozenset[int]:
+def _reaction_lines(chain: EvidenceChainDraft) -> frozenset[int]:
     lines: set[int] = set()
     for reaction in chain.agent_reactions:
         lines |= _span_lines(reaction.citations)
@@ -267,7 +328,10 @@ def _new_card(project_key: str, session_ref: str) -> dict[str, Any]:
 def _read_card(card_path: Path) -> dict[str, Any] | None:
     if not card_path.exists():
         return None
-    raw: object = json.loads(card_path.read_text(encoding="utf-8"))
+    try:
+        raw: object = json.loads(card_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
     return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
 
 

@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0009",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests a signing repair verified by the full signature test suite.",
         "quoted_messages": [
           {
-            "text": "Repair signing.py so all signature verification tests pass.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Repair signing.py so all signature verification tests pass."
           }
         ],
         "citations": [

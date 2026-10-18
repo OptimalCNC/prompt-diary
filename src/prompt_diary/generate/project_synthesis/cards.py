@@ -38,7 +38,6 @@ class CommittedChain:
     session_ref: str
     turn_ref: str
     materiality: str
-    trigger_summary: str
     reaction_summaries: tuple[str, ...]
     outcomes: tuple[CommittedOutcome, ...]
     observed_check_summaries: tuple[str, ...]
@@ -107,7 +106,6 @@ def _committed_chain(session_ref: str, raw: dict[str, Any], times: _TurnTimes) -
         session_ref=session_ref,
         turn_ref=_as_str(raw.get("turn_ref")),
         materiality=_as_str(raw.get("materiality")),
-        trigger_summary=_as_str(trigger.get("summary")),
         reaction_summaries=tuple(
             _as_str(_as_mapping(item).get("summary"))
             for item in _as_list(raw.get("agent_reactions"))
@@ -128,7 +126,7 @@ def _committed_chain(session_ref: str, raw: dict[str, Any], times: _TurnTimes) -
         messages=tuple(
             text
             for item in _as_list(trigger.get("quoted_messages"))
-            if (text := _as_str(_as_mapping(item).get("text")))
+            if isinstance(text := _as_mapping(item).get("text"), str)
         ),
         trigger_at=times.trigger_at,
         evidence_end_at=times.evidence_end_at,

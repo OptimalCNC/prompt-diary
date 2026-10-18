@@ -380,7 +380,7 @@ def _write_empty_evidence_cards(workspace: Path) -> None:
         (evidence_dir / f"{session_ref}.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "project_key": PROJECT_KEY,
                     "session_ref": session_ref,
                     "evidence_chains": [],

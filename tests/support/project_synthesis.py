@@ -154,14 +154,7 @@ def _no_material_chain(turn_ref: str, *, start: int, end: int) -> dict[str, Any]
     return {
         "turn_ref": turn_ref,
         "trigger": {
-            "type": "explicit_user_message",
-            "summary": f"User turn {turn_ref} had no material extractable outcome.",
-            "quoted_messages": [
-                {
-                    "text": "No material follow-up.",
-                    "citations": [{"lines": f"{start}-{start}"}],
-                }
-            ],
+            "quoted_messages": [{"text": "No material follow-up."}],
             "citations": [{"lines": f"{start}-{start}"}],
         },
         "agent_reactions": [

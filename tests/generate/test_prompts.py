@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import cast
+
 from typer.testing import CliRunner
 
 from prompt_diary.cli import app
@@ -69,6 +72,13 @@ def test_evidence_extractor_prompt() -> None:
     assert "## Role" in instructions
     assert "## Role" not in result
     assert "{{" not in instructions
+
+    draft_json = instructions.split("```json\n", 1)[1].split("\n```", 1)[0]
+    draft = cast("dict[str, object]", json.loads(draft_json))
+    assert draft["trigger"] == {"citations": [{"lines": "<turn_start_line>-<turn_start_line>"}]}
+    assert "Do not submit `quoted_messages`, `type`, or `summary`" in instructions
+    assert "verbatim without redaction" in instructions
+    assert "Trigger type values" not in instructions
 
 
 def test_project_synthesizer_prompt() -> None:

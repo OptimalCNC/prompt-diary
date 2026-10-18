@@ -1,7 +1,7 @@
 """Build the project synthesizer prompt inputs for one project.
 
 The synthesizer agent has no file access: it works only from the chains pasted into its prompt. This
-module reads the project's committed evidence chains and renders their summaries, redacted user
+module reads the project's committed evidence chains and renders their summaries, verbatim user
 messages, observed checks, and source-derived boundary timestamps, grouped
 by session under a ``#### Session <session_ref>`` heading with each chain labelled
 ``<session_ref>/<turn_ref>``. Line citations are dropped because the agent references turns.
@@ -89,7 +89,6 @@ def _render_chain(chain: CommittedChain) -> str:
         f"{chain.trigger_at.isoformat() if chain.trigger_at is not None else 'unknown'}",
         "evidence_end_at: "
         f"{chain.evidence_end_at.isoformat() if chain.evidence_end_at is not None else 'unknown'}",
-        f"trigger: {chain.trigger_summary}",
     ]
     if chain.messages:
         lines.append("user_messages:")

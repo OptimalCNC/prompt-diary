@@ -29,6 +29,15 @@ context drive agent reactions, and agent reactions produce results or terminal s
 and other human resume actions are real triggers when they ask the agent to continue, recover, or
 finish work. The report reconstructs and describes these chains across sessions. A work unit
 belongs to the target report date when its human-authored trigger falls inside that local day.
+Selecting a skill is a human action; the automatically supplied skill instructions are context,
+not human-authored text. Source-identified local shell commands and client-local management
+operations performed by the human, including their output, are excluded from evidence and human
+engagement. Instructions directed at the agent, including skill invocations, remain triggers.
+Replies to agent questions are human input. Context compaction is an agent reaction that changes
+the working context; its summary is retained as agent-authored context, not human input.
+The chain records the human's direction, the agent's substantive work,
+and the result. Routine autonomous recovery may be omitted when it does not change understanding
+of the work or the interaction.
 
 1. **Outcomes are co-produced.** A reported outcome belongs jointly to the user's direction and the
    agent's reaction. The report describes a collaboration, not the work of one party.

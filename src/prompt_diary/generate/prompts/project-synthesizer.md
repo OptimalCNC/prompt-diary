@@ -13,7 +13,7 @@ remaining extracted evidence chains.
 The remaining extracted evidence chains are provided in the task input, grouped by session under
 a `#### Session <session_ref>` heading — one chain per turn, where a turn is one human trigger plus
 the agent reactions it owns. They are the extracted evidence still needing synthesis and are your
-only input. Each chain includes extracted summaries, already-redacted user messages, observed-check
+only input. Each chain includes extracted summaries, verbatim user messages, observed-check
 summaries, and source-derived trigger and evidence-end timestamps when available. Line citations are
 omitted because you reference turns by `turn_ref`.
 

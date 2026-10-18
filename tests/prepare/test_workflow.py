@@ -426,7 +426,7 @@ def _assert_realistic_workspace(
     fixture: PrepareFixture,
 ) -> None:
     metadata = _load_json(workspace_path / "metadata.json")
-    assert metadata["schema_version"] == 3
+    assert metadata["schema_version"] == 7
     assert metadata["report_date"] == TARGET_DATE
     assert metadata["timezone"] == TARGET_TIMEZONE
     assert metadata["report_window_utc"] == {
@@ -436,7 +436,7 @@ def _assert_realistic_workspace(
 
     project_dir = _single_directory(workspace_path / "projects")
     project_json = _load_json(project_dir / "project.json")
-    assert project_json["schema_version"] == 3
+    assert project_json["schema_version"] == 7
     assert project_json["project_label"] == "ReportGenerator"
 
     rows_by_source = _rows_by_source(_load_jsonl(project_dir / "sessions.index.jsonl"))

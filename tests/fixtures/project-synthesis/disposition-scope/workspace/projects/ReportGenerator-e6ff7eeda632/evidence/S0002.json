@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0002",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests a retry bug fix with a passing regression test.",
         "quoted_messages": [
           {
-            "text": "Fix the request retry bug in retry.py and verify the regression test.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Fix the request retry bug in retry.py and verify the regression test."
           }
         ],
         "citations": [
@@ -70,16 +63,9 @@
     {
       "turn_ref": "T0002",
       "trigger": {
-        "type": "user_correction",
-        "summary": "User asks the agent to correct the failed retry fix and verify it again.",
         "quoted_messages": [
           {
-            "text": "The retry count is wrong. Correct it and rerun the regression test.",
-            "citations": [
-              {
-                "lines": "6-6"
-              }
-            ]
+            "text": "The retry count is wrong. Correct it and rerun the regression test."
           }
         ],
         "citations": [

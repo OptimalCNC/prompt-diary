@@ -39,11 +39,15 @@ from prompt_diary.progress.events import (
 from prompt_diary.progress.reporter import NULL_REPORTER
 from prompt_diary.source_records import (
     CODEX_REPORT_ORIGINATOR,
-    CodexMessage,
-    is_claude_tool_result_content,
+    HumanAttachment,
+    InputPart,
+    SkillInvocation,
+    has_claude_human_input,
+    is_claude_local_command,
     is_codex_message_echo,
     is_codex_pre_trigger_context,
-    is_codex_source_context,
+    parse_claude_input,
+    parse_codex_input,
     parse_codex_message,
 )
 
@@ -159,6 +163,10 @@ class _ScanProgress:
             )
 
 
+class _ProbeNativeItem(msgspec.Struct):
+    type: str | None = None
+
+
 class _ProbePayload(msgspec.Struct):
     type: str | None = None
     role: str | None = None
@@ -168,6 +176,7 @@ class _ProbePayload(msgspec.Struct):
     timestamp: str | None = None
     source: object | None = None
     message: str | None = None
+    item: _ProbeNativeItem | None = None
 
 
 class _ProbeMessage(msgspec.Struct):
@@ -189,20 +198,7 @@ class _ProbeRecord(msgspec.Struct):
     is_compact_summary: bool | None = msgspec.field(default=None, name="isCompactSummary")
 
 
-class _ProbeContentItem(msgspec.Struct):
-    text: str | None = None
-
-
-class _ProbeContentPayload(msgspec.Struct):
-    content: list[_ProbeContentItem] | None = None
-
-
-class _ProbeContentRecord(msgspec.Struct):
-    payload: _ProbeContentPayload | None = None
-
-
 _PROBE_RECORD_DECODER = msgspec.json.Decoder(_ProbeRecord)
-_PROBE_CONTENT_DECODER = msgspec.json.Decoder(_ProbeContentRecord)
 
 
 class _LegacyWorkspaceProvenance(msgspec.Struct):
@@ -645,8 +641,10 @@ def _probe_source_file(
     if _path_identifies_subagent_session(source_path=source_path, source=source):
         return False
     candidate_root = False
+    previous_line: bytes | None = None
     with source_path.open("rb") as handle:
         for line in handle:
+            prior_line, previous_line = previous_line, line
             record = _probe_record_from_line(line)
             if record is None:
                 raw_record = _json_object_from_line(line.decode("utf-8", errors="replace"))
@@ -656,7 +654,7 @@ def _probe_source_file(
                 continue
             if _probe_is_excluded_session(record, source):
                 return False
-            if _probe_is_target_trigger(record, line, source, target):
+            if _probe_is_target_trigger(record, line, source, target, prior_line):
                 candidate_root = True
 
     return candidate_root
@@ -715,7 +713,7 @@ def _is_report_session(
     except (OSError, UnicodeError, msgspec.DecodeError):
         return False
     return (
-        metadata.schema_version in (1, 2, WORKSPACE_SCHEMA_VERSION)
+        metadata.schema_version in (1, 2, 3, 4, 5, 6, WORKSPACE_SCHEMA_VERSION)
         and metadata.report_date.isoformat() == workspace.name
         and metadata.prepared_at.tzinfo is not None
         and metadata.prepared_at <= timestamp
@@ -745,47 +743,55 @@ def _probe_is_target_trigger(
     line: bytes,
     source: SourceName,
     target: ReportTarget,
+    previous_line: bytes | None,
 ) -> bool:
     timestamp = _parse_timestamp(record.timestamp)
     if timestamp is None:
         return False
     if not target.report_window_utc.start <= timestamp < target.report_window_utc.end:
         return False
-    return _probe_is_human_trigger(record, line, source)
+    return _probe_is_human_trigger(record, line, source, previous_line)
 
 
-def _probe_is_human_trigger(record: _ProbeRecord, line: bytes, source: SourceName) -> bool:
+def _probe_is_human_trigger(
+    record: _ProbeRecord, line: bytes, source: SourceName, previous_line: bytes | None
+) -> bool:
     if source == "codex":
         return _probe_is_codex_human_trigger(record, line)
-    return _probe_is_claude_human_trigger(record)
+    if not _probe_is_claude_human_trigger(record):
+        return False
+    parsed = _json_object_from_line(line.decode("utf-8", errors="replace"))
+    previous = (
+        _json_object_from_line(previous_line.decode("utf-8", errors="replace"))
+        if previous_line is not None
+        else None
+    )
+    return parsed is not None and not is_claude_local_command(parsed, previous)
 
 
 def _probe_is_codex_human_trigger(record: _ProbeRecord, line: bytes) -> bool:
     payload = record.payload
     if payload is None:
         return False
-    if record.type == "event_msg" and payload.type == "user_message":
-        return not is_codex_source_context(payload.message or "")
-    if record.type == "response_item":
-        if payload.role != "user" or payload.type != "message":
-            return False
-        text = _probe_codex_message_text(line)
-        return text is None or not is_codex_source_context(text)
-    return False
-
-
-def _probe_codex_message_text(line: bytes) -> str | None:
-    try:
-        record = _PROBE_CONTENT_DECODER.decode(line)
-    except msgspec.DecodeError:
-        return None
-    payload = record.payload
-    if payload is None or payload.content is None:
-        return ""
-    for item in payload.content:
-        if item.text is not None and item.text.strip():
-            return item.text.strip()
-    return ""
+    candidate = (
+        (record.type == "response_item" and payload.role == "user" and payload.type == "message")
+        or (record.type == "retained_context" and payload.type == "verified_answer")
+        or (
+            record.type == "event_msg"
+            and (
+                payload.type == "user_message"
+                or (
+                    payload.type == "item_completed"
+                    and payload.item is not None
+                    and payload.item.type == "UserMessage"
+                )
+            )
+        )
+    )
+    if not candidate:
+        return False
+    parsed = _json_object_from_line(line.decode("utf-8", errors="replace"))
+    return parsed is not None and _is_codex_human_trigger(parsed)
 
 
 def _probe_is_claude_human_trigger(record: _ProbeRecord) -> bool:
@@ -798,7 +804,7 @@ def _probe_is_claude_human_trigger(record: _ProbeRecord) -> bool:
         record.is_sidechain is not True
         and record.is_meta is not True
         and record.is_compact_summary is not True
-        and not is_claude_tool_result_content(message.content)
+        and has_claude_human_input(message.content)
     )
 
 
@@ -831,8 +837,9 @@ def _parse_session_file(
         ),
     )
 
+    record: JsonObject | None = None
     for line_number, line in enumerate(lines, start=1):
-        record = _json_object_from_line(line)
+        previous_record, record = record, _json_object_from_line(line)
         if record is None:
             state.malformed_line_count += 1
             continue
@@ -840,7 +847,7 @@ def _parse_session_file(
         timestamp = _record_timestamp(spec.source, record)
         if timestamp is None:
             state.untimestamped_record_count += 1
-            if _is_human_trigger(record, spec.source):
+            if _is_human_trigger(record, spec.source, previous_record):
                 state.has_untimestamped_trigger = True
             continue
         state.record_timestamp(
@@ -849,20 +856,17 @@ def _parse_session_file(
             and rollout is not None
             and rollout.owned_start_line > 1,
         )
-        if _is_human_trigger(record, spec.source):
+        if _is_human_trigger(record, spec.source, previous_record):
             message = parse_codex_message(record) if spec.source == "codex" else None
-            previous = state.triggers[-1] if state.triggers else None
+            previous = parse_codex_message(previous_record) if previous_record is not None else None
             if (
                 previous is not None
-                and previous.line_number == line_number - 1
-                and previous.codex_message is not None
                 and message is not None
-                and is_codex_message_echo(previous.codex_message, message)
+                and is_codex_message_echo(previous, message)
+                and _echo_has_no_new_human_input(record, previous_record)
             ):
                 continue
-            state.triggers.append(
-                _TriggerLine(line_number=line_number, timestamp=timestamp, codex_message=message)
-            )
+            state.triggers.append(_TriggerLine(line_number=line_number, timestamp=timestamp))
 
     turns, source_turns = _build_turns(
         triggers=state.triggers,
@@ -925,7 +929,6 @@ def _parse_session_file(
 class _TriggerLine:
     line_number: int
     timestamp: datetime
-    codex_message: CodexMessage | None
 
 
 @dataclass
@@ -960,53 +963,28 @@ class _ParseState:
 _CODEX_CLAUDE_ORIGINATOR = "Claude Code"
 
 
-def _is_human_trigger(record: JsonObject, source: SourceName) -> bool:
+def _echo_has_no_new_human_input(record: JsonObject, previous: JsonObject | None) -> bool:
+    canonical = parse_codex_input(previous) if previous is not None else None
+    if canonical is not None and canonical.is_human_trigger:
+        return True
+    current = parse_codex_input(record)
+    return current is None or not any(
+        isinstance(part, (SkillInvocation, HumanAttachment)) for part in current.parts
+    )
+
+
+def _is_human_trigger(
+    record: JsonObject, source: SourceName, previous: JsonObject | None = None
+) -> bool:
     if source == "codex":
         return _is_codex_human_trigger(record)
-    return _is_claude_human_trigger(record)
+    parsed = parse_claude_input(record, previous)
+    return parsed is not None and parsed.is_human_trigger
 
 
 def _is_codex_human_trigger(record: JsonObject) -> bool:
-    record_type = _string_value(record, "type")
-    payload = _object_value(record, "payload")
-    if payload is None:
-        return False
-    if record_type == "event_msg" and _string_value(payload, "type") == "user_message":
-        return not is_codex_source_context(_string_value(payload, "message") or "")
-    if record_type == "response_item":
-        if _string_value(payload, "role") != "user" or _string_value(payload, "type") != "message":
-            return False
-        text = _codex_message_text(payload)
-        return not is_codex_source_context(text)
-    return False
-
-
-def _codex_message_text(payload: JsonObject) -> str:
-    content = payload.get("content")
-    if not isinstance(content, list):
-        return ""
-    for item in content:
-        if isinstance(item, dict):
-            text = cast("JsonObject", item).get("text")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
-    return ""
-
-
-def _is_claude_human_trigger(record: JsonObject) -> bool:
-    if _string_value(record, "type") != "user":
-        return False
-    message = _object_value(record, "message")
-    if message is None or _string_value(message, "role") != "user":
-        return False
-    if _string_value(record, "sourceToolAssistantUUID") is not None:
-        return False
-    return (
-        not _bool_value(record, "isSidechain")
-        and not _bool_value(record, "isMeta")
-        and not _bool_value(record, "isCompactSummary")
-        and not is_claude_tool_result_content(message.get("content"))
-    )
+    parsed = parse_codex_input(record)
+    return parsed is not None and parsed.is_human_trigger
 
 
 def _build_turns(
@@ -1085,16 +1063,26 @@ def _is_pre_trigger_scaffolding(record: JsonObject, source: SourceName) -> bool:
         ptype = _string_value(payload, "type")
         if ptype in ("task_started", "turn_started"):
             return True
-        if ptype == "user_message":
-            return is_codex_pre_trigger_context(_string_value(payload, "message") or "")
-    if record_type == "response_item" and payload is not None:
-        if _string_value(payload, "role") == "developer":
-            return True
-        if _string_value(payload, "role") == "user" and _string_value(payload, "type") == "message":
-            text = _codex_message_text(payload)
-            if is_codex_pre_trigger_context(text):
-                return True
-    return False
+    if (
+        record_type == "response_item"
+        and payload is not None
+        and _string_value(payload, "role") == "developer"
+    ):
+        return True
+    parsed = parse_codex_input(record)
+    return (
+        parsed is not None
+        and bool(parsed.parts)
+        and all(
+            isinstance(part, InputPart)
+            and part.kind == "generated_context"
+            and (
+                part.source_tag in ("agents_md.instructions", "environments.environment_context")
+                or is_codex_pre_trigger_context(part.text)
+            )
+            for part in parsed.parts
+        )
+    )
 
 
 def _record_session_metadata(state: _ParseState, record: JsonObject) -> None:

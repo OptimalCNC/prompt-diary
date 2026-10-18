@@ -351,7 +351,7 @@ def test_prepare_workspace_records_parse_warnings_and_fallback_root(
     ]
 
 
-def test_prepare_workspace_skips_malformed_candidate_and_accepts_codex_message_without_content(
+def test_prepare_workspace_skips_malformed_candidate_and_message_without_known_human_content(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "ReportGenerator"
@@ -385,17 +385,8 @@ def test_prepare_workspace_skips_malformed_candidate_and_accepts_codex_message_w
         source_specs=(SourceSpec(source="codex", root=source_root),),
     )
 
-    assert result.session_count == 1
-    project_dir = _single_directory(result.workspace_path / "projects")
-    rows = _load_jsonl(project_dir / "sessions.index.jsonl")
-    assert rows[0]["source_session_id"] == "missing-content"
-    assert rows[0]["turns"] == [
-        {
-            "turn_ref": "T0001",
-            "turn_start_line": 2,
-            "turn_end_line": 2,
-        }
-    ]
+    assert result.session_count == 0
+    assert not list((result.workspace_path / "projects").iterdir())
 
 
 def test_prepare_workspace_skips_direct_claude_subagent_without_parent(
@@ -479,7 +470,7 @@ def _target() -> ReportTarget:
 
 def _metadata_for_target(target: ReportTarget) -> dict[str, object]:
     return {
-        "schema_version": 3,
+        "schema_version": 7,
         "report_date": target.report_date.isoformat(),
         "timezone": target.timezone,
         "status": target.status,
@@ -597,10 +588,8 @@ def test_prepare_workspace_codex_message_text_edge_cases(tmp_path: Path) -> None
                     ],
                 },
             },
-            # Non-trigger: response_item user message with content that has NO valid
-            # text at all -- _codex_message_text returns "" which doesn't start with
-            # source context prefixes, so it IS a trigger. Let's instead test the
-            # "content is not a list" path.
+            # Malformed content stays in the preceding turn, without inventing a new
+            # human trigger from the transport role alone.
             {
                 "type": "response_item",
                 "timestamp": "2026-05-12T00:00:02Z",
@@ -633,7 +622,8 @@ def test_prepare_workspace_codex_message_text_edge_cases(tmp_path: Path) -> None
     rows = _load_jsonl(project_dir / "sessions.index.jsonl")
     assert rows[0]["source_session_id"] == "msg-text-session"
     turns = cast("list[dict[str, object]]", rows[0]["turns"])
-    assert [turn["turn_start_line"] for turn in turns] == [2, 3, 4]
+    assert [turn["turn_start_line"] for turn in turns] == [2]
+    assert turns[0]["turn_end_line"] == 4
 
 
 def test_prepare_workspace_claude_rejects_tool_owned_trigger(tmp_path: Path) -> None:
@@ -751,7 +741,10 @@ def test_prepare_workspace_codex_pre_trigger_scaffolding_all_types(tmp_path: Pat
                     "role": "user",
                     "type": "message",
                     "content": [
-                        {"text": "<environment_context>Current dir info</environment_context>"}
+                        {
+                            "type": "input_text",
+                            "text": "<environment_context>Current dir info</environment_context>",
+                        }
                     ],
                 },
             },

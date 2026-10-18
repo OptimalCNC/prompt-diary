@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0007",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests service restoration using rollback.md and production traffic verification.",
         "quoted_messages": [
           {
-            "text": "Restore the service using rollback.md and verify production traffic.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Restore the service using rollback.md and verify production traffic."
           }
         ],
         "citations": [

@@ -42,27 +42,27 @@ def test_paste_groups_by_session_with_labelled_turns(tmp_path: Path) -> None:
     assert "T0003" not in paste
 
 
-def test_paste_includes_redacted_messages_and_observed_checks(tmp_path: Path) -> None:
+def test_paste_includes_verbatim_messages_and_observed_checks(tmp_path: Path) -> None:
     workspace = copy_basic_project_workspace(tmp_path)
     card_path = workspace / "projects" / PROJECT_KEY / "evidence" / "S0001.json"
     card = json.loads(card_path.read_text(encoding="utf-8"))
     card["evidence_chains"][0]["observed_checks"] = [
         {"summary": "The updated contract was inspected.", "citations": [{"lines": "7-7"}]}
     ]
-    card["evidence_chains"][0]["trigger"]["quoted_messages"][0]["text"] += "\nToken: [REDACTED]"
+    card["evidence_chains"][0]["trigger"]["quoted_messages"][0]["text"] += "\nToken: fixture-token"
     card_path.write_text(json.dumps(card), encoding="utf-8")
 
     paste = build_project_synthesis_inputs(
         workspace_path=workspace, project_key=PROJECT_KEY
     ).evidence_chains
 
-    assert "trigger: User asked to simplify the MCP evidence tools" in paste
+    assert "User asked to simplify the MCP evidence tools" not in paste
     assert "reaction: Updated the MCP tools page" in paste
     assert "- document_outcome: Top-level turn_ref adopted" in paste
     assert "extracted_terminal_label: material_result" in paste
     assert "segment_end_evidence: Extraction surface updated" in paste
     assert 'user_messages:\n- "Please simplify the MCP evidence tools and drop chain_ref.' in paste
-    assert "\\nToken: [REDACTED]" in paste
+    assert "\\nToken: fixture-token" in paste
     assert "observed_checks:\n- The updated contract was inspected." in paste
     assert "trigger_at: unknown" in paste
     assert "evidence_end_at: unknown" in paste

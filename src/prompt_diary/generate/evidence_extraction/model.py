@@ -16,8 +16,9 @@ from prompt_diary.generate.prompts import (
     EVIDENCE_MATERIALITY_VALUES,
     EVIDENCE_OUTCOME_CATEGORIES,
     EVIDENCE_TERMINAL_STATES,
-    EVIDENCE_TRIGGER_TYPES,
 )
+
+EVIDENCE_CARD_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -42,17 +43,20 @@ class QuotedMessage:
     """One preserved user-authored message inside a trigger."""
 
     text: str
+
+
+@dataclass(frozen=True)
+class TriggerDraft:
+    """Agent-selected source reference, before the tool retrieves human text."""
+
     citations: tuple[CitationSpan, ...]
 
 
 @dataclass(frozen=True)
-class Trigger:
-    """What user message or user-managed context drove the agent reaction."""
+class Trigger(TriggerDraft):
+    """Human input preserved by the tool from its authoritative source record."""
 
-    type: str
-    summary: str
     quoted_messages: tuple[QuotedMessage, ...]
-    citations: tuple[CitationSpan, ...]
 
 
 @dataclass(frozen=True)
@@ -91,16 +95,30 @@ class TerminalState:
 
 
 @dataclass(frozen=True)
-class EvidenceChain:
-    """One indexed turn parsed into a fully typed, well-formed evidence chain."""
+class EvidenceChainDraft:
+    """A parsed Agent submission whose trigger text has not yet been retrieved."""
 
     turn_ref: str
-    trigger: Trigger
+    trigger: TriggerDraft
     agent_reactions: tuple[AgentReaction, ...]
     outcomes: tuple[Outcome, ...]
     observed_checks: tuple[ObservedCheck, ...]
     terminal_state: TerminalState
     materiality: str
+
+
+@dataclass(frozen=True)
+class EvidenceChain(EvidenceChainDraft):
+    """One indexed turn with tool-owned human quotations ready for storage."""
+
+    trigger: Trigger
+
+
+@dataclass(frozen=True)
+class ParsedEvidenceChainDraft:
+    """A successful Agent-submission parse holding a well-formed draft."""
+
+    chain: EvidenceChainDraft
 
 
 @dataclass(frozen=True)
@@ -118,9 +136,9 @@ class InvalidEvidenceChain:
 
 
 EvidenceChainParseResult: TypeAlias = ParsedEvidenceChain | InvalidEvidenceChain
+EvidenceChainDraftParseResult: TypeAlias = ParsedEvidenceChainDraft | InvalidEvidenceChain
 
 
-_TRIGGER_TYPES = frozenset(item.value for item in EVIDENCE_TRIGGER_TYPES)
 _OUTCOME_CATEGORIES = frozenset(item.value for item in EVIDENCE_OUTCOME_CATEGORIES)
 _CHECK_TYPES = frozenset(item.value for item in EVIDENCE_CHECK_TYPES)
 _TERMINAL_STATES = frozenset(item.value for item in EVIDENCE_TERMINAL_STATES)
@@ -130,12 +148,38 @@ _MATERIAL_RESULT = "material_result"
 
 
 def parse_evidence_chain(raw: dict[str, Any]) -> EvidenceChainParseResult:
-    """Parse an untrusted chain dict into a typed chain or structured errors."""
+    """Parse a persisted chain, requiring the tool-owned quotation shape."""
     errors: list[EvidenceWriteError] = []
-    chain = _parse_chain(raw, errors)
+    trigger = _parse_trigger(_as_mapping(raw.get("trigger")), errors, path="evidence_chain.trigger")
+    draft = _parse_chain(raw, errors, trigger=trigger)
     if errors:
         return InvalidEvidenceChain(tuple(errors))
-    return ParsedEvidenceChain(chain)
+    return ParsedEvidenceChain(complete_evidence_chain(draft, trigger))
+
+
+def parse_evidence_chain_draft(raw: dict[str, Any]) -> EvidenceChainDraftParseResult:
+    """Parse an Agent submission, accepting only citations within its trigger."""
+    errors: list[EvidenceWriteError] = []
+    trigger = _parse_trigger_draft(
+        _as_mapping(raw.get("trigger")), errors, path="evidence_chain.trigger"
+    )
+    chain = _parse_chain(raw, errors, trigger=trigger)
+    if errors:
+        return InvalidEvidenceChain(tuple(errors))
+    return ParsedEvidenceChainDraft(chain)
+
+
+def complete_evidence_chain(draft: EvidenceChainDraft, trigger: Trigger) -> EvidenceChain:
+    """Combine parsed analysis with the resolved, tool-populated trigger."""
+    return EvidenceChain(
+        turn_ref=draft.turn_ref,
+        trigger=trigger,
+        agent_reactions=draft.agent_reactions,
+        outcomes=draft.outcomes,
+        observed_checks=draft.observed_checks,
+        terminal_state=draft.terminal_state,
+        materiality=draft.materiality,
+    )
 
 
 def evidence_chain_to_json(chain: EvidenceChain) -> dict[str, Any]:
@@ -151,7 +195,9 @@ def evidence_chain_to_json(chain: EvidenceChain) -> dict[str, Any]:
     }
 
 
-def _parse_chain(raw: dict[str, Any], errors: list[EvidenceWriteError]) -> EvidenceChain:
+def _parse_chain(
+    raw: dict[str, Any], errors: list[EvidenceWriteError], *, trigger: TriggerDraft
+) -> EvidenceChainDraft:
     prefix = "evidence_chain"
     outcomes = tuple(
         _parse_outcome(item, errors, path=f"{prefix}.outcomes[{index}]")
@@ -163,9 +209,9 @@ def _parse_chain(raw: dict[str, Any], errors: list[EvidenceWriteError]) -> Evide
         path=f"{prefix}.terminal_state",
     )
     _check_outcomes_present(outcomes, terminal_state, errors, path=f"{prefix}.outcomes")
-    return EvidenceChain(
+    return EvidenceChainDraft(
         turn_ref=_parse_turn_ref(raw.get("turn_ref"), errors, path=f"{prefix}.turn_ref"),
-        trigger=_parse_trigger(_as_mapping(raw.get("trigger")), errors, path=f"{prefix}.trigger"),
+        trigger=trigger,
         agent_reactions=tuple(
             _parse_reaction(item, errors, path=f"{prefix}.agent_reactions[{index}]")
             for index, item in enumerate(_as_list(raw.get("agent_reactions")))
@@ -192,20 +238,46 @@ def _parse_trigger(
     *,
     path: str,
 ) -> Trigger:
+    _check_allowed_fields(raw, frozenset({"citations", "quoted_messages"}), errors, path=path)
+    messages = raw.get("quoted_messages")
+    if not isinstance(messages, list):
+        errors.append(
+            EvidenceWriteError(
+                f"{path}.quoted_messages",
+                "quoted_messages must be a list in a committed evidence chain",
+                "regenerate the evidence card so write_evidence can retrieve the human input",
+            )
+        )
     return Trigger(
-        type=_parse_enum(
-            raw.get("type"),
-            _TRIGGER_TYPES,
-            errors,
-            path=f"{path}.type",
-            controlled="trigger.type",
-        ),
-        summary=_parse_summary(raw.get("summary"), errors, path=f"{path}.summary"),
         quoted_messages=tuple(
             _parse_quoted_message(item, errors, path=f"{path}.quoted_messages[{index}]")
             for index, item in enumerate(_as_list(raw.get("quoted_messages")))
         ),
         citations=_parse_citations(raw.get("citations"), errors, path=path),
+    )
+
+
+def _parse_trigger_draft(
+    raw: dict[str, Any], errors: list[EvidenceWriteError], *, path: str
+) -> TriggerDraft:
+    _check_allowed_fields(raw, frozenset({"citations"}), errors, path=path)
+    return TriggerDraft(citations=_parse_citations(raw.get("citations"), errors, path=path))
+
+
+def _check_allowed_fields(
+    raw: dict[str, Any],
+    allowed: frozenset[str],
+    errors: list[EvidenceWriteError],
+    *,
+    path: str,
+) -> None:
+    errors.extend(
+        EvidenceWriteError(
+            f"{path}.{field}",
+            f"{path}.{field} is not an accepted field",
+            "submit only trigger.citations; write_evidence retrieves the human text",
+        )
+        for field in sorted(raw.keys() - allowed)
     )
 
 
@@ -216,10 +288,18 @@ def _parse_quoted_message(
     path: str,
 ) -> QuotedMessage:
     message = _as_mapping(raw)
-    return QuotedMessage(
-        text=_parse_summary(message.get("text"), errors, path=f"{path}.text"),
-        citations=_parse_citations(message.get("citations"), errors, path=path),
-    )
+    _check_allowed_fields(message, frozenset({"text"}), errors, path=path)
+    text = message.get("text")
+    if not isinstance(text, str):
+        errors.append(
+            EvidenceWriteError(
+                f"{path}.text",
+                "quoted message text must be a string",
+                "preserve source text verbatim",
+            )
+        )
+        return QuotedMessage("")
+    return QuotedMessage(text)
 
 
 def _parse_reaction(
@@ -379,13 +459,8 @@ def _as_list(value: object) -> list[Any]:
 
 def _trigger_to_json(trigger: Trigger) -> dict[str, Any]:
     return {
-        "type": trigger.type,
-        "summary": trigger.summary,
-        "quoted_messages": [
-            {"text": message.text, "citations": _citations_to_json(message.citations)}
-            for message in trigger.quoted_messages
-        ],
         "citations": _citations_to_json(trigger.citations),
+        "quoted_messages": [{"text": message.text} for message in trigger.quoted_messages],
     }
 
 
@@ -424,7 +499,7 @@ def _citations_to_json(citations: tuple[CitationSpan, ...]) -> list[dict[str, st
 def new_session_card(project_key: str, session_ref: str) -> dict[str, Any]:
     """Return the canonical empty session-evidence-card skeleton."""
     return {
-        "schema_version": 1,
+        "schema_version": EVIDENCE_CARD_SCHEMA_VERSION,
         "project_key": project_key,
         "session_ref": session_ref,
         "evidence_chains": [],

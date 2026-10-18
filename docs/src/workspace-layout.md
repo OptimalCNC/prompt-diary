@@ -111,7 +111,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 7,
   "report_date": "2026-05-12",
   "timezone": "Asia/Shanghai",
   "status": "final",
@@ -129,8 +129,10 @@ flowchart LR
 
 Rules:
 
-- `schema_version` is `3`. Preparation reuse and generation reject older workspaces, whose indexes
-  may include subagent sessions. Run `prompt-diary prepare --date YYYY-MM-DD --timezone Area/City
+- `schema_version` is `7`. Preparation reuse and generation require indexes built with the shared
+  source classification for human triggers, including native question replies and excluding
+  source-identified human local execution, and evidence cards with tool-extracted trigger text.
+  Run `prompt-diary prepare --date YYYY-MM-DD --timezone Area/City
   --force` to rebuild them from source histories.
 - `report_window_utc` is the canonical serialized trigger-inclusion boundary.
 - `report_window_local` is the human-facing period shown in the report. Do not render a
@@ -166,7 +168,7 @@ Each project folder contains `project.json`.
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 7,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "project_label": "ReportGenerator"
 }

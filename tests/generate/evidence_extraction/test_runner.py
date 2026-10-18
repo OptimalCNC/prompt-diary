@@ -20,6 +20,7 @@ from tests.support.evidence_agent import (
 from tests.support.evidence_extraction import (
     PROJECT_KEY,
     SESSION_REF,
+    build_committed_evidence_chain,
     build_evidence_chain,
     copy_basic_evidence_workspace,
     load_evidence_card,
@@ -113,7 +114,7 @@ def test_runner_resets_a_preexisting_invalid_partial_card(tmp_path: Path) -> Non
     card_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "project_key": PROJECT_KEY,
                 "session_ref": SESSION_REF,
                 "evidence_chains": [{"turn_ref": "T0001", "stale": True}],
@@ -138,13 +139,17 @@ def test_runner_resets_mismatched_or_extra_turn_card(tmp_path: Path) -> None:
     card_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "project_key": "Other-000000000000",
                 "session_ref": SESSION_REF,
                 "evidence_chains": [
-                    build_evidence_chain(turn_ref="T0001", span=(2, 8)),
-                    build_evidence_chain(turn_ref="T0002", span=(9, 12), kind="no_material"),
-                    build_evidence_chain(turn_ref="T9999", span=(2, 2), kind="no_material"),
+                    build_committed_evidence_chain(turn_ref="T0001", span=(2, 8)),
+                    build_committed_evidence_chain(
+                        turn_ref="T0002", span=(9, 12), kind="no_material"
+                    ),
+                    build_committed_evidence_chain(
+                        turn_ref="T9999", span=(2, 2), kind="no_material"
+                    ),
                 ],
             }
         ),
@@ -383,8 +388,8 @@ def test_runner_uses_packaged_agent_settings(tmp_path: Path) -> None:
     assert [
         (runner.config.model, runner.config.reasoning_effort) for runner in factory.runners
     ] == [
-        ("gpt-6.1-sol", "medium"),
-        ("gpt-6.1-sol", "medium"),
+        ("gpt-6-luna", "high"),
+        ("gpt-6-luna", "high"),
     ]
 
 

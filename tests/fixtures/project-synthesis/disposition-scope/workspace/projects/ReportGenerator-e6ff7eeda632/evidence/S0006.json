@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0006",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests billing-alert implementation and email delivery verification.",
         "quoted_messages": [
           {
-            "text": "Implement the billing-alert feature and verify email delivery.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Implement the billing-alert feature and verify email delivery."
           }
         ],
         "citations": [
@@ -60,16 +53,9 @@
     {
       "turn_ref": "T0002",
       "trigger": {
-        "type": "user_correction",
-        "summary": "User explicitly cancels the entire billing-alert goal after partial design work.",
         "quoted_messages": [
           {
-            "text": "Cancel the billing-alert task entirely. We no longer want this feature; abandon its delivery.",
-            "citations": [
-              {
-                "lines": "6-6"
-              }
-            ]
+            "text": "Cancel the billing-alert task entirely. We no longer want this feature; abandon its delivery."
           }
         ],
         "citations": [

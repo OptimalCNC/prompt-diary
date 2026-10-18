@@ -13,7 +13,7 @@ ReportStatus: TypeAlias = Literal["final", "partial"]
 SourceName: TypeAlias = Literal["codex", "claude-code"]
 JsonValue: TypeAlias = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
 JsonObject: TypeAlias = dict[str, JsonValue]
-WORKSPACE_SCHEMA_VERSION = 3
+WORKSPACE_SCHEMA_VERSION = 7
 
 
 @dataclass(frozen=True)

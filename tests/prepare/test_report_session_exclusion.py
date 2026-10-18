@@ -55,7 +55,7 @@ def test_full_parser_also_excludes_report_originator(
     assert source.exists()
 
 
-@pytest.mark.parametrize("schema", [1, 2, 3])
+@pytest.mark.parametrize("schema", [1, 2, 3, 4, 5, 6, 7])
 def test_legacy_sdk_reports_require_positive_workspace_provenance_before_body(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema: int
 ) -> None:

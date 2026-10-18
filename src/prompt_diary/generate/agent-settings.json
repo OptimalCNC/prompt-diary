@@ -1,7 +1,7 @@
 {
   "evidence_extraction": {
-    "model": "gpt-6.1-sol",
-    "reasoning_effort": "medium"
+    "model": "gpt-6-luna",
+    "reasoning_effort": "high"
   },
   "project_synthesis": {
     "model": "gpt-6.1-sol",
@@ -9,8 +9,8 @@
   },
   "daily_synthesis": {
     "project_summary": {
-      "model": "gpt-6.1-sol",
-      "reasoning_effort": "low"
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium"
     },
     "report_title": {
       "model": "gpt-6-luna",

@@ -1,21 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0004",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User requests import parser implementation and passing tests.",
         "quoted_messages": [
           {
-            "text": "Implement import parsing in ingest.py and run its tests.",
-            "citations": [
-              {
-                "lines": "2-2"
-              }
-            ]
+            "text": "Implement import parsing in ingest.py and run its tests."
           }
         ],
         "citations": [
@@ -70,16 +63,9 @@
     {
       "turn_ref": "T0002",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User adds a staging example upload to the same import task scope.",
         "quoted_messages": [
           {
-            "text": "Also upload import-example.json to the staging bucket. That upload is part of this task.",
-            "citations": [
-              {
-                "lines": "6-6"
-              }
-            ]
+            "text": "Also upload import-example.json to the staging bucket. That upload is part of this task."
           }
         ],
         "citations": [

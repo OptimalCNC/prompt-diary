@@ -103,19 +103,39 @@ Compact record fields are sparse: absent values, empty collections, and default 
 | Field | Type | Description |
 | --- | --- | --- |
 | `line` | int | Absolute 1-based physical line number. |
-| `kind` | str | Evidence kind, such as `user`, `assistant`, `tool_call`, `tool_result`, `terminal`, or `unknown`. |
+| `kind` | str | Source attribution or evidence kind: `human_input`, `human_command`, `human_attachment`, `skill_invocation`, `skill_context`, `generated_context`, `assistant_message`, `subagent_message`, `context_compaction`, `tool_call`, `tool_result`, `mixed`, `terminal`, or `unknown`. |
 | `text` | str | Exact genuine message text, or an explicitly bounded fallback for other content. |
+| `parts` | list | Ordered parts of a `mixed` record, each with its own `kind` and text, tool evidence, or structured skill selection. |
+| `source_tag` | str | Source convention supporting the attribution, when available. |
+| `name`, `path` | str | Skill identity for a structured `skill_invocation`; no human quotation is invented. |
 | `tool_uses` | list | Invocations with `name`, optional `input_summary`, and `truncated` when trimmed. |
 | `tool_results` | list | Results with `kind` and available evidence: `status`, `command`, `exit_code`, `file_path`, `changes`, `name`, `preview`, `stderr`, `error`, and `truncated`. File changes carry `path`, `operation`, and available `move_path` and bounded diff/content `preview`. |
 | `truncated` | bool | Present as `true` when record text was trimmed. |
 | `duplicate_of` | int | Physical line of the canonical message for a confirmed Codex echo. |
-| `source_type` | str | Original record type for a fallback whose shape is not normalized. |
+| `source_type` | str | Attachment type or original record type for an unnormalized fallback. |
 | `unavailable` | list[str] | Unknown or unavailable content blocks requiring raw inspection if relevant. |
 
-Command exit codes preserve zero. Completion status alone does not prove command success. Modern
-Codex custom tool outputs and completed command, file-change, and MCP events are normalized before
-metadata is removed. Physical line numbers locate records in the prepared file; per-line hashes,
+Command exit codes preserve zero. Completion status alone does not prove command success. Codex
+`exec_command_end`, modern completed commands, custom tool outputs, file changes, and MCP events are
+normalized before metadata is removed. Command output uses `aggregated_output` when `stdout` is
+empty or absent. Physical line numbers locate records in the prepared file; per-line hashes,
 byte counts, correlation IDs, and normalization metadata are not retained in compact records.
+
+Preparation and compact reading share source classification. A human's skill selection is
+`skill_invocation`; expanded instructions such as `skills.selected_skill_instructions` are
+`skill_context` and do not start a human turn. A retained `human_command` is the human's command
+invocation, not an agent action. Source-identified local shell commands and client-local management
+operations, including their output, are omitted and do not start turns or count toward engagement.
+Agent-directed commands and skill selections remain evidence. For mixed content, the `parts`
+preserve order and attribution within the same physical line. Missing or conflicting provenance remains `unknown`
+unless a recognized source convention establishes it. Source attribution does not classify the
+human's stance: the extractor still reads the exact human text to distinguish questions,
+objections, corrections, and approvals.
+Retained Claude command envelopes separate the human's invocation from the generated command
+description. A `human_attachment` records supplied media without inventing
+text or embedding binary content in the compact view.
+Native Codex `retained_context/verified_answer` records separate the agent's question from the
+human's answer. The answer starts a human turn; its subsequent tool-output copy does not.
 
 Confirmed Codex message echoes return a physical line and `duplicate_of` instead of repeated text.
 Matching requires adjacent records, identical role and complete text, the source's message/echo
@@ -127,14 +147,29 @@ line is independent of the requested range. Full mode returns both original raw 
 
 Compaction first normalizes evidence, then removes known scaffolding and redundant metadata:
 
+- **Human local execution** is omitted when the source establishes it: complete Codex
+  `user_shell_command` command/result envelopes, Claude `system/local_command` records,
+  command messages linked to a source-marked local-command caveat, and local-command stdout.
+  Surrounding human prose, agent-issued tool calls and results, and agent-directed slash commands
+  remain available. Unknown or malformed lookalikes remain identifiable.
 - **Tool results larger than 1 KiB** retain a head preview (about 320 bytes) and tail preview
   (about 160 bytes), joined by an elision marker and marked `truncated: true`. Tool inputs use
   bounded previews too.
-- **Known metadata and source context** are omitted: token accounting, reasoning, settings,
-  environment/bootstrap instructions, and recognized lifecycle metadata. These omissions do not
+- **Known metadata and bootstrap context** are omitted: token accounting, reasoning, settings,
+  environment/bootstrap instructions, and recognized lifecycle metadata. Retained skill and other
+  generated context is explicitly attributed, rather than represented as human text. Codex conversation events
+  `task_complete`, `error`, and `task_failed` are omitted, including connection failures such as
+  HTTP 503; they do not establish whether commands or other work succeeded. These omissions do not
   create records or extra local audit files.
-- **Failures, interruptions, and parent-visible child results** remain observable. Unknown,
-  malformed, and unavailable content remains identifiable for a narrow full-mode read.
+- **Tool failures, explicit interruptions, and parent-visible child results** remain observable,
+  as do errors described in genuine user or assistant messages. Readable subagent messages and
+  result notifications retain their full text; these are agent-authored reports rather than raw
+  tool logs. Long reports use lossless pagination. Unknown, malformed, and unavailable content
+  remains identifiable for a narrow full-mode read.
+- **Agent context compaction** remains visible as `context_compaction`, with the readable summary
+  preserved when available. A marker remains when summary text is unavailable. These records
+  describe the agent changing its context and never start human turns, including when a source
+  stores the summary under a user transport role.
 
 Genuine user and assistant text stays exact, including Claude string and text-block messages.
 Large genuine messages are paginated rather than shortened. Small tool results remain intact.
@@ -200,6 +235,8 @@ or a cursor outside the range or record content. Error text is also bounded by t
 
 Check one draft evidence chain and write it to the canonical session evidence card. Examples of
 canonical evidence chains are in the [Evidence Contract](../evidence-contract.md).
+The draft trigger contains only its citation; the tool retrieves the human text and adds
+`quoted_messages` to the committed chain.
 The controlled values in this schema duplicate the enum definitions in
 `src/prompt_diary/generate/prompts/__init__.py` so this tool contract remains self-contained.
 
@@ -212,18 +249,8 @@ Input schema:
   "evidence_chain": {
     "turn_ref": "<turn_ref>",
     "trigger": {
-      "type": "explicit_user_message|implicit_context|user_correction|user_approval|resume_or_continue",
-      "summary": "<non-empty string>",
-      "quoted_messages": [
-        {
-          "text": "<redacted user-authored text>",
-          "citations": [
-            {"lines": "<start>-<end>"}
-          ]
-        }
-      ],
       "citations": [
-        {"lines": "<start>-<end>"}
+        {"lines": "<turn_start_line>-<turn_start_line>"}
       ]
     },
     "agent_reactions": [
@@ -272,6 +299,15 @@ Write behavior:
 - If the evidence file already exists, the tool validates the existing card and appends the chain.
 - Agents provide the assigned `turn_ref` directly as `evidence_chain.turn_ref`; the tool validates
   it against `projects/<project_key>/sessions.index.jsonl`.
+- The tool reads the original trigger record at the indexed `turn_start_line`, using the session's
+  source format and shared provenance parser. It adds `trigger.quoted_messages` as ordered
+  `{"text": "..."}` entries, preserving human text blocks and answers verbatim without redaction,
+  trimming, or truncation. Generated context, assistant questions and acknowledgments, and
+  transcript echoes are excluded. Agent-directed commands preserve the human invocation and
+  arguments. A skill selection or attachment without human text produces an empty quotation array.
+  The source is the original record, not the paginated `read_session_lines` response.
+- Missing, malformed, unsupported, or nonhuman trigger records reject the write. A failed source
+  lookup or extraction does not create a card or modify an existing one.
 - A card must not contain duplicate evidence for one `turn_ref`.
 - Writes should be serialized per `(project_key, session_ref)` and committed with atomic file
   replacement so parallel extraction agents cannot corrupt a card.
@@ -280,7 +316,7 @@ Write behavior:
 - Rejected writes are not committed. The extractor may correct the draft from the returned errors
   and retry until one chain for the assigned `turn_ref` is committed.
 
-Successful result:
+The successful result acknowledges the write without repeating quotation text:
 
 ```json
 {
@@ -303,12 +339,17 @@ Successful result:
 - `evidence_chain.turn_ref` resolves to exactly one `turns[]` item in the session index row.
 - Existing card chains do not already contain evidence for that `turn_ref`.
 - Required summaries are non-empty.
-- `trigger.type` is one of `explicit_user_message`, `implicit_context`, `user_correction`,
-  `user_approval`, or `resume_or_continue`.
+- The draft trigger contains only `citations`; Agent-supplied `quoted_messages`, `type`, or `summary`
+  are rejected with a correction hint.
+- `trigger.citations` contains exactly one span, `N-N`, where `N` is the assigned turn's
+  `turn_start_line`. It locates the human trigger, not skill expansions, assistant acknowledgments,
+  generated context, or subsequent agent activity. Mixed source records are parsed by provenance;
+  the citation does not attribute every part of the record to the human.
 - Citation line spans are numeric, ordered, and contained by the indexed turn identified by
   `turn_ref`.
-- The MCP server enforces citation structure and boundaries. The extractor remains responsible for
-  ensuring cited lines semantically support the evidence-chain claim.
+- The MCP server enforces citation structure and boundaries and verifies the trigger's source
+  provenance. The extractor remains responsible for ensuring cited reaction, outcome, check, and
+  terminal lines semantically support the evidence-chain claim.
 - Material outcomes cite agent reaction evidence, not only trigger evidence.
 - `outcomes[*].category` is one of the controlled outcome categories and is not a completion,
   verification, or engagement label.

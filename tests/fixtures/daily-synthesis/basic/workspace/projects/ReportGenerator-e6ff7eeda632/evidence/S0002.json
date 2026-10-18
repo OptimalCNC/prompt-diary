@@ -1,15 +1,13 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_key": "ReportGenerator-e6ff7eeda632",
   "session_ref": "S0002",
   "evidence_chains": [
     {
       "turn_ref": "T0001",
       "trigger": {
-        "type": "explicit_user_message",
-        "summary": "User asked to design the evidence-extraction QA approach.",
         "quoted_messages": [
-          {"text": "Design the QA approach for evidence extraction.", "citations": [{"lines": "2-2"}]}
+          {"text": "Design the QA approach for evidence extraction."}
         ],
         "citations": [{"lines": "2-2"}]
       },

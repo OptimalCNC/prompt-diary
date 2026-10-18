@@ -40,13 +40,16 @@ def test_codex_setup_is_omitted_while_reaction_context_remains_visible(
         assert record is None
         return
     assert record is not None
+    if prefix == "<subagent_notification>":
+        assert record.kind == "subagent_message"
+        assert record.text == text
+        assert record.truncated is False
+        return
     assert record.truncated is True
     assert record.text is not None
     assert record.text.startswith(prefix)
     assert len(record.text.encode()) < 600
-    assert record.kind == (
-        "subagent_message" if prefix == "<subagent_notification>" else "terminal"
-    )
+    assert record.kind == "terminal"
 
 
 @pytest.mark.parametrize("role", ["developer", "system"])
@@ -65,10 +68,9 @@ def test_codex_non_conversation_roles_are_omitted(role: str) -> None:
     assert record is None
 
 
-@pytest.mark.parametrize("flag", ["isMeta", "isCompactSummary"])
-def test_claude_explicit_source_context_is_omitted(flag: str) -> None:
+def test_claude_explicit_source_context_is_omitted() -> None:
     raw = json.dumps(
-        {"type": "user", flag: True, "message": {"role": "user", "content": _LARGE_TEXT}}
+        {"type": "user", "isMeta": True, "message": {"role": "user", "content": _LARGE_TEXT}}
     )
     record = compact_record(raw, line=1, source="claude-code")
     assert record is None
@@ -124,7 +126,7 @@ def test_source_context_preview_handles_escaped_surrogates() -> None:
             "type": "event_msg",
             "payload": {
                 "type": "user_message",
-                "message": "<subagent_notification>" + "\ud800" * 5000,
+                "message": "<turn_aborted>" + "\ud800" * 5000,
             },
         }
     )

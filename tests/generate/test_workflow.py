@@ -410,7 +410,7 @@ def _write_workspace_metadata(workspace: Path, *, timezone_name: str) -> None:
     (workspace / "metadata.json").write_text(
         json.dumps(
             {
-                "schema_version": 3,
+                "schema_version": 7,
                 "report_date": "2026-05-12",
                 "timezone": timezone_name,
                 "status": "final",
@@ -448,7 +448,7 @@ def _write_project(*, workspace: Path, project_key: str, session_ref: str) -> No
     _write_json(
         project_dir / "project.json",
         {
-            "schema_version": 3,
+            "schema_version": 7,
             "project_key": project_key,
             "project_label": project_key,
         },
