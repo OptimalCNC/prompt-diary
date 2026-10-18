@@ -28,6 +28,7 @@ from prompt_diary.models import (
     serialize_datetime,
 )
 from prompt_diary.prepare.codex_rollouts import CodexRolloutStore, RolloutTranscript
+from prompt_diary.prepare.scan_cache import ProbeResult, SessionScanCache, TimestampBounds
 from prompt_diary.prepare.turn_usage import ClaudeTurnUsage, CodexTurnUsage
 from prompt_diary.progress.events import (
     PhaseFinished,
@@ -255,6 +256,7 @@ def prepare_workspace(
             PrepareStarted(at=time.monotonic(), sources=tuple(spec.source for spec in specs))
         )
         prepared_at_local = _timestamp_for_target(target, prepared_at)
+        scan_cache = SessionScanCache(reports_root / "private" / "session-scan-cache.json")
         parsed_sessions = tuple(
             session
             for session in _normalize_selections(
@@ -262,6 +264,7 @@ def prepare_workspace(
                     specs,
                     target,
                     reports_root=reports_root,
+                    scan_cache=scan_cache,
                     reporter=reporter,
                 )
             )
@@ -291,6 +294,7 @@ def prepare_workspace(
             sessions=parsed_sessions,
             prepared_at=prepared_at_local,
         )
+        scan_cache.save()
 
         message = (
             f"Prepared workspace {workspace_path} "
@@ -458,6 +462,7 @@ def _selected_sessions(
     target: ReportTarget,
     *,
     reports_root: Path,
+    scan_cache: SessionScanCache,
     reporter: ProgressReporter = NULL_REPORTER,
 ) -> Iterable[_SessionSelection]:
     per_source = [(spec, _jsonl_source_files(spec.root)) for spec in source_specs]
@@ -478,6 +483,7 @@ def _selected_sessions(
             source=spec.source,
             target=target,
             progress=progress,
+            cache=scan_cache,
         )
         probed_sources.append((spec, source_paths, probe))
 
@@ -618,13 +624,17 @@ def _probe_source_files(
     source: SourceName,
     target: ReportTarget,
     progress: _ScanProgress,
+    cache: SessionScanCache,
 ) -> frozenset[Path]:
     candidate_root_paths: set[Path] = set()
     for source_path in source_paths:
-        is_candidate = _probe_source_file(
-            source_path=source_path,
-            source=source,
-            target=target,
+        is_candidate = cache.is_candidate(
+            source_path,
+            source,
+            target.report_window_utc,
+            lambda source_path=source_path: _probe_source_file(
+                source_path=source_path, source=source, target=target
+            ),
         )
         progress.advance()
         if is_candidate:
@@ -637,10 +647,13 @@ def _probe_source_file(
     source_path: Path,
     source: SourceName,
     target: ReportTarget,
-) -> bool:
+) -> ProbeResult:
     if _path_identifies_subagent_session(source_path=source_path, source=source):
-        return False
+        return ProbeResult(is_candidate=False)
     candidate_root = False
+    reliable_bounds = True
+    first_at: datetime | None = None
+    last_at: datetime | None = None
     previous_line: bytes | None = None
     with source_path.open("rb") as handle:
         for line in handle:
@@ -649,15 +662,31 @@ def _probe_source_file(
             if record is None:
                 raw_record = _json_object_from_line(line.decode("utf-8", errors="replace"))
                 if source == "codex" and raw_record is not None and _is_report_metadata(raw_record):
-                    return False
+                    return ProbeResult(is_candidate=False)
                 candidate_root = True
+                reliable_bounds = False
                 continue
             if _probe_is_excluded_session(record, source):
-                return False
-            if _probe_is_target_trigger(record, line, source, target, prior_line):
+                return ProbeResult(is_candidate=False)
+            timestamp = _parse_timestamp(record.timestamp)
+            if timestamp is None:
+                continue
+            if first_at is None or timestamp < first_at:
+                first_at = timestamp
+            if last_at is None or timestamp > last_at:
+                last_at = timestamp
+            if (
+                target.report_window_utc.start <= timestamp < target.report_window_utc.end
+                and _probe_is_human_trigger(record, line, source, prior_line)
+            ):
                 candidate_root = True
 
-    return candidate_root
+    bounds = (
+        TimestampBounds(first_at, last_at)
+        if reliable_bounds and first_at is not None and last_at is not None
+        else None
+    )
+    return ProbeResult(candidate_root, bounds)
 
 
 def _probe_is_excluded_session(record: _ProbeRecord, source: SourceName) -> bool:
@@ -736,21 +765,6 @@ def _probe_record_from_line(line: bytes) -> _ProbeRecord | None:
         return _PROBE_RECORD_DECODER.decode(line)
     except msgspec.DecodeError:
         return None
-
-
-def _probe_is_target_trigger(
-    record: _ProbeRecord,
-    line: bytes,
-    source: SourceName,
-    target: ReportTarget,
-    previous_line: bytes | None,
-) -> bool:
-    timestamp = _parse_timestamp(record.timestamp)
-    if timestamp is None:
-        return False
-    if not target.report_window_utc.start <= timestamp < target.report_window_utc.end:
-        return False
-    return _probe_is_human_trigger(record, line, source, previous_line)
 
 
 def _probe_is_human_trigger(
@@ -868,6 +882,14 @@ def _parse_session_file(
                 continue
             state.triggers.append(_TriggerLine(line_number=line_number, timestamp=timestamp))
 
+    owned_start_line = rollout.owned_start_line if rollout is not None else 1
+    if state.is_excluded or not any(
+        trigger.line_number >= owned_start_line
+        and target.report_window_utc.start <= trigger.timestamp < target.report_window_utc.end
+        for trigger in state.triggers
+    ):
+        return None
+
     turns, source_turns = _build_turns(
         triggers=state.triggers,
         target=target,
@@ -880,10 +902,7 @@ def _parse_session_file(
         if state.malformed_line_count or state.has_untimestamped_trigger
         else turns
     )
-    owned_start_line = rollout.owned_start_line if rollout is not None else 1
     turns = tuple(turn for turn in turns if turn.turn_start_line >= owned_start_line)
-    if state.is_excluded or not turns:
-        return None
 
     source_session_id = _source_session_id_for_state(state)
     project_root = _project_root_for_session(state, spec)

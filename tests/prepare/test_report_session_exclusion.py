@@ -11,6 +11,7 @@ import pytest
 import prompt_diary.prepare.workspace as preparation
 from prompt_diary.language import GENERATED_AGENTS_MARKER
 from prompt_diary.models import JsonObject, PrepareResult, ReportTarget, SourceSpec
+from prompt_diary.prepare.scan_cache import ProbeResult
 from prompt_diary.prepare.workspace import prepare_workspace
 from prompt_diary.targeting.resolve import resolve_report_target
 
@@ -45,8 +46,8 @@ def test_full_parser_also_excludes_report_originator(
 ) -> None:
     source = _session(tmp_path, originator="prompt_diary", cwd=tmp_path / "deleted-workspace")
 
-    def include_from_probe(**_arguments: object) -> bool:
-        return True
+    def include_from_probe(**_arguments: object) -> ProbeResult:
+        return ProbeResult(is_candidate=True)
 
     monkeypatch.setattr(preparation, "_probe_source_file", include_from_probe)
     result = _prepare(tmp_path, source)

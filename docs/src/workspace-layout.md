@@ -49,6 +49,13 @@ over `PROMPT_DIARY_HOME` over the stored config over the default data directory.
 manifest for the same date lives beside `work/` at
 `<reports-root>/private/<YYYY-MM-DD>/audit.manifest.json`.
 
+Preparation also keeps a disposable scan cache at
+`<reports-root>/private/session-scan-cache.json`. It uses timestamp bounds read from source records
+to skip unchanged files outside the requested day, including when preparing a different date.
+New or changed files, possible matches, and files with malformed probe records are scanned again.
+The first run, or a missing or invalid cache, requires scanning the source history; an unwritable
+cache does not prevent preparation.
+
 `AGENTS.md` is generated lazily during Codex-backed generation, not during preparation. It carries
 Prompt Diary's runtime language norm for generated report content and contains a generated marker;
 generation replaces only marker-owned copies and refuses to overwrite an unmarked user-authored
