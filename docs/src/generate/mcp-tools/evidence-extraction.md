@@ -132,8 +132,11 @@ unless a recognized source convention establishes it. Source attribution does no
 human's stance: the extractor still reads the exact human text to distinguish questions,
 objections, corrections, and approvals.
 Retained Claude command envelopes separate the human's invocation from the generated command
-description. A `human_attachment` records supplied media without inventing
-text or embedding binary content in the compact view.
+description. A `human_attachment` records an opaque, typed nontext block in a human message with
+valid source provenance. Media types need no allowlist, and their payloads and referenced files are
+not decoded or opened. The compact view preserves the attachment's presence and type without
+inventing text or embedding binary content. Malformed or unrecognized text and invalid provenance
+remain identifiable rather than becoming attachments; Claude tool-result blocks remain tool output.
 Native Codex `retained_context/verified_answer` records separate the agent's question from the
 human's answer. The answer starts a human turn; its subsequent tool-output copy does not.
 
@@ -304,10 +307,13 @@ Write behavior:
   `{"text": "..."}` entries, preserving human text blocks and answers verbatim without redaction,
   trimming, or truncation. Generated context, assistant questions and acknowledgments, and
   transcript echoes are excluded. Agent-directed commands preserve the human invocation and
-  arguments. A skill selection or attachment without human text produces an empty quotation array.
+  arguments. Opaque nontext attachments do not prevent quoting human text from the same record;
+  attachment paths and payloads are never quotations. A skill selection or attachment without human
+  text produces an empty quotation array when its source provenance is valid.
   The source is the original record, not the paginated `read_session_lines` response.
-- Missing, malformed, unsupported, or nonhuman trigger records reject the write. A failed source
-  lookup or extraction does not create a card or modify an existing one.
+- Missing or nonhuman trigger records, malformed or unrecognized text, and invalid provenance reject
+  the write. An opaque attachment type alone does not cause rejection. A failed source lookup or
+  extraction does not create a card or modify an existing one.
 - A card must not contain duplicate evidence for one `turn_ref`.
 - Writes should be serialized per `(project_key, session_ref)` and committed with atomic file
   replacement so parallel extraction agents cannot corrupt a card.

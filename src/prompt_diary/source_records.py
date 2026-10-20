@@ -63,7 +63,7 @@ class SkillInvocation:
 
 @dataclass(frozen=True)
 class UnavailableInput:
-    """A nontext input whose payload is not evidence text (for example image bytes)."""
+    """Input with malformed structure or unestablished provenance, not a quotable text block."""
 
     source_type: str
     kind: Literal["unavailable"] = "unavailable"
@@ -71,7 +71,7 @@ class UnavailableInput:
 
 @dataclass(frozen=True)
 class HumanAttachment:
-    """A recognized user attachment; content is unavailable as text, authorship is known."""
+    """Opaque nontext input from a human; its type is descriptive, not a media allowlist."""
 
     source_type: str
     kind: Literal["human_attachment"] = "human_attachment"
@@ -193,12 +193,27 @@ def _parse_input_item(
             return (SkillInvocation(name, path),)
     if part.get("type") in ("input_text", "text", "Text") and isinstance(part.get("text"), str):
         return _input_text_parts(cast("str", part["text"]), tag)
-    attachment_type = part.get("type")
-    if (attachment_type in ("image", "input_image") and tag in (None, "user.image")) or (
-        attachment_type in ("audio", "input_audio") and tag in (None, "user.audio")
-    ):
-        return (HumanAttachment(cast("str", attachment_type)),)
+    attachment = _human_attachment(part, tag)
+    if attachment is not None:
+        return (attachment,)
     return (_unknown_input(item, tag),)
+
+
+def _human_attachment(part: Mapping[str, object], tag: str | None) -> HumanAttachment | None:
+    """Separate opaque typed content from text/skill schemas and source provenance errors."""
+    source_type = part.get("type")
+    if (
+        not isinstance(source_type, str)
+        or not source_type.strip()
+        or source_type in ("input_text", "text", "Text", "skill")
+        or "text" in part
+    ):
+        return None
+    if tag is not None:
+        owner, _, content_kind = tag.partition(".")
+        if owner != "user" or not content_kind.strip() or content_kind == "text":
+            return None
+    return HumanAttachment(source_type)
 
 
 def parse_claude_input_text(text: str) -> tuple[InputPart, ...]:
@@ -275,12 +290,13 @@ def _parse_claude_input_item(
     part = _object(item)
     if part is not None:
         kind = part.get("type")
-        if kind == "image":
-            return (HumanAttachment("image"),)
         if kind == "text" and isinstance(part.get("text"), str):
             return parse_claude_input_text(cast("str", part["text"]))
         if kind == "tool_result":
             return ()
+        attachment = _human_attachment(part, None)
+        if attachment is not None:
+            return (attachment,)
     return (_unknown_input(item, None),)
 
 
@@ -329,19 +345,11 @@ def has_claude_human_input(content: object) -> bool:
         )
     if not isinstance(content, list):
         return False
-    for raw in cast("list[object]", content):
-        part = _object(raw)
-        if part is None:
-            continue
-        if part.get("type") == "image":
-            return True
-        if (
-            part.get("type") == "text"
-            and isinstance(part.get("text"), str)
-            and has_claude_human_input(part["text"])
-        ):
-            return True
-    return False
+    return any(
+        part.kind in ("human_input", "human_command", "human_attachment")
+        for item in cast("list[object]", content)
+        for part in _parse_claude_input_item(item)
+    )
 
 
 def _input_text_parts(text: str, tag: str | None) -> tuple[InputPart, ...]:

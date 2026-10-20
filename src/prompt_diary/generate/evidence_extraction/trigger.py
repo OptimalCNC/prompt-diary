@@ -37,7 +37,7 @@ class TriggerReadError:
 def read_trigger_text(
     *, session_path: Path, source: SourceName, line: int
 ) -> TriggerText | TriggerReadError:
-    """Extract the human portions of one 1-based physical JSONL line without rewriting text."""
+    """Extract exact human text from one JSONL line; opaque human attachments add no text."""
     try:
         lines = session_path.read_bytes().decode("utf-8", errors="replace").splitlines()
     except OSError as exc:
