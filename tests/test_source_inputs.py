@@ -13,6 +13,7 @@ from prompt_diary.source_records import (
     has_claude_human_input,
     is_claude_local_command,
     is_codex_compaction_output,
+    parse_claude_input,
     parse_claude_input_text,
     parse_codex_input,
 )
@@ -24,6 +25,13 @@ def _response(texts: list[str], tags: object = None) -> dict[str, object]:
         "role": "user",
         "content": [{"type": "input_text", "text": text} for text in texts],
     }
+    if tags is not None:
+        payload["internal_chat_message_metadata_passthrough"] = {"content_item_kinds": tags}
+    return {"type": "response_item", "payload": payload}
+
+
+def _codex_parts(content: list[object], tags: object = None) -> dict[str, object]:
+    payload: dict[str, object] = {"type": "message", "role": "user", "content": content}
     if tags is not None:
         payload["internal_chat_message_metadata_passthrough"] = {"content_item_kinds": tags}
     return {"type": "response_item", "payload": payload}
@@ -82,9 +90,10 @@ def test_whole_message_compaction_marker_overrides_user_role_and_content_tags() 
     assert not parsed.is_human_trigger
 
 
-def test_whole_message_compaction_marker_does_not_invent_human_attachments_or_skill_choices() -> (
-    None
-):
+@pytest.mark.parametrize("attachment_type", ["input_image", "local_image", "future_attachment"])
+def test_whole_message_compaction_marker_does_not_invent_human_attachments_or_skill_choices(
+    attachment_type: str,
+) -> None:
     record: dict[str, object] = {
         "type": "response_item",
         "metadata": {"compaction_output": True},
@@ -92,7 +101,7 @@ def test_whole_message_compaction_marker_does_not_invent_human_attachments_or_sk
             "type": "message",
             "role": "user",
             "content": [
-                {"type": "input_image", "image_url": "data:private"},
+                {"type": attachment_type, "image_url": "data:private"},
                 {"type": "skill", "name": "review"},
             ],
         },
@@ -100,7 +109,7 @@ def test_whole_message_compaction_marker_does_not_invent_human_attachments_or_sk
 
     parsed = parse_codex_input(record)
 
-    assert parsed == CodexInput((UnavailableInput("input_image"), UnavailableInput("skill")))
+    assert parsed == CodexInput((UnavailableInput(attachment_type), UnavailableInput("skill")))
     assert parsed is not None
     assert not parsed.is_human_trigger
 
@@ -408,7 +417,114 @@ def test_non_input_records_do_not_parse_as_human(record: dict[str, object]) -> N
     assert parse_codex_input(record) is None
 
 
-def test_unknown_nontext_payload_does_not_expose_private_bytes() -> None:
+@pytest.mark.parametrize(
+    "attachment_type",
+    ["image", "input_image", "local_image", "audio", "input_audio", "future_attachment"],
+)
+@pytest.mark.parametrize("representation", ["response", "item_completed"])
+def test_nontext_codex_user_blocks_are_opaque_without_a_media_type_allowlist(
+    attachment_type: str, representation: str
+) -> None:
+    text = "  Inspect this attachment.\n保留原文。  "
+    content: list[object] = [
+        {"type": attachment_type, "path": "/missing/private.png", "data": "private bytes"},
+        {"type": "text", "text": text},
+    ]
+    record = (
+        _codex_parts(content)
+        if representation == "response"
+        else {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {"type": "UserMessage", "content": content},
+            },
+        }
+    )
+
+    parsed = parse_codex_input(record)
+
+    assert parsed == CodexInput((HumanAttachment(attachment_type), InputPart("human_input", text)))
+    assert parsed is not None
+    assert parsed.is_human_trigger
+    assert "private" not in repr(parsed)
+
+
+@pytest.mark.parametrize("tag", ["user.image", "user.audio", "user.video", "user.attachment"])
+def test_codex_opaque_user_provenance_does_not_require_matching_media_types(tag: str) -> None:
+    parsed = parse_codex_input(_codex_parts([{"type": "local_image", "path": "private"}], [tag]))
+
+    assert parsed == CodexInput((HumanAttachment("local_image"),))
+    assert parsed is not None
+    assert parsed.is_human_trigger
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "user.text",
+        "user.",
+        "future.context",
+        "compaction.summary",
+        "skills.selected_skill_instructions",
+    ],
+)
+def test_codex_nontext_block_cannot_override_nonhuman_or_incompatible_provenance(tag: str) -> None:
+    parsed = parse_codex_input(_codex_parts([{"type": "future_attachment"}], [tag]))
+
+    assert parsed == CodexInput((UnavailableInput("future_attachment"),))
+    assert parsed is not None
+    assert not parsed.is_human_trigger
+
+
+@pytest.mark.parametrize("tags", [[], ["user.image", "user.text"], [42], "user.image"])
+def test_conflicting_codex_metadata_does_not_certify_opaque_blocks(tags: object) -> None:
+    parsed = parse_codex_input(_codex_parts([{"type": "future_attachment"}], tags))
+
+    assert parsed == CodexInput((UnavailableInput("future_attachment"),))
+    assert parsed is not None
+    assert not parsed.is_human_trigger
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        None,
+        42,
+        "untyped text",
+        {},
+        {"type": ""},
+        {"type": " "},
+        {"type": 42},
+        {"type": []},
+        {"type": {}},
+        {"type": "text"},
+        {"type": "text", "text": 42},
+        {"type": "input_text", "text": None},
+        {"type": "Text", "text": []},
+        {"type": "skill"},
+        {"type": "skill", "name": 42},
+        {"type": "skill", "name": "review", "path": 42},
+    ],
+)
+def test_malformed_codex_blocks_do_not_become_generic_human_attachments(part: object) -> None:
+    parsed = parse_codex_input(_codex_parts([part]))
+
+    assert parsed is not None
+    assert not parsed.is_human_trigger
+    assert not any(isinstance(item, HumanAttachment) for item in parsed.parts)
+
+
+@pytest.mark.parametrize("text", ["Unclassified human text", None, 42, []])
+def test_unknown_text_bearing_codex_blocks_cannot_be_dropped_as_opaque(text: object) -> None:
+    parsed = parse_codex_input(_codex_parts([{"type": "future_attachment", "text": text}]))
+
+    assert parsed is not None
+    assert not parsed.is_human_trigger
+    assert not any(isinstance(item, HumanAttachment) for item in parsed.parts)
+
+
+def test_opaque_nontext_payload_does_not_expose_private_bytes() -> None:
     record: dict[str, object] = {
         "type": "response_item",
         "payload": {
@@ -419,7 +535,7 @@ def test_unknown_nontext_payload_does_not_expose_private_bytes() -> None:
             ],
         },
     }
-    assert parse_codex_input(record) == CodexInput((UnavailableInput("encrypted_content"),))
+    assert parse_codex_input(record) == CodexInput((HumanAttachment("encrypted_content"),))
 
 
 def test_claude_command_selection_and_output_are_distinct() -> None:
@@ -541,3 +657,71 @@ def test_image_only_claude_content_is_a_human_action_without_transcribed_text() 
     assert has_claude_human_input(
         [{"type": "image", "source": {"type": "base64", "data": "unread image bytes"}}]
     )
+
+
+@pytest.mark.parametrize("attachment_type", ["image", "local_image", "future_attachment"])
+def test_nontext_claude_user_blocks_are_opaque_without_a_media_type_allowlist(
+    attachment_type: str,
+) -> None:
+    content = [{"type": attachment_type, "data": "private bytes", "path": "/private/attachment"}]
+    record = {"type": "user", "message": {"role": "user", "content": content}}
+
+    parsed = parse_claude_input(record)
+
+    assert parsed is not None
+    assert parsed.parts == (HumanAttachment(attachment_type),)
+    assert parsed.is_human_trigger
+    assert has_claude_human_input(content)
+    assert "private" not in repr(parsed)
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        None,
+        {},
+        {"type": ""},
+        {"type": " "},
+        {"type": 42},
+        {"type": []},
+        {"type": {}},
+        {"type": "text"},
+        {"type": "text", "text": 42},
+        {"type": "future_attachment", "text": "Unclassified human text"},
+        {"type": "future_attachment", "text": None},
+        {"type": "tool_result", "content": "Agent tool output"},
+    ],
+)
+def test_malformed_or_tool_owned_claude_blocks_do_not_become_human_attachments(
+    part: object,
+) -> None:
+    content = [part]
+    record = {"type": "user", "message": {"role": "user", "content": content}}
+
+    parsed = parse_claude_input(record)
+
+    assert parsed is not None
+    assert not parsed.is_human_trigger
+    assert not any(isinstance(item, HumanAttachment) for item in parsed.parts)
+    assert not has_claude_human_input(content)
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        {"isMeta": True},
+        {"isSidechain": True},
+        {"isCompactSummary": True},
+        {"sourceToolAssistantUUID": "agent-tool"},
+    ],
+)
+def test_generic_claude_attachments_do_not_override_nonhuman_record_provenance(
+    flags: dict[str, object],
+) -> None:
+    record = {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "future_attachment"}]},
+        **flags,
+    }
+
+    assert parse_claude_input(record) is None

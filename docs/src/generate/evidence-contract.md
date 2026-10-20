@@ -180,10 +180,14 @@ runtime prompt.
 The committed trigger contains the shared source citation and tool-generated `quoted_messages`,
 each with only a `text` field. Source parsing preserves separate human text blocks and answers in
 order, excludes generated context and assistant questions, and does not duplicate transcript echoes.
-A skill selection or attachment without human text has an empty quotation array. A missing,
-malformed, unsupported, or nonhuman trigger record rejects the write rather than producing an empty
-array. Trigger text is extracted from the original indexed record, not a paginated or shortened MCP
-read response.
+Typed nontext blocks in a human message are opaque attachments when their source provenance is
+valid; their type does not need to appear in a media allowlist. Preparation, compact reading, and
+trigger extraction preserve the attachment's presence without decoding its payload or opening a
+referenced file. Attachment paths and payloads never become human quotations. A mixed message
+retains its human text verbatim; a skill selection or attachment without human text has an empty
+quotation array. Missing or nonhuman trigger records, malformed or unrecognized text, and invalid
+provenance still reject the write rather than producing an empty array. Trigger text is extracted
+from the original indexed record, not a paginated or shortened MCP read response.
 
 The write surface for one extracted chain is
 [`write_evidence`](./mcp-tools/evidence-extraction.md#write_evidence), which accepts the chain as an

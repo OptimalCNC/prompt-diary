@@ -258,7 +258,7 @@ def test_nonhuman_or_unrecognized_records_cannot_be_committed_as_empty_quotes(
             _codex(
                 [
                     {"type": "input_text", "text": "Human request"},
-                    {"type": "encrypted_content", "data": "unavailable"},
+                    {"type": "future_text", "text": "Unrecognized text schema"},
                 ]
             ),
         ),
@@ -283,7 +283,27 @@ def test_nonhuman_or_unrecognized_records_cannot_be_committed_as_empty_quotes(
         ),
         (
             "claude-code",
-            _claude([{"type": "text", "text": "Human request"}, {"type": "future_attachment"}]),
+            _claude(
+                [
+                    {"type": "text", "text": "Human request"},
+                    {"type": "future_attachment", "text": "Unrecognized text schema"},
+                ]
+            ),
+        ),
+        (
+            "codex",
+            _codex([{"type": "text", "text": "Human request"}, {"type": "text", "text": 42}]),
+        ),
+        (
+            "claude-code",
+            _claude([{"type": "text", "text": "Human request"}, {"type": "text"}]),
+        ),
+        (
+            "codex",
+            _codex(
+                [{"type": "text", "text": "Human request"}, {"type": "future_attachment"}],
+                tags=["user.text", "future.context"],
+            ),
         ),
         (
             "claude-code",
