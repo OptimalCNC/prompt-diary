@@ -4,7 +4,7 @@
     "reasoning_effort": "high"
   },
   "project_synthesis": {
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6.2-sol",
     "reasoning_effort": "high"
   },
   "daily_synthesis": {
@@ -17,11 +17,11 @@
       "reasoning_effort": "low"
     },
     "engagement": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "reasoning_effort": "high"
     },
     "team_learning": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "reasoning_effort": "high"
     }
   }

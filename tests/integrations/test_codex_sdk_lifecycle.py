@@ -316,7 +316,7 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
         ),
         pytest.param(
             load_agent_settings().project_synthesis,
-            "gpt-6.1-sol",
+            "gpt-6.2-sol",
             "high",
             id="project_synthesis",
         ),
@@ -334,13 +334,13 @@ def test_timeout_interrupts_and_drains_real_sdk_turn_before_returning(
         ),
         pytest.param(
             load_agent_settings().daily_synthesis.engagement,
-            "gpt-6.1-sol",
+            "gpt-6.2-sol",
             "high",
             id="engagement",
         ),
         pytest.param(
             load_agent_settings().daily_synthesis.team_learning,
-            "gpt-6.1-sol",
+            "gpt-6.2-sol",
             "high",
             id="team_learning",
         ),

@@ -59,7 +59,7 @@ def test_runner_uses_packaged_agent_settings(tmp_path: Path) -> None:
 
     _run(factory, workspace)
 
-    assert factory.runners[0].config.model == "gpt-6.1-sol"
+    assert factory.runners[0].config.model == "gpt-6.2-sol"
     assert factory.runners[0].config.reasoning_effort == "high"
 
 

@@ -378,8 +378,8 @@ def test_runner_uses_packaged_settings_for_each_pass(tmp_path: Path) -> None:
     ] == [
         ("gpt-6-luna", "medium"),
         ("gpt-6-luna", "low"),
-        ("gpt-6.1-sol", "high"),
-        ("gpt-6.1-sol", "high"),
+        ("gpt-6.2-sol", "high"),
+        ("gpt-6.2-sol", "high"),
     ]
 
 
