@@ -136,7 +136,7 @@ class _MemoryTransport(CodexClient):
                         "thread": {
                             "id": thread_id,
                             "sessionId": thread_id,
-                            "cliVersion": "0.162.0",
+                            "cliVersion": "0.170.0",
                             "createdAt": 0,
                             "updatedAt": 0,
                             "cwd": params["cwd"],

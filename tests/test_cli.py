@@ -424,7 +424,14 @@ def test_generate_render_help_shows_default_notion_publish_from_env(
 
 
 def test_refresh_dynamic_default_help_ignores_arguments() -> None:
-    argument = TyperArgument(param_decls=["name"])
+    local_app = typer.Typer(add_completion=False)
+
+    @local_app.command()
+    def command(name: str) -> None:
+        del name
+
+    argument = typer.main.get_command(local_app).params[0]
+    assert isinstance(argument, TyperArgument)
 
     common_cmd.refresh_dynamic_default_help([argument])
 
